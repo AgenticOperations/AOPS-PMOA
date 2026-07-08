@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="oklch(52% 0.18 255)" />
+  <path
+    d="M18 42V22h6.5l15 20H33l-3-4.1H24V42h-6Zm6-9.1h2.4L24 29.6v3.3Zm16 9.1V22h6v20h-6Z"
+    fill="oklch(99.4% 0.004 248)"
+  />
+</svg>

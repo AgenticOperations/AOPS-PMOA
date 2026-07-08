@@ -1,0 +1,250 @@
+import 'server-only';
+import { cookies } from 'next/headers';
+import { readWebEnv } from '../env';
+import type {
+  AgentDetailBundle,
+  AgentActivityFeed,
+  AgentRosterItem,
+  ConnectionRecord,
+  CurrentSession,
+  Org,
+  TeamRecord,
+  WalletRefRecord,
+} from '../identity-spine-types';
+
+type ApiErrorBody = {
+  readonly error?: string;
+  readonly message?: string;
+};
+
+type CreateConnectionResult = {
+  readonly connection: ConnectionRecord;
+  readonly secret: string | null;
+};
+
+function apiBaseUrl(): string {
+  return readWebEnv().AGENTOPS_API_BASE_URL.replace(/\/$/, '');
+}
+
+export async function currentSessionToken(): Promise<string | null> {
+  const env = readWebEnv();
+  const cookieStore = await cookies();
+  return cookieStore.get(env.SESSION_COOKIE_NAME)?.value ?? null;
+}
+
+async function sessionHeaders(): Promise<Record<string, string>> {
+  const token = await currentSessionToken();
+  return token === null ? {} : { authorization: `Bearer ${token}` };
+}
+
+async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const authHeaders = await sessionHeaders();
+  const hasBody = init.body !== undefined && init.body !== null;
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
+    ...init,
+    cache: 'no-store',
+    headers: {
+      ...authHeaders,
+      ...(hasBody ? { 'content-type': 'application/json' } : {}),
+      ...(init.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    let body: ApiErrorBody = {};
+    try {
+      body = (await response.json()) as ApiErrorBody;
+    } catch {
+      body = {};
+    }
+    throw new Error(body.message ?? body.error ?? `API request failed with ${response.status}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function getCurrentSession(): Promise<CurrentSession | null> {
+  const token = await currentSessionToken();
+  if (token === null) return null;
+
+  try {
+    const body = await apiFetch<CurrentSession>('/v1/auth/me');
+    return body;
+  } catch (error) {
+    if ((error as Error).message.includes('unauthorized')) return null;
+    return null;
+  }
+}
+
+export async function exchangeGoogleCode(input: {
+  readonly code: string;
+  readonly redirectUri: string;
+}): Promise<{
+  readonly session_token: string;
+  readonly expires_at: string;
+  readonly user: CurrentSession['user'];
+}> {
+  return apiFetch('/v1/auth/google/exchange', {
+    method: 'POST',
+    body: JSON.stringify({ code: input.code, redirect_uri: input.redirectUri }),
+    headers: {},
+  });
+}
+
+export async function getGoogleAuthorizeUrl(input: {
+  readonly redirectUri: string;
+  readonly state: string;
+}): Promise<string> {
+  const query = new URLSearchParams({
+    redirect_uri: input.redirectUri,
+    state: input.state,
+  });
+  const body = await apiFetch<{ readonly url: string }>(`/v1/auth/google/authorize-url?${query.toString()}`);
+  return body.url;
+}
+
+export async function logoutSession(): Promise<void> {
+  await apiFetch('/v1/auth/logout', { method: 'POST' });
+}
+
+export async function listOrgs(): Promise<Org[]> {
+  const body = await apiFetch<{ readonly orgs: Org[] }>('/v1/orgs');
+  return body.orgs;
+}
+
+export async function getOrgBySlug(slug: string): Promise<Org> {
+  const body = await apiFetch<{ readonly org: Org }>(`/v1/orgs/by-slug/${slug}`);
+  return body.org;
+}
+
+export async function createOrg(input: {
+  readonly name: string;
+  readonly domain?: string | undefined;
+  readonly primary_use_case?: string | undefined;
+}): Promise<Org> {
+  const body = await apiFetch<{ readonly org: Org }>('/v1/orgs', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return body.org;
+}
+
+export async function listAgents(orgId: string): Promise<AgentRosterItem[]> {
+  const body = await apiFetch<{ readonly agents: AgentRosterItem[] }>(`/v1/orgs/${orgId}/agents`);
+  return body.agents;
+}
+
+export async function listTeams(orgId: string): Promise<TeamRecord[]> {
+  const body = await apiFetch<{ readonly teams: TeamRecord[] }>(`/v1/orgs/${orgId}/teams`);
+  return body.teams;
+}
+
+export async function createAgent(
+  orgId: string,
+  input: {
+    readonly name: string;
+    readonly description?: string | undefined;
+    readonly labels?: string[] | undefined;
+    readonly default_environment?: string | null | undefined;
+  },
+): Promise<AgentRosterItem> {
+  const body = await apiFetch<{ readonly agent: AgentRosterItem }>(`/v1/orgs/${orgId}/agents`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return body.agent;
+}
+
+export async function getAgentDetail(orgId: string, agentId: string): Promise<AgentDetailBundle> {
+  const body = await apiFetch<{
+    readonly agent: AgentDetailBundle['agent'];
+    readonly connections: ConnectionRecord[];
+    readonly wallet_refs: WalletRefRecord[];
+    readonly activity: AgentDetailBundle['activity'];
+  }>(`/v1/orgs/${orgId}/agents/${agentId}`);
+
+  return {
+    agent: body.agent,
+    connections: body.connections,
+    walletRefs: body.wallet_refs,
+    activity: body.activity,
+  };
+}
+
+export async function getAgentActivityFeed(
+  orgId: string,
+  agentId: string,
+  limit = 80,
+): Promise<AgentActivityFeed> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  return apiFetch<AgentActivityFeed>(`/v1/orgs/${orgId}/agents/${agentId}/activity?${query.toString()}`);
+}
+
+export async function pauseAgent(orgId: string, agentId: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/agents/${agentId}/pause`, { method: 'POST' });
+}
+
+export async function activateAgent(orgId: string, agentId: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/agents/${agentId}/activate`, { method: 'POST' });
+}
+
+export async function deactivateAgent(orgId: string, agentId: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/agents/${agentId}/deactivate`, { method: 'POST' });
+}
+
+export async function createConnection(
+  orgId: string,
+  agentId: string,
+  input: { readonly kind: string; readonly name: string },
+): Promise<CreateConnectionResult> {
+  return apiFetch<CreateConnectionResult>(`/v1/orgs/${orgId}/agents/${agentId}/connections`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listConnections(orgId: string, agentId: string): Promise<ConnectionRecord[]> {
+  const body = await apiFetch<{ readonly connections: ConnectionRecord[] }>(`/v1/orgs/${orgId}/agents/${agentId}/connections`);
+  return body.connections;
+}
+
+export async function testConnection(orgId: string, connectionId: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/connections/${connectionId}/test`, { method: 'POST' });
+}
+
+export async function rotateConnection(orgId: string, connectionId: string): Promise<CreateConnectionResult> {
+  return apiFetch<CreateConnectionResult>(`/v1/orgs/${orgId}/connections/${connectionId}/rotate`, {
+    method: 'POST',
+  });
+}
+
+export async function revokeConnection(orgId: string, connectionId: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/connections/${connectionId}/revoke`, { method: 'POST' });
+}
+
+export async function attachWalletRef(
+  orgId: string,
+  agentId: string,
+  input: {
+    readonly provider: string;
+    readonly external_wallet_id?: string | null | undefined;
+    readonly address?: string | null | undefined;
+    readonly chain?: string | null | undefined;
+    readonly label?: string | undefined;
+  },
+): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/agents/${agentId}/wallet-refs`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function detachWalletRef(
+  orgId: string,
+  agentId: string,
+  walletRefId: string,
+): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/agents/${agentId}/wallet-refs/${walletRefId}`, {
+    method: 'DELETE',
+  });
+}

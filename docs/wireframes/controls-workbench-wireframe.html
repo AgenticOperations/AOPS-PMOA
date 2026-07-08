@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agentOps Controls Console Wireframe</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --panel-soft: #fbfbfc;
+        --ink: #15171c;
+        --muted: #6b7280;
+        --faint: #9aa2af;
+        --line: #e4e7ec;
+        --line-strong: #cfd5df;
+        --blue: #3457ff;
+        --blue-soft: #eef2ff;
+        --green: #14794f;
+        --green-soft: #eaf7ef;
+        --amber: #9a6619;
+        --amber-soft: #fff5dd;
+        --red: #bd2430;
+        --red-soft: #fff0f1;
+        --shadow: 0 10px 30px rgba(20, 27, 40, 0.055);
+        --ease: cubic-bezier(0.32, 0.72, 0, 1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Plus Jakarta Sans", "Geist", "Aptos", ui-sans-serif, system-ui, sans-serif;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .console {
+        display: grid;
+        grid-template-columns: 76px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+
+      .sidebar {
+        position: sticky;
+        top: 0;
+        display: grid;
+        align-content: space-between;
+        height: 100vh;
+        padding: 16px 12px;
+        background: #111318;
+        color: #ffffff;
+      }
+
+      .logo {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        margin: 0 auto;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #111318;
+        font-size: 0.76rem;
+        font-weight: 860;
+        letter-spacing: -0.04em;
+      }
+
+      .nav {
+        display: grid;
+        gap: 10px;
+        justify-items: center;
+      }
+
+      .nav button {
+        width: 42px;
+        height: 42px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.58);
+        font-size: 0.72rem;
+        font-weight: 820;
+      }
+
+      .nav button.active {
+        background: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+      }
+
+      .content {
+        display: grid;
+        align-content: start;
+        gap: 18px;
+        max-width: 1500px;
+        width: 100%;
+        margin: 0 auto;
+        padding: 26px 30px 42px;
+      }
+
+      .page-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 22px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 2.2rem;
+        line-height: 1;
+        letter-spacing: -0.03em;
+      }
+
+      h2 {
+        font-size: 1.08rem;
+        letter-spacing: -0.01em;
+      }
+
+      h3 {
+        font-size: 0.95rem;
+        letter-spacing: -0.01em;
+      }
+
+      .eyebrow {
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 0.67rem;
+        font-weight: 840;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .subcopy {
+        max-width: 68ch;
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.94rem;
+        line-height: 1.55;
+      }
+
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 0 14px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: var(--ink);
+        color: #ffffff;
+        font-size: 0.84rem;
+        font-weight: 760;
+        transition:
+          transform 420ms var(--ease),
+          background-color 420ms var(--ease),
+          border-color 420ms var(--ease);
+      }
+
+      .button:hover {
+        transform: translate3d(0, -1px, 0);
+      }
+
+      .button.secondary {
+        border-color: var(--line);
+        background: #ffffff;
+        color: var(--ink);
+      }
+
+      .button.ghost {
+        border-color: transparent;
+        background: transparent;
+        color: var(--muted);
+      }
+
+      .workspace-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 18px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-header p {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.45;
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) repeat(3, 150px);
+        gap: 10px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-soft);
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+        color: var(--ink);
+        outline: 0;
+      }
+
+      input,
+      select {
+        min-height: 38px;
+        padding: 0 11px;
+      }
+
+      textarea {
+        min-height: 84px;
+        padding: 10px 11px;
+        resize: vertical;
+      }
+
+      input::placeholder,
+      textarea::placeholder {
+        color: var(--faint);
+      }
+
+      .policy-table {
+        display: grid;
+      }
+
+      .table-head,
+      .policy-row {
+        display: grid;
+        grid-template-columns: minmax(260px, 1fr) 128px 128px 132px 100px;
+        gap: 14px;
+        align-items: center;
+      }
+
+      .table-head {
+        min-height: 40px;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.7rem;
+        font-weight: 840;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .policy-row {
+        min-height: 72px;
+        width: 100%;
+        padding: 11px 18px;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        background: #ffffff;
+        color: inherit;
+        text-align: left;
+      }
+
+      .policy-row:last-child {
+        border-bottom: 0;
+      }
+
+      .policy-row:hover {
+        background: #f9fafc;
+      }
+
+      .policy-title {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .policy-title strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .policy-title span,
+      .muted {
+        color: var(--muted);
+        font-size: 0.82rem;
+        line-height: 1.42;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: max-content;
+        min-height: 26px;
+        padding: 0 9px;
+        border-radius: 7px;
+        font-size: 0.74rem;
+        font-weight: 780;
+      }
+
+      .badge.deny {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .badge.approval {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .badge.observe {
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
+
+      .badge.active {
+        background: var(--green-soft);
+        color: var(--green);
+      }
+
+      .badge.neutral {
+        background: #eef1f5;
+        color: #59616d;
+      }
+
+      .side-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .draft-list {
+        display: grid;
+      }
+
+      .draft-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .draft-row:last-child {
+        border-bottom: 0;
+      }
+
+      .draft-row div {
+        display: grid;
+        gap: 4px;
+      }
+
+      .target-block {
+        padding: 16px;
+      }
+
+      .target-block p {
+        margin-top: 8px;
+      }
+
+      .drawer {
+        position: fixed;
+        inset: 0 0 0 76px;
+        display: none;
+        grid-template-rows: auto minmax(0, 1fr);
+        background: var(--panel);
+        z-index: 20;
+      }
+
+      body.drawer-open .drawer.active {
+        display: grid;
+        animation: drawer-enter 520ms var(--ease) both;
+      }
+
+      @keyframes drawer-enter {
+        from {
+          opacity: 0;
+          transform: translate3d(24px, 0, 0);
+        }
+        to {
+          opacity: 1;
+          transform: translate3d(0, 0, 0);
+        }
+      }
+
+      .drawer-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 86px;
+        padding: 22px 30px 18px;
+        border-bottom: 1px solid var(--line);
+        background: #ffffff;
+      }
+
+      .drawer-header-left {
+        display: grid;
+        gap: 6px;
+      }
+
+      .drawer-body {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .drawer-nav {
+        padding: 20px;
+        border-right: 1px solid var(--line);
+        background: #f8f9fb;
+      }
+
+      .drawer-nav-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .drawer-nav button {
+        min-height: 38px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        text-align: left;
+        padding: 0 10px;
+        font-size: 0.84rem;
+        font-weight: 760;
+      }
+
+      .drawer-nav button.active {
+        background: #ffffff;
+        color: var(--ink);
+        box-shadow: 0 0 0 1px var(--line);
+      }
+
+      .drawer-main {
+        min-height: 0;
+        overflow: auto;
+        padding: 24px 30px 38px;
+        background: #ffffff;
+      }
+
+      .form-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 0.9fr) minmax(320px, 0.6fr);
+        gap: 22px;
+        align-items: start;
+      }
+
+      .form-section,
+      .plain-section {
+        display: grid;
+        gap: 16px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #ffffff;
+        padding: 18px;
+      }
+
+      .field-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      label {
+        display: grid;
+        gap: 7px;
+        color: var(--ink);
+        font-size: 0.84rem;
+        font-weight: 760;
+      }
+
+      .option-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .option {
+        display: grid;
+        gap: 6px;
+        min-height: 78px;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      .option.selected {
+        border-color: rgba(52, 87, 255, 0.45);
+        background: var(--blue-soft);
+      }
+
+      .preview-box {
+        padding: 14px;
+        border-radius: 8px;
+        background: #111318;
+        color: #ffffff;
+        line-height: 1.5;
+      }
+
+      .detail-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 380px;
+        gap: 22px;
+        align-items: start;
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1fr);
+        gap: 10px 14px;
+      }
+
+      .detail-grid span {
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 780;
+      }
+
+      .target-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .target-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        min-height: 48px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .drawer-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      @media (max-width: 1120px) {
+        .workspace-grid,
+        .form-layout,
+        .detail-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .toolbar,
+        .table-head,
+        .policy-row {
+          grid-template-columns: 1fr;
+        }
+
+        .table-head {
+          display: none;
+        }
+
+        .drawer-body {
+          grid-template-columns: 1fr;
+        }
+
+        .drawer-nav {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .drawer-nav-list {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="console">
+      <aside class="sidebar" aria-label="Workspace navigation">
+        <div class="logo">aO</div>
+        <nav class="nav" aria-label="Main">
+          <button>OV</button>
+          <button>AG</button>
+          <button class="active">CO</button>
+        </nav>
+        <button class="nav button ghost">LO</button>
+      </aside>
+
+      <main class="content">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Policy control</p>
+            <h1>Controls</h1>
+            <p class="subcopy">
+              A clean policy console: active rules first, drafts as a review queue, creation and binding in focused work drawers.
+            </p>
+          </div>
+          <div class="header-actions">
+            <button class="button secondary">Import template</button>
+            <button class="button" data-open="create">New policy</button>
+          </div>
+        </header>
+
+        <section class="workspace-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Policy library</h2>
+                <p>Rows stay compact. Clicking a policy opens the full detail drawer.</p>
+              </div>
+              <span class="badge active">4 active</span>
+            </div>
+            <div class="toolbar">
+              <input placeholder="Search policies" />
+              <select><option>All actions</option><option>HTTP/API</option><option>x402</option><option>Tool call</option></select>
+              <select><option>All decisions</option><option>Deny</option><option>Approval</option><option>Observe</option></select>
+              <select><option>All targets</option><option>Agents</option><option>Credentials</option><option>Workspace</option></select>
+            </div>
+            <div class="policy-table">
+              <div class="table-head">
+                <span>Policy</span>
+                <span>Decision</span>
+                <span>Action</span>
+                <span>Binding</span>
+                <span></span>
+              </div>
+              <button class="policy-row" data-open="detail" data-policy="weather">
+                <span class="policy-title">
+                  <strong>Block weather API access</strong>
+                  <span>Deny weather-category HTTP/API requests.</span>
+                </span>
+                <span class="badge deny">Deny</span>
+                <span class="badge neutral">HTTP/API</span>
+                <span class="badge active">1 binding</span>
+                <span class="button secondary">Open</span>
+              </button>
+              <button class="policy-row" data-open="detail" data-policy="market">
+                <span class="policy-title">
+                  <strong>Paid market-data approval</strong>
+                  <span>Require approval for x402 market data above 1 USDC.</span>
+                </span>
+                <span class="badge approval">Approval</span>
+                <span class="badge neutral">x402</span>
+                <span class="badge active">1 binding</span>
+                <span class="button secondary">Open</span>
+              </button>
+              <button class="policy-row" data-open="detail" data-policy="browser">
+                <span class="policy-title">
+                  <strong>Observe browser search</strong>
+                  <span>Record managed browser.search tool calls.</span>
+                </span>
+                <span class="badge observe">Observe</span>
+                <span class="badge neutral">Tool call</span>
+                <span class="badge active">Workspace</span>
+                <span class="button secondary">Open</span>
+              </button>
+              <button class="policy-row" data-open="detail" data-policy="rotate">
+                <span class="policy-title">
+                  <strong>Credential rotation monitor</strong>
+                  <span>Observe credential rotation management actions.</span>
+                </span>
+                <span class="badge observe">Observe</span>
+                <span class="badge neutral">Management</span>
+                <span class="badge active">Credential</span>
+                <span class="button secondary">Open</span>
+              </button>
+            </div>
+          </section>
+
+          <aside class="side-stack">
+            <section class="panel">
+              <div class="panel-header">
+                <div>
+                  <h2>Draft review</h2>
+                  <p>Only drafts needing action.</p>
+                </div>
+                <span class="badge neutral">2</span>
+              </div>
+              <div class="draft-list">
+                <div class="draft-row">
+                  <div>
+                    <strong>Credential issue control</strong>
+                    <span class="muted">Needs validation.</span>
+                  </div>
+                  <button class="button secondary">Validate</button>
+                </div>
+                <div class="draft-row">
+                  <div>
+                    <strong>Payment threshold approval</strong>
+                    <span class="muted">Ready to activate.</span>
+                  </div>
+                  <button class="button secondary">Activate</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel target-block">
+              <h2>Target model</h2>
+              <p class="muted">
+                Binding moves into the detail drawer so this page does not repeat selectors under every policy.
+              </p>
+            </section>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <section class="drawer" id="createDrawer" aria-label="New policy drawer">
+      <header class="drawer-header">
+        <div class="drawer-header-left">
+          <p class="eyebrow">New policy</p>
+          <h1>Create policy</h1>
+          <p class="muted">A full work surface that can later support templates, natural language parsing, and advanced builders.</p>
+        </div>
+        <button class="button secondary" data-close>Close</button>
+      </header>
+      <div class="drawer-body">
+        <aside class="drawer-nav">
+          <div class="drawer-nav-list">
+            <button class="active">Basics</button>
+            <button>Action</button>
+            <button>Conditions</button>
+            <button>Preview</button>
+          </div>
+        </aside>
+        <main class="drawer-main">
+          <div class="form-layout">
+            <section class="form-section">
+              <div>
+                <h2>Policy basics</h2>
+                <p class="muted">Keep creation focused. Only show fields that matter to the selected action.</p>
+              </div>
+              <div class="field-grid">
+                <label>
+                  Name
+                  <input value="Block weather API access" />
+                </label>
+                <label>
+                  Decision
+                  <select>
+                    <option>Deny</option>
+                    <option>Require approval</option>
+                    <option>Observe</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Description
+                <textarea>Deny weather API requests for attached agents.</textarea>
+              </label>
+              <div>
+                <h3>Action surface</h3>
+                <div class="option-grid" style="margin-top: 10px">
+                  <div class="option selected">
+                    <strong>External HTTP/API</strong>
+                    <span class="muted">Resource category, domain, and endpoint conditions.</span>
+                  </div>
+                  <div class="option">
+                    <strong>x402 payment</strong>
+                    <span class="muted">Payment amount, asset, and paid endpoint checks.</span>
+                  </div>
+                  <div class="option">
+                    <strong>Tool call</strong>
+                    <span class="muted">MCP and managed tool gateway checks.</span>
+                  </div>
+                  <div class="option">
+                    <strong>Management action</strong>
+                    <span class="muted">Agent and credential lifecycle rules.</span>
+                  </div>
+                </div>
+              </div>
+              <div class="field-grid">
+                <label>
+                  Resource category
+                  <input value="weather" />
+                </label>
+                <label>
+                  Resource domain
+                  <input placeholder="api.example.com" />
+                </label>
+              </div>
+            </section>
+
+            <aside class="plain-section">
+              <div>
+                <h2>Policy preview</h2>
+                <p class="muted">Plain language summary before draft creation.</p>
+              </div>
+              <div class="preview-box">
+                This policy will deny HTTP/API requests where resource category is weather. It will not enforce until activated and bound.
+              </div>
+              <div class="drawer-footer">
+                <button class="button secondary">Save draft</button>
+                <button class="button">Create draft</button>
+              </div>
+            </aside>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <section class="drawer" id="detailDrawer" aria-label="Policy detail drawer">
+      <header class="drawer-header">
+        <div class="drawer-header-left">
+          <p class="eyebrow">Policy detail</p>
+          <h1 id="detailTitle">Block weather API access</h1>
+          <p class="muted" id="detailSubtitle">Deny weather-category HTTP/API requests.</p>
+        </div>
+        <button class="button secondary" data-close>Close</button>
+      </header>
+      <div class="drawer-body">
+        <aside class="drawer-nav">
+          <div class="drawer-nav-list">
+            <button class="active">Overview</button>
+            <button>Conditions</button>
+            <button>Bindings</button>
+            <button>History</button>
+          </div>
+        </aside>
+        <main class="drawer-main">
+          <div class="detail-layout">
+            <section class="plain-section">
+              <div>
+                <h2>Effect</h2>
+                <p class="muted">Readable policy summary for operators.</p>
+              </div>
+              <div class="preview-box" id="detailEffect">
+                Deny HTTP/API requests where resource category is weather.
+              </div>
+              <div class="detail-grid">
+                <span>Decision</span><strong id="detailDecision">Deny</strong>
+                <span>Action</span><strong id="detailAction">External HTTP/API request</strong>
+                <span>Condition</span><strong id="detailCondition">resource.category = weather</strong>
+                <span>Status</span><strong>Active</strong>
+              </div>
+            </section>
+
+            <aside class="plain-section">
+              <div>
+                <h2>Bound targets</h2>
+                <p class="muted">Binding is focused here, not repeated in every table row.</p>
+              </div>
+              <div class="target-list" id="detailTargets">
+                <div class="target-row">
+                  <div>
+                    <strong>Trade Research Agent</strong>
+                    <span class="muted">Agent</span>
+                  </div>
+                  <button class="button secondary">Remove</button>
+                </div>
+              </div>
+              <button class="button">Bind target</button>
+            </aside>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <script>
+      const policies = {
+        weather: {
+          title: "Block weather API access",
+          subtitle: "Deny weather-category HTTP/API requests.",
+          effect: "Deny HTTP/API requests where resource category is weather.",
+          decision: "Deny",
+          action: "External HTTP/API request",
+          condition: "resource.category = weather",
+          targets: [["Trade Research Agent", "Agent"]],
+        },
+        market: {
+          title: "Paid market-data approval",
+          subtitle: "Require approval for x402 market data above 1 USDC.",
+          effect: "Require approval when x402 market-data requests are at least 1 USDC.",
+          decision: "Require approval",
+          action: "Authorize x402 payment check",
+          condition: "category = market-data, amount >= 1 USDC",
+          targets: [["Trade Research Agent", "Agent"]],
+        },
+        browser: {
+          title: "Observe browser search",
+          subtitle: "Record managed browser.search tool calls.",
+          effect: "Record browser.search tool calls routed through agentOps.",
+          decision: "Observe",
+          action: "Tool call",
+          condition: "tool.name = browser.search",
+          targets: [["Test Organisation 1", "Workspace"]],
+        },
+        rotate: {
+          title: "Credential rotation monitor",
+          subtitle: "Observe credential rotation management actions.",
+          effect: "Record credential rotation actions for selected credentials.",
+          decision: "Observe",
+          action: "Rotate credential",
+          condition: "target.type = credential",
+          targets: [["Test credential", "Credential"], ["Trade Research Agent", "Agent"]],
+        },
+      };
+
+      function openDrawer(id) {
+        document.querySelectorAll(".drawer").forEach((drawer) => drawer.classList.remove("active"));
+        document.getElementById(id).classList.add("active");
+        document.body.classList.add("drawer-open");
+      }
+
+      function closeDrawers() {
+        document.body.classList.remove("drawer-open");
+        document.querySelectorAll(".drawer").forEach((drawer) => drawer.classList.remove("active"));
+      }
+
+      document.querySelectorAll("[data-open='create']").forEach((button) => {
+        button.addEventListener("click", () => openDrawer("createDrawer"));
+      });
+
+      document.querySelectorAll("[data-open='detail']").forEach((button) => {
+        button.addEventListener("click", () => {
+          const data = policies[button.dataset.policy];
+          document.getElementById("detailTitle").textContent = data.title;
+          document.getElementById("detailSubtitle").textContent = data.subtitle;
+          document.getElementById("detailEffect").textContent = data.effect;
+          document.getElementById("detailDecision").textContent = data.decision;
+          document.getElementById("detailAction").textContent = data.action;
+          document.getElementById("detailCondition").textContent = data.condition;
+          document.getElementById("detailTargets").innerHTML = data.targets
+            .map(([name, type]) => `
+              <div class="target-row">
+                <div>
+                  <strong>${name}</strong>
+                  <span class="muted">${type}</span>
+                </div>
+                <button class="button secondary">Remove</button>
+              </div>
+            `)
+            .join("");
+          openDrawer("detailDrawer");
+        });
+      });
+
+      document.querySelectorAll("[data-close]").forEach((button) => {
+        button.addEventListener("click", closeDrawers);
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") closeDrawers();
+      });
+    </script>
+  </body>
+</html>
