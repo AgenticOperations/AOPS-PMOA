@@ -52,3 +52,7 @@ Do not bury implementation history only in chat or handoff. Handoff carries curr
 - `error_log_section-4-runtime-integration-plane.md`
 - `section-5-agent-operational-controls.md`
 - `error_log_section-5-agent-operational-controls.md`
+- `section-6-8-base-gateway-payment-control.md`
+- `error_log_section-6-8-base-gateway-payment-control.md`
+- `section-9-circle-wallet-treasury-foundation.md`
+- `error_log_section-9-circle-wallet-treasury-foundation.md`
