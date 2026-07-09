@@ -20,19 +20,29 @@ export type RuntimeOperationInput = {
   readonly context?: Record<string, unknown> | undefined;
 };
 
+export type RuntimeX402PaymentInput = {
+  readonly accepts: ReadonlyArray<Record<string, unknown>>;
+  readonly context?: Record<string, unknown> | undefined;
+  readonly resource?: Record<string, unknown> | undefined;
+};
+
 export class RuntimeApiError extends Error {
   readonly code: string | null;
+  readonly details: Record<string, unknown>;
   readonly statusCode: number;
 
-  constructor(statusCode: number, message: string, code: string | null = null) {
+  constructor(statusCode: number, message: string, code: string | null = null, details: Record<string, unknown> = {}) {
     super(message);
     this.name = 'RuntimeApiError';
     this.code = code;
+    this.details = details;
     this.statusCode = statusCode;
   }
 }
 
 type ApiErrorBody = {
+  readonly approvalId?: string;
+  readonly decisionId?: string;
   readonly error?: string;
   readonly message?: string;
 };
@@ -126,6 +136,17 @@ export class RuntimeApiClient {
     });
   }
 
+  async paymentX402(input: RuntimeX402PaymentInput): Promise<Record<string, unknown>> {
+    return this.request('/v1/runtime/payments/x402', {
+      body: {
+        accepts: input.accepts,
+        context: input.context ?? {},
+        resource: input.resource ?? {},
+      },
+      method: 'POST',
+    });
+  }
+
   private async request<T extends Record<string, unknown>>(path: string, options: RequestOptions): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -151,6 +172,7 @@ export class RuntimeApiClient {
           response.status,
           body.message ?? body.error ?? `agentOps API request failed with ${response.status}`,
           body.error ?? null,
+          body,
         );
       }
       return (await response.json()) as T;

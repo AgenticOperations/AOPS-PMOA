@@ -1,6 +1,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodObject, type ZodRawShape } from 'zod';
-import type { RuntimeCheckInput } from './runtime-client.js';
+import { RuntimeApiError } from './runtime-client.js';
+import type { RuntimeCheckInput, RuntimeX402PaymentInput } from './runtime-client.js';
 
 export type AgentOpsRuntimeClient = {
   readonly activityRecord: (input: { readonly payload?: Record<string, unknown> | undefined; readonly summary: string }) => Promise<Record<string, unknown>>;
@@ -13,6 +14,7 @@ export type AgentOpsRuntimeClient = {
     readonly outcome?: 'success' | 'denied' | 'pending' | 'error' | undefined;
     readonly summary: string;
   }) => Promise<Record<string, unknown>>;
+  readonly paymentX402: (input: RuntimeX402PaymentInput) => Promise<Record<string, unknown>>;
 };
 
 export type AgentOpsTool = {
@@ -45,6 +47,11 @@ const activityRecordSchema = z.object({
   payload: objectRecord.optional(),
   summary: z.string().trim().min(1).max(500),
 });
+const paymentX402Schema = z.object({
+  accepts: z.array(objectRecord).min(1).max(20),
+  context: objectRecord.optional(),
+  resource: objectRecord.optional(),
+});
 const operationSchema = z.object({
   action: z.enum(['runtime.http.request', 'tool.call']),
   context: objectRecord.optional(),
@@ -71,11 +78,32 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown agentOps MCP error.';
 }
 
+function errorContent(error: unknown, message: string): Record<string, unknown> {
+  if (error instanceof RuntimeApiError) {
+    return {
+      ...error.details,
+      code: error.code,
+      error: message,
+      statusCode: error.statusCode,
+    };
+  }
+  return { error: message };
+}
+
 function recordArgs(args: unknown): Record<string, unknown> {
   return args !== null && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
 }
 
 function summarize(label: string, payload: Record<string, unknown>): string {
+  const payment = payload.payment;
+  if (payment !== null && typeof payment === 'object' && !Array.isArray(payment)) {
+    const paymentRecord = payment as Record<string, unknown>;
+    const decision = typeof paymentRecord.decision === 'string' ? paymentRecord.decision : 'unknown';
+    const amount = typeof paymentRecord.amount === 'string' ? ` ${paymentRecord.amount} USDC` : '';
+    const rail = typeof paymentRecord.rail === 'string' ? ` on ${paymentRecord.rail}` : '';
+    return `${label}: ${decision}${amount}${rail}.`;
+  }
+
   const decision = payload.decision;
   if (decision !== null && typeof decision === 'object' && !Array.isArray(decision)) {
     const decisionRecord = decision as Record<string, unknown>;
@@ -95,7 +123,13 @@ async function safeExecute(
     return textResult(summarize(label, payload), payload);
   } catch (error) {
     const message = errorText(error);
-    return textResult(`agentOps MCP error: ${message}`, { error: message }, true);
+    if (error instanceof RuntimeApiError && error.code === 'liquidity_preparing') {
+      const retryAfter = typeof error.details.retryAfterSeconds === 'number'
+        ? ` Retry after ${error.details.retryAfterSeconds} seconds.`
+        : '';
+      return textResult(`${label}: liquidity preparing.${retryAfter}`, errorContent(error, message), false);
+    }
+    return textResult(`agentOps MCP error: ${message}`, errorContent(error, message), true);
   }
 }
 
@@ -119,6 +153,14 @@ export function createAgentOpsTools(client: AgentOpsRuntimeClient): readonly Age
       inputSchema: policyCheckSchema,
       name: 'agentops.policy_check',
       title: 'Check policy',
+    },
+    {
+      description: 'Submit a Gateway-compatible x402 payment request through agentOps payment controls for this agent.',
+      execute: async (args) =>
+        safeExecute('x402 payment', async () => client.paymentX402(paymentX402Schema.parse(recordArgs(args)))),
+      inputSchema: paymentX402Schema,
+      name: 'agentops.payment_x402',
+      title: 'Submit x402 payment',
     },
     {
       description: 'Fetch the status of a one-time approval request created by a policy check.',

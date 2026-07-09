@@ -88,4 +88,42 @@ describe('RuntimeApiClient', () => {
     await expect(client.onboard()).rejects.toThrow(RuntimeApiError);
     await expect(client.onboard()).rejects.not.toThrow('do_not_leak_me');
   });
+
+  it('preserves structured approval metadata from backend errors', async () => {
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(
+        jsonResponse(
+          {
+            approvalId: 'apv_payment',
+            decisionId: 'pdec_payment',
+            error: 'policy_requires_approval',
+            message: 'A policy requires approval before this request can continue.',
+          },
+          409,
+        ),
+      ),
+    );
+
+    const client = new RuntimeApiClient({
+      apiBaseUrl: 'http://localhost:8080',
+      credential: 'agent_secret_value',
+      timeoutMs: 5000,
+    });
+
+    let caught: unknown;
+    try {
+      await client.paymentX402({
+        accepts: [{ amount: '1.25', network: 'base', scheme: 'exact' }],
+        resource: { category: 'market-data' },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(RuntimeApiError);
+    expect((caught as RuntimeApiError).details).toMatchObject({
+      approvalId: 'apv_payment',
+      decisionId: 'pdec_payment',
+    });
+  });
 });
