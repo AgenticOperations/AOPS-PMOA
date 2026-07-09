@@ -16,10 +16,14 @@
     "@agentops-pmoa/config": "0.0.0",
     "@agentops-pmoa/contracts": "0.0.0",
     "@agentops-pmoa/db": "0.0.0",
+    "@circle-fin/developer-controlled-wallets": "^10.8.0",
+    "@circle-fin/x402-batching": "^3.2.0",
+    "@x402/evm": "^2.17.0",
     "fastify": "^5.2.0",
     "ioredis": "^5.4.1",
     "pg": "^8.13.1",
     "pino": "^9.5.0",
+    "viem": "^2.54.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {

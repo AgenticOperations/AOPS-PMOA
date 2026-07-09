@@ -24,7 +24,7 @@ export type ApprovalRecord = {
   readonly updated_at: string;
 };
 
-export type ActivityCategory = 'policy' | 'approval' | 'runtime' | 'integration' | 'operation';
+export type ActivityCategory = 'policy' | 'approval' | 'runtime' | 'integration' | 'operation' | 'payment' | 'treasury';
 export type ActivityOutcome = 'success' | 'denied' | 'pending' | 'error';
 
 export type ActivityRecord = {

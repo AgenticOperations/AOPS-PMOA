@@ -205,10 +205,19 @@ async function requireOrgOperator(
 }
 
 function sendIdentityError(reply: { code: (statusCode: number) => { send: (body: unknown) => unknown } }, error: IdentityError) {
-  return reply.code(error.statusCode).send({
+  const body: Record<string, unknown> = {
     error: error.code,
     message: error.message,
-  });
+  };
+  if ('approvalId' in error && typeof error.approvalId === 'string') body.approvalId = error.approvalId;
+  if ('decisionId' in error && typeof error.decisionId === 'string') body.decisionId = error.decisionId;
+  if ('jobId' in error && typeof error.jobId === 'string') body.jobId = error.jobId;
+  if ('rail' in error && typeof error.rail === 'string') body.rail = error.rail;
+  if ('chain' in error && typeof error.chain === 'string') body.chain = error.chain;
+  if ('retryAfterSeconds' in error && typeof error.retryAfterSeconds === 'number') {
+    body.retryAfterSeconds = error.retryAfterSeconds;
+  }
+  return reply.code(error.statusCode).send(body);
 }
 
 function parseBody<T>(schema: z.ZodType<T>, request: FastifyRequest): T {

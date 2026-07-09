@@ -41,6 +41,10 @@ const app = buildApp({
     pool,
     sessionCookieName: env.sessionCookieName,
   },
+  payments: {
+    pool,
+    sessionCookieName: env.sessionCookieName,
+  },
   runtime: {
     pool,
   },

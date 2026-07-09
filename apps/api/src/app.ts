@@ -9,6 +9,9 @@ import type { RegisterIdentityRoutesDeps } from './engines/identity/routes.js';
 import { registerIdentityRoutes } from './engines/identity/routes.js';
 import type { RegisterOperationRoutesDeps } from './engines/operations/routes.js';
 import { registerOperationRoutes } from './engines/operations/routes.js';
+import type { RegisterPaymentRoutesDeps } from './engines/payments/routes.js';
+import { registerPaymentRoutes } from './engines/payments/routes.js';
+import { registerTestnetX402VerifierRoutes } from './engines/payments/testnet-x402-verifier.js';
 import type { RegisterPolicyRoutesDeps } from './engines/policy/routes.js';
 import { registerPolicyRoutes } from './engines/policy/routes.js';
 import type { RegisterRuntimeRoutesDeps } from './engines/runtime/routes.js';
@@ -18,6 +21,7 @@ export type BuildAppOptions = {
   readonly evidence?: RegisterEvidenceRoutesDeps;
   readonly identity?: RegisterIdentityRoutesDeps;
   readonly operations?: RegisterOperationRoutesDeps;
+  readonly payments?: RegisterPaymentRoutesDeps;
   readonly policy?: RegisterPolicyRoutesDeps;
   readonly approvals?: RegisterApprovalRoutesDeps;
   readonly runtime?: RegisterRuntimeRoutesDeps;
@@ -36,9 +40,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       ok: true,
       service: 'agentops-pmoa-api',
       version: '0.0.0',
-      section: 'section_5',
+      section: 'section_9',
     }),
   );
+
+  registerTestnetX402VerifierRoutes(app);
 
   if (options.identity !== undefined) {
     registerIdentityRoutes(app, { ...options.identity, policy: options.policy });
@@ -62,6 +68,18 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     });
   }
 
+  if (options.payments !== undefined) {
+    registerPaymentRoutes(app, {
+      ...options.payments,
+      installErrorHandler:
+        options.identity === undefined &&
+        options.policy === undefined &&
+        options.approvals === undefined &&
+        options.runtime === undefined &&
+        options.operations === undefined,
+    });
+  }
+
   if (options.runtime !== undefined) {
     registerRuntimeRoutes(app, {
       ...options.runtime,
@@ -69,6 +87,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.identity === undefined &&
         options.policy === undefined &&
         options.approvals === undefined &&
+        options.payments === undefined &&
         options.operations === undefined,
     });
   }
@@ -80,6 +99,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.identity === undefined &&
         options.policy === undefined &&
         options.approvals === undefined &&
+        options.payments === undefined &&
         options.runtime === undefined,
     });
   }

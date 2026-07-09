@@ -1,0 +1,392 @@
+import { describe, expect, it } from 'vitest';
+import {
+  circleBlockchainForChain,
+  createCircleAgentCliExecutor,
+  gatewayBalanceBlockchainForChain,
+  type CircleCliInvocation,
+  type CircleCliRunner,
+} from '../../src/engines/payments/circle-agent-cli.js';
+
+function runnerFrom(outputs: readonly unknown[]): { readonly calls: CircleCliInvocation[]; readonly runner: CircleCliRunner } {
+  const calls: CircleCliInvocation[] = [];
+  const queue = [...outputs];
+  return {
+    calls,
+    runner: (invocation) => {
+      calls.push(invocation);
+      const next = queue.shift();
+      if (next instanceof Error) return Promise.reject(next);
+      return Promise.resolve({
+        stderr: '',
+        stdout: typeof next === 'string' ? next : JSON.stringify(next),
+      });
+    },
+  };
+}
+
+describe('Circle Agent Wallet CLI executor', () => {
+  it('maps product chains to Circle agent wallet blockchains', () => {
+    expect(circleBlockchainForChain('test', 'base')).toBe('BASE-SEPOLIA');
+    expect(circleBlockchainForChain('live', 'base')).toBe('BASE');
+    expect(circleBlockchainForChain('test', 'polygon')).toBe('MATIC-AMOY');
+    expect(gatewayBalanceBlockchainForChain('test', 'base')).toBe('BASE-SEPOLIA');
+  });
+
+  it('lists testnet SCA wallets with the hidden Circle CLI testnet flag', async () => {
+    const { calls, runner } = runnerFrom([
+      {
+        data: {
+          address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+          blockchain: 'BASE-SEPOLIA',
+          createDate: '2026-07-09T05:42:46Z',
+        },
+      },
+    ]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const wallet = await executor.listWallet({ chain: 'base', mode: 'test' });
+
+    expect(wallet).toMatchObject({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      blockchain: 'BASE-SEPOLIA',
+    });
+    expect(calls[0]).toMatchObject({
+      command: 'circle',
+      args: ['wallet', 'list', '--chain', 'BASE-SEPOLIA', '--type', 'agent', '--testnet', '--output', 'json'],
+    });
+  });
+
+  it('submits a Base Sepolia eco Gateway deposit without native-gas direct deposit arguments', async () => {
+    const { calls, runner } = runnerFrom([
+      {
+        data: {
+          amount: '0.5',
+          backingEOA: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
+          destinationChain: 'MATIC-AMOY',
+          ecoDepositAddress: '0x8A235a58d536987C0585B85E848179401196D17c',
+          gatewayDomain: 7,
+          transferTxHash: '0x6a5f5fbb0d3f1e01afea501e686d845a13904a75eb2deeae61e7ac363d46567f',
+        },
+      },
+    ]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const deposit = await executor.gatewayDepositEco({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      amount: '0.5',
+      mode: 'test',
+      sourceChain: 'base',
+    });
+
+    expect(deposit).toMatchObject({
+      destinationChain: 'MATIC-AMOY',
+      gatewayDomain: 7,
+      transferTxHash: '0x6a5f5fbb0d3f1e01afea501e686d845a13904a75eb2deeae61e7ac363d46567f',
+    });
+    expect(calls[0]?.args).toEqual([
+      'gateway',
+      'deposit',
+      '--amount',
+      '0.5',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--method',
+      'eco',
+      '--timeout',
+      '180',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('executes Gateway contract calls through the Circle Agent Wallet CLI', async () => {
+    const { calls, runner } = runnerFrom([{ data: { id: 'circle_tx_execute' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const result = await executor.executeContract({
+      abiFunctionSignature: 'deposit(address,uint256)',
+      abiParameters: ['0x036CbD53842c5426634e7929541eC2318f3dCF7e', '10000'],
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      chain: 'base',
+      contractAddress: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
+      idempotencyKey: '47d28ad2-f1e9-4c45-bb66-9c0f1890dc54',
+      mode: 'test',
+    });
+
+    expect(result.transaction).toBe('circle_tx_execute');
+    expect(calls[0]?.args).toEqual([
+      'wallet',
+      'execute',
+      'deposit(address,uint256)',
+      '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      '10000',
+      '--contract',
+      '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--idempotency-key',
+      '47d28ad2-f1e9-4c45-bb66-9c0f1890dc54',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('submits direct Gateway deposits through the Circle Agent Wallet CLI', async () => {
+    const { calls, runner } = runnerFrom([
+      {
+        data: {
+          amount: '0.5',
+          approvalTransactionHash: '0xapprove',
+          backingEOA: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
+          depositTransactionHash: '0xdeposit',
+          gatewayDomain: 6,
+          gatewayWalletAddress: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
+        },
+      },
+    ]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const deposit = await executor.gatewayDepositDirect({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      amount: '0.5',
+      mode: 'test',
+      sourceChain: 'base',
+    });
+
+    expect(deposit).toMatchObject({
+      approvalTransactionHash: '0xapprove',
+      backingEOA: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
+      depositTransactionHash: '0xdeposit',
+      gatewayDomain: 6,
+    });
+    expect(calls[0]?.timeoutMs).toBeGreaterThanOrEqual(240_000);
+    expect(calls[0]?.args).toEqual([
+      'gateway',
+      'deposit',
+      '--amount',
+      '0.5',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--method',
+      'direct',
+      '--timeout',
+      '180',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('retries transient Circle CLI 429 responses before parsing JSON', async () => {
+    const { calls, runner } = runnerFrom([
+      new Error('Service returned error 429: rate limited'),
+      {
+        data: {
+          balances: [
+            { available: '0.496000', domain: 6, total: '0.496000', withdrawable: '0.496000', withdrawing: '0' },
+          ],
+        },
+      },
+    ]);
+    const executor = createCircleAgentCliExecutor({ retryDelayMs: 1, runner });
+
+    const balance = await executor.gatewayBalance({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      chain: 'base',
+      mode: 'test',
+    });
+
+    expect(balance).toMatchObject({ available: '0.496000', domain: 6 });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('parses Gateway balances from Circle all-domain balance output', async () => {
+    const { calls, runner } = runnerFrom([
+      {
+        data: {
+          balances: [
+            { available: '0.5', domain: 6, total: '0.5', withdrawable: '0.5', withdrawing: '0' },
+            { available: '0', domain: 7, total: '0', withdrawable: '0', withdrawing: '0' },
+          ],
+        },
+      },
+    ]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const balance = await executor.gatewayBalance({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      chain: 'base',
+      mode: 'test',
+    });
+
+    expect(balance).toMatchObject({ available: '0.5', domain: 6, total: '0.5' });
+    expect(calls[0]?.args).toEqual([
+      'gateway',
+      'balance',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--all',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('routes exact x402 service payments through the native seller chain', async () => {
+    const { calls, runner } = runnerFrom([{ data: { transactionHash: '0xexact' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'live',
+      rail: 'exact',
+      url: 'https://x402.example.test/data',
+    });
+
+    expect(calls[0]?.args).toEqual([
+      'services',
+      'pay',
+      'https://x402.example.test/data',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE',
+      '--max-amount',
+      '0.01',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('routes Gateway x402 service payments through the direct-deposit source chain', async () => {
+    const { calls, runner } = runnerFrom([{ data: { transactionHash: '0xgateway' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'gateway',
+      url: 'https://x402.example.test/data',
+    });
+
+    expect(calls[0]?.args).toEqual([
+      'services',
+      'pay',
+      'https://x402.example.test/data',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--max-amount',
+      '0.01',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('submits a real testnet USDC transfer for exact x402 settlement', async () => {
+    const { calls, runner } = runnerFrom([{ data: { id: 'circle_tx_1' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const transfer = await executor.transferUsdc({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      amount: '0.01',
+      chain: 'base',
+      idempotencyKey: '5b2e29ed-775b-44fa-b49c-780a7342406d',
+      mode: 'test',
+      toAddress: '0x000000000000000000000000000000000000dEaD',
+      tokenAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+    });
+
+    expect(transfer.transaction).toBe('circle_tx_1');
+    expect(calls[0]?.args).toEqual([
+      'wallet',
+      'transfer',
+      '0x000000000000000000000000000000000000dEaD',
+      '--amount',
+      '0.01',
+      '--token',
+      '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--idempotency-key',
+      '5b2e29ed-775b-44fa-b49c-780a7342406d',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('bridges exact-wallet liquidity across testnet chains through Circle CCTP forwarding', async () => {
+    const { calls, runner } = runnerFrom([{ data: { burnTxHash: '0xburn', mintTxHash: '0xmint' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const bridge = await executor.bridgeUsdc({
+      amount: '0.05',
+      fromAddress: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      fromChain: 'base',
+      idempotencyKey: 'b699675f-5d12-408d-9ba1-6a02ecad2136',
+      mode: 'test',
+      toAddress: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      toChain: 'arbitrum',
+    });
+
+    expect(bridge.transaction).toBe('0xmint');
+    expect(calls[0]?.timeoutMs).toBeGreaterThanOrEqual(240_000);
+    expect(calls[0]?.args).toEqual([
+      'bridge',
+      'transfer',
+      'ARB-SEPOLIA',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--amount',
+      '0.05',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--idempotency-key',
+      'b699675f-5d12-408d-9ba1-6a02ecad2136',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('parses direct Gateway deposits with a single transaction hash', async () => {
+    const { runner } = runnerFrom([{ data: { amount: '0.5', transactionHash: '0xdeposit' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const deposit = await executor.gatewayDepositDirect({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      amount: '0.5',
+      mode: 'test',
+      sourceChain: 'arbitrum',
+    });
+
+    expect(deposit).toMatchObject({
+      approvalTransactionHash: null,
+      depositTransactionHash: '0xdeposit',
+    });
+  });
+
+  it('fails closed on malformed Circle CLI JSON', async () => {
+    const executor = createCircleAgentCliExecutor({ runner: runnerFrom(['not-json']).runner });
+
+    await expect(executor.status()).rejects.toThrow('circle_cli_invalid_json');
+  });
+});

@@ -16,7 +16,7 @@ describe('GET /healthz', () => {
       ok: true,
       service: 'agentops-pmoa-api',
       version: '0.0.0',
-      section: 'section_5',
+      section: 'section_9',
     });
   });
 });

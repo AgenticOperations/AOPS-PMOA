@@ -48,6 +48,12 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0006_policy_decision_core');
     expect(firstRun).toContain('0007_runtime_approval_integration_core');
     expect(firstRun).toContain('0008_section_5_operational_controls');
+    expect(firstRun).toContain('0009_section_6_8_payment_control');
+    expect(firstRun).toContain('0010_section_9_circle_treasury');
+    expect(firstRun).toContain('0011_section_9_testnet_faucet');
+    expect(firstRun).toContain('0012_section_9_circle_agent_wallet_sca');
+    expect(firstRun).toContain('0013_section_9_rebalance_jobs');
+    expect(firstRun).toContain('0014_section_9_liquidity_manager');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -63,6 +69,12 @@ describe('PMOA database migrations', () => {
       '0006_policy_decision_core',
       '0007_runtime_approval_integration_core',
       '0008_section_5_operational_controls',
+      '0009_section_6_8_payment_control',
+      '0010_section_9_circle_treasury',
+      '0011_section_9_testnet_faucet',
+      '0012_section_9_circle_agent_wallet_sca',
+      '0013_section_9_rebalance_jobs',
+      '0014_section_9_liquidity_manager',
     ]);
 
     const sectionOneTable = await pool.query<{ exists: string }>(
