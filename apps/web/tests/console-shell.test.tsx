@@ -12,7 +12,7 @@ const org = {
 };
 
 describe('ConsoleShell', () => {
-  it('renders only functional navigation through Section 5', () => {
+  it('renders only functional navigation through Sections 6-8', () => {
     render(
       <ConsoleShell active="controls" org={org}>
         <p>Workspace content</p>
@@ -34,6 +34,10 @@ describe('ConsoleShell', () => {
     expect(screen.getByRole('link', { name: /Operations/i })).toHaveAttribute(
       'href',
       '/app/acme-agent-ops/operations',
+    );
+    expect(screen.getByRole('link', { name: /Payments/i })).toHaveAttribute(
+      'href',
+      '/app/acme-agent-ops/payments',
     );
     expect(screen.getByRole('link', { name: /Approvals/i })).toHaveAttribute(
       'href',

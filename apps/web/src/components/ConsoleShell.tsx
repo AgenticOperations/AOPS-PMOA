@@ -4,7 +4,7 @@ import { ThemeToggle } from './ThemeToggle';
 import type { Org } from '@/lib/identity-spine-types';
 
 type ConsoleShellProps = {
-  readonly active: 'overview' | 'agents' | 'controls' | 'operations' | 'approvals';
+  readonly active: 'overview' | 'agents' | 'controls' | 'operations' | 'payments' | 'approvals';
   readonly children: ReactNode;
   readonly org: Org;
 };
@@ -33,6 +33,12 @@ const navItems = [
     label: 'Operations',
     href: (slug: string) => `/app/${slug}/operations`,
     icon: <OperationsIcon />,
+  },
+  {
+    key: 'payments',
+    label: 'Payments',
+    href: (slug: string) => `/app/${slug}/payments`,
+    icon: <PaymentsIcon />,
   },
   {
     key: 'approvals',
@@ -97,7 +103,9 @@ export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
                     ? 'Controls'
                     : active === 'operations'
                       ? 'Operations'
-                      : 'Approvals'}
+                      : active === 'payments'
+                        ? 'Payments'
+                        : 'Approvals'}
             </span>
           </div>
           <div className="app-header-actions">
@@ -209,6 +217,26 @@ function OperationsIcon() {
       <path d="M4 12h16" />
       <path d="M4 17h10" />
       <circle cx="18" cy="17" r="2" />
+    </svg>
+  );
+}
+
+function PaymentsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="nav-icon"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+    >
+      <rect height="14" rx="2" width="18" x="3" y="5" />
+      <path d="M3 10h18" />
+      <path d="M7 15h4" />
+      <path d="M15 15h2" />
     </svg>
   );
 }
