@@ -19,6 +19,8 @@ vi.mock('@/lib/server/identity-spine-client.js', () => ({
 
 vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
+  usePathname: () => '/app/acme-agent-ops/overview',
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 describe('Section 1 product flow', () => {
