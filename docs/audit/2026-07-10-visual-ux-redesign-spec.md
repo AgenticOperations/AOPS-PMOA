@@ -1,247 +1,1168 @@
 # agentOps Console: Visual & UX Redesign Spec
 
 Date: 2026-07-10
-Builds on: `docs/audit/2026-07-10-console-feature-data-audit.md` (data/feature inventory — read that first for exact tables/columns cited here)
-Governing constraint: `DESIGN.md` (rewritten 2026-07-10 to be canonical — read that first; this spec is consistent with it, not a competing source)
-Scope: the authenticated product only — Auth, Onboarding, and the full console (Overview, Agents, Controls, Operations, Payments, Approvals, Workspace Settings). Everything from the moment a user clicks "Get Started" onward. The public landing/marketing page is explicitly out of scope for this pass; it gets its own future spec in the brand register using `high-end-visual-design`.
-Visual reference: **`shadcn-fintech`** (github.com/abderrahimghazali/shadcn-fintech, MIT) is the canonical dashboard reference per `DESIGN.md` — its component structure, layout patterns, card/table/chart treatment, and overall fintech-SaaS polish level are the target, not just a source mined for structure. What doesn't carry over is its wallet-first/crypto-trading *content* (leading with token balances, a dedicated Crypto page) — `PRODUCT.md`'s anti-references remain in force at the content/IA level, not the visual-style level.
-Design-skill grounding: `impeccable` product register (`~/.claude/skills/impeccable/reference/product.md`) still governs baseline product-UI discipline (component states, motion restraint, familiar navigation). `high-end-visual-design` and `frontend-design` are reserved for the future landing page — a different register (brand, not product) — and are deliberately not applied to the console.
+
+Builds on: `docs/audit/2026-07-10-console-feature-data-audit.md`
+
+Governing constraints:
+- `DESIGN.md` is canonical for the authenticated product.
+- `PRODUCT.md` governs product framing and anti-references.
+- This spec covers Auth, Onboarding, and the authenticated console only. Landing and marketing pages are out of scope.
+
+Reference:
+- `shadcn-fintech` (github.com/abderrahimghazali/shadcn-fintech, MIT) is the dashboard reference for component structure, density, table treatment, cards, charts, command palette, and sidebar behavior.
+- We do not copy its wallet-first content model, crypto page, 3D assets, or trading-dashboard framing. agentOps is an agent operations and treasury control plane.
 
 ---
 
-## Part 0: Why this order
+## 1. Design Position
 
-Per the product register's own slop test: "would a user fluent in Linear/Stripe/Notion trust this, or pause at every subtly-off component?" The current console fails that test not because it's ugly, but because it's *incomplete* — dead panels (`WalletRefsPanel`), write-only forms with no corresponding read view (rate limits, payment events), and hardcoded assumptions presented as real choices (Gateway source always "simulation"/"base"). A visual reskin on top of that would look worse, not better — polished chrome around broken affordances reads as *more* suspicious, not less.
+The current console does not need more decoration. It needs a stable information architecture, a reusable layout system, and clear separation between reading state and mutating state.
 
-That's why the parallel backend-hardening plan (member management, policy simulations, rail verification, wallet refs rendering, hardcode removal) has to land before or alongside this visual work, not after it. This spec assumes that hardening plan's data/actions become real; where a widget below depends on an endpoint that plan is adding, it's noted.
+Target feel:
+- Stripe-like clarity in forms, status, and financial controls.
+- AWS-like depth, but only after progressive disclosure.
+- shadcn-fintech-like implementation discipline: grouped sidebar, compact card grids, real tables, command palette, responsive shell, and charts that serve a question.
 
----
+Non-goals:
+- No landing-page hero patterns.
+- No glass, heavy blur, gradient orbs, big-radius floating cards, or decorative motion.
+- No fake metric cards that do not map to backend data.
+- No global Analytics or History nav item. Analytics and history live inside the page they explain.
 
-## Part 1: Foundations
-
-### Color — Restrained (the product-register floor, not a ceiling we're choosing to skip)
-
-- Background: warm-tinted off-white (`DESIGN.md` existing token — keep).
-- Surface: near-white panel, one step lighter than background.
-- Second neutral layer (per impeccable product register): a slightly cooler-tinted panel for the sidebar/toolbar, distinct from the content surface — this is new; today everything is one flat surface.
-- Text: dark neutral, cool tint, never pure black (existing token — keep).
-- Accent: one clear blue for primary actions/selection/links (existing token — keep). This is also directionally close to USDC's own brand blue (`#2775CA`), which is convenient, not a coincidence to lean into further.
-- Semantic state colors (new, currently under-used): success green, warning amber, danger red, info blue — for status badges (`payment_events.decision`, `approval_requests.status`, `operational_decisions.decision`, `circle_provider_jobs.status`). Used only on badges/indicators, never as background washes.
-- USDC branding: the official USDC mark (blue circle, white "$") appears **only** as a small icon next to a balance/amount figure (treasury balance, agent budget, payment amount) — never as a page-wide color theme, never as decorative background art. This keeps faith with `PRODUCT.md`'s "do not lead with token balances" / "do not look like a crypto trading dashboard" — the logo identifies the currency, it doesn't brand the product.
-
-### Typography
-
-- **Montserrat** (via `next/font/google`) as the primary face for both UI and display roles — headings, labels, buttons, body, data. Fallback stack ends in system-ui/sans-serif for resilience. This replaces the prior system-font-stack-only guidance.
-- Fixed rem scale, ratio ~1.15 between steps (tighter than a marketing site — more type sizes needed for dense data screens).
-- Tabular figures (`font-variant-numeric: tabular-nums`) on every number column — amounts, counts, dates — so columns of numbers align. This single change will visibly lift every table in the app.
-- Line length rule (65-75ch) applies to prose blocks (policy descriptions, empty-state copy) only; tables run as dense as the data needs.
-
-### Motion
-
-- 150-250ms on all transitions (product register, not brand register — no orchestrated page-load sequences, no scroll-triggered reveals in the console itself).
-- Motion conveys state only: row insert/remove, panel expand/collapse, status-badge change, live-activity pulse. Never decorative.
-- The one place sanctioned "liveliness" belongs: real-time agent activity indicators (see Part 3) — a subtle pulse/glow on a "live" status dot, not a page-load animation.
-
-### Component primitives (adopted from shadcn/ui, restyled to the tokens above)
-
-Pull in: `Card`, `Table`, `Sidebar`, `Chart` (recharts wrapper), `Command` (palette), `Dialog`, `Tabs`, `Badge`, `Select`, `Popover`, `Sheet`, `Tooltip`, `Skeleton`, `Separator`. This becomes the missing design-system layer the audit flagged (`apps/web/src/components/ui/`, currently only has `sidebar.tsx`).
-
-Explicitly **not** adopted from the reference: `@dnd-kit` (drag-drop dashboard customization — no evidence operators want to rearrange their own console), `three`/`three-globe`/`@react-three/*` (3D globe — pure decoration, fails "does it complete an action or expose real state").
-
-New primitives this app needs that shadcn-fintech doesn't have (it has no equivalent flow):
-- **Stepper/wizard** — for Controls' draft→validate→activate→bind flow and the redesigned Onboarding form. Built from `Tabs`+`Dialog`+`Separator` composition (see Part 4).
-- **Fixed-height scroll table** — see below.
-
-### The "no infinite stretch, hidden scrollbar" table pattern
-
-Every data table in the app (Approvals inbox, Agents roster, Transactions/Payment events, Blocked operations, Audit log) uses one shared table shell:
-
-```
-.table-shell {
-  max-height: <viewport-relative value, e.g. 60vh or a fixed px per page's layout>;
-  overflow-y: auto;
-  scrollbar-width: none;           /* Firefox */
-}
-.table-shell::-webkit-scrollbar { display: none; }  /* Chrome/Safari */
-```
-
-Scrolling still works (mouse wheel, trackpad, keyboard) — only the visible scrollbar track/thumb is hidden, so a long table doesn't visually dominate or push page footer content around. Pair with a sticky header row inside the shell so column labels stay visible while scrolling. Pagination (or "load more") still applies for genuinely large sets (Approvals, Audit log) — hiding the scrollbar is a visual choice, not a substitute for pagination on 1000+ row tables.
+Visual floor:
+- Light-first product UI with restrained dark mode support.
+- Montserrat from `DESIGN.md`.
+- 1px borders, small radius, compact table rows, tabular numbers.
+- Cards and panels use ring/border elevation, not card drop shadows.
+- Badges and status indicators are pills; cards and panels are not.
+- Charts default to neutral/grayscale series; semantic color appears as tints only.
+- Color used for state only: success, warning, danger, info, selected.
+- Motion limited to 150-250ms state changes and small live-status indicators.
 
 ---
 
-## Part 2: Information architecture & routing
+## 2. Current Product Surfaces
 
-Keep the existing top-level nav (`ConsoleShell`): **Overview, Agents, Controls, Operations, Payments, Approvals** — per your direction, no dedicated Analytics/History nav item. What changes is what lives *inside* each page.
+This is the product object map the UI must serve. Every visible card, table, form, and chart must attach to one of these backend-backed surfaces.
 
-Every domain page (Agents detail, Controls, Operations, Payments, Approvals) gets the same internal shape, using `Tabs`:
+### Identity
 
-```
-[ Overview | Activity & history | Settings/Config ]
-```
+Data:
+- `orgs`
+- `users`
+- `memberships`
+- `teams`
+- `agents`
+- `connections`
+- `connection_credentials` (never exposed directly)
+- `wallet_refs`
+- `oauth_accounts`
+- `auth_sessions`
+- `org_onboarding_states`
 
-- **Overview tab** (default): the page's primary workflow — what's there today, cleaned up (e.g., Payments' treasury setup, Controls' policy library).
-- **Activity & history tab** (new, per page): the embedded analytics/history section, sourced from the tables the audit flagged as UI-less (see Part 3 for exact mapping per page). This is where "per-page analytics, not a dedicated nav item" actually lives.
-- **Settings/Config tab**: configuration surfaces that aren't the main workflow (e.g., Operations' rate-limit configuration separated from the tool catalog; Payments' provider-mode/rail-verification settings separated from the treasury dashboard).
+Actions:
+- Sign in with Google.
+- Create org.
+- Create/update agent.
+- Pause, activate, deactivate agent.
+- Create, rotate, revoke credential.
+- Attach/detach wallet reference.
+- Add/update/remove member.
+- Create/update/archive team.
+- Skip/resume onboarding steps.
 
-Agent Detail gets a fourth tab structure since it's already the richest page:
-```
-[ Overview | Policies & access | Credentials & wallets | Activity & history ]
-```
-(Policies&access and Credentials&wallets already exist as sections on the page today — this just gives them tab-level separation instead of one long scroll, and is where the fix for the dead `WalletRefsPanel` and unrendered agent hierarchy lands.)
+### Policy And Control
 
-New page: **Workspace Settings** (`/app/{orgSlug}/settings`), added to the nav (or under an org-name dropdown, not the primary domain nav) once the backend-hardening plan's member/team APIs land — members list+invite, teams CRUD, org profile. This isn't a domain page like Payments/Controls, so it sits apart from the main six.
+Data:
+- `policy_action_registry`
+- `policy_drafts`
+- `policy_versions`
+- `policy_bindings`
+- `policy_decisions`
+- `policy_simulations`
+- `approval_requests`
+- `approval_actions`
+- `approval_consumptions`
 
-Onboarding becomes a real multi-step flow (see Part 4), still a standalone route outside `ConsoleShell` chrome, consistent with Auth.
+Actions:
+- Create policy draft.
+- Edit/discard draft.
+- Validate draft.
+- Simulate draft.
+- Activate draft.
+- Bind/unbind active policy.
+- Archive policy.
+- Create new policy version.
+- Approve/deny runtime approval.
+- Consume approval at runtime.
 
----
+### Runtime Operations
 
-## Part 3: Data → per-page analytics/history mapping
+Data:
+- `tool_catalog`
+- `operational_rate_limits`
+- `operational_rate_counters`
+- `operational_decisions`
+- `mcp_sessions`
+- `connection_rate_limits`
+- `activity_items`
 
-For each page's new "Activity & history" tab, the exact source tables (all already exist per the audit — no new tables needed beyond what the backend-hardening plan adds):
+Actions:
+- Import/update/archive tool.
+- Create/update/disable rate limit.
+- Runtime operation check/record.
+- Runtime MCP/API activity record.
 
-**Overview** (org-wide rollup, not a tab — this *is* the whole page, redesigned; see Part 4)
+### Treasury And Payments
 
-**Agents → Activity & history tab**
-- Timeline: `activity_items` + `audit_events` (already merged server-side by `getAgentActivityFeed` — just needs a fuller view than today's 5s-polled snippet).
-- Blocked/rate-limited operations for this agent: `operational_decisions` (already fetched, currently only "recent 12" — extend to full filterable history).
-- Payment activity for this agent: `payment_events` filtered by `agent_id` (net-new surface — today only "last payment" shows anywhere, and not on this page at all).
+Data:
+- `org_treasuries`
+- `payment_sources`
+- `agent_payment_accounts`
+- `payment_route_observations`
+- `payment_reservations`
+- `payment_events`
+- `org_payment_modes`
+- `circle_chain_capabilities`
+- `circle_wallet_sets`
+- `circle_chain_wallets`
+- `circle_provider_jobs`
 
-**Controls → Activity & history tab**
-- Policy decision log: `policy_decisions` (currently zero UI anywhere) — filterable by action/target/decision, this is the single biggest untapped table in the schema.
-- Simulation history: `policy_simulations` (once the hardening plan's simulate endpoint exists) — "what would this draft have done."
+Actions:
+- Set test/live provider mode.
+- Create/sync Circle treasury.
+- Create source with explicit provider, chain, and rail.
+- Deposit into Gateway.
+- Request testnet faucet funding.
+- Reconcile provider jobs.
+- Verify one rail.
+- Verify all unverified rails.
+- Create/retry/cancel liquidity job.
+- Bridge/top up exact wallet.
+- Configure agent payment access.
+- Runtime x402 payment request and settlement.
 
-**Operations → Activity & history tab**
-- Full decision trend (not just deny/rate_limited): `operational_decisions`, all decision types, chartable over time.
-- Rate-limit utilization: `operational_rate_counters` (zero UI today) — per limit, consumption vs. `limit_count`/`window_seconds`, the direct data source for a utilization bar/heatmap.
-- Live session visibility: `mcp_sessions` (zero UI today) — which agents/connections have an active session right now.
+### Audit And Evidence
 
-**Payments → Activity & history tab**
-- Payment ledger: `payment_events`, full history (today: "last payment" only) — amount, rail, chain, decision, over time. This is the richest payments surface to build; maps directly to shadcn-fintech's Transactions-table pattern.
-- Routing outcomes: `payment_route_observations` (zero UI) — accepted/rejected routing attempts per agent/rail, with reason codes. Maps to shadcn-fintech's Analytics-page category-breakdown pattern (breakdown by rejection reason instead of spend category).
-- Provider job history: `circle_provider_jobs`, all job types (today: liquidity-jobs subset only).
+Data:
+- `audit_event_heads`
+- `audit_events`
+- page-local event streams from policy, operations, payments, approvals, and agent activity.
 
-**Approvals → Activity & history tab**
-- Full audit trail: `approval_actions` (zero UI) — who requested/approved/denied, with notes, per approval.
-- Consumption proof: `approval_consumptions` (zero UI) — confirms an approval was actually used at runtime, not just decided on.
-- Approval-rate metrics: computed from `approval_requests` — approval rate, average time-to-decision, denial-reason breakdown.
-
-None of this requires new tables. It requires new read endpoints/queries against tables that already exist (the backend-hardening plan's pattern — expose, don't invent) plus the chart/table components from Part 1.
-
----
-
-## Part 4: Overview page — complete design
-
-Goal (per your ask): the org's front door, low cognitive load, intuitive, engaging, not a wall of numbers. Currently: just an agent roster. Target: the aggregate dashboard pulling the highest-signal item from every section, per the audit's §10 shortlist.
-
-**Layout** (adapting shadcn-fintech's Dashboard structure, restyled to restrained tokens, no wallet-first framing):
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Org name · workspace switcher                    [search] 🔔│
-├─────────────────────────────────────────────────────────────┤
-│  Row 1 — four compact stat tiles (not hero-metric template): │
-│  [Active agents]  [Pending approvals]  [Treasury balance]    │
-│  [Blocked ops, 24h]                                          │
-│  Each tile: current value + one-line trend, no sparkline     │
-│  noise. Pending-approvals tile is the one that gets a        │
-│  color cue (amber) when count > 0 — everything else neutral. │
-├───────────────────────────────┬───────────────────────────────┤
-│ Agent roster (existing table, │ Needs attention (new)         │
-│ kept, but trimmed to essential│ - oldest pending approval,    │
-│ columns: name, team, status,  │   with age + one-click open   │
-│ connection health, "open")    │ - agents with zero policy     │
-│ Uses the fixed-height/hidden- │   bindings (coverage gap)     │
-│ scrollbar table shell.        │ - any failed payment_events   │
-│                               │   in last 24h (surfaces the   │
-│                               │   Arbitrum-class issue at     │
-│                               │   the org level, not buried   │
-│                               │   in Payments)                │
-├───────────────────────────────┴───────────────────────────────┤
-│ Recent activity (new) — org-wide activity_items feed, cross-  │
-│ agent, last ~20 events, each with a link to the source page.  │
-│ This is the one place a genuinely "live" feel is earned:      │
-│ a subtle pulse on new items arriving, nothing else animated.  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Why this structure, not a bigger grid of cards**: the "Needs attention" panel is the actual answer to "low cognitive load" — instead of making the operator scan six sections to find what's wrong, the page tells them directly. This is also the one place `impeccable`'s "cards are the lazy answer" caution matters: "Needs attention" is a list of actionable rows (icon + one line + link), not a grid of decorative cards — a list is the correct affordance here, not a card grid.
-
-**What's deliberately absent**: no chart-heavy "financial overview" hero (shadcn-fintech's Dashboard leads with a 12-month revenue chart — wrong shape for this product; agentOps' Overview isn't reporting revenue, it's reporting operational health). No wallet balance treated as the hero metric, consistent with `PRODUCT.md`.
-
----
-
-## Part 5: Multi-step forms / wizards
-
-Two flows need a real stepper (shadcn-fintech has no equivalent — this is net-new pattern work):
-
-**Onboarding** (currently one field: org name):
-1. Organization name
-2. Domain + primary use case (currently collected by the backend, dropped by the UI per the audit — the hardening plan restores this)
-3. Review + create
-
-Each step is a `Card` with a `Tabs`-driven step indicator (not literal `<Tabs>` navigation — a read-only progress indicator + Next/Back buttons), single form submission at the end (org creation stays atomic — no partial-org autosave, matching the hardening plan's constraint that `org_onboarding_states` needs an `org_id` that doesn't exist yet).
-
-**Controls policy draft builder** (currently one flat drawer form):
-1. Choose action(s) + decision (allow/deny/approval_required/observe)
-2. Configure conditions (resource/payment/tool) — fields shown driven by the backend's new `policy-actions` metadata endpoint (from the hardening plan), not a hardcoded map
-3. Validate (calls the existing validate endpoint, shows warnings/errors inline before allowing "Next")
-4. Review + create draft (and, separately, a "Simulate" action once that endpoint exists, before Activate)
-
-This directly fixes the audit's finding that `PolicyDraftBuilder.tsx`'s field-visibility logic is hand-maintained and can drift from the server's validation rules — the stepper's "which fields show" now reads from the same backend metadata the validator uses.
+Actions:
+- View event.
+- Verify audit chain or event proof.
+- Filter by domain/category/severity/tag/related entity.
 
 ---
 
-## Part 6: Real-time agent monitoring pattern
+## 3. Route Map
 
-Today: `AgentLiveActivity` polls every 5 seconds, tucked into one panel on Agent Detail. Keep the polling approach (no infra case for websockets here), but standardize the pattern app-wide since Operations' `mcp_sessions` (live session tracking, currently unexposed) needs the same treatment:
+Auth and onboarding are standalone. The authenticated product uses `ConsoleShell`.
 
-- A small live-status dot (green pulse / gray / red) next to any entity with a real-time dimension: agent connection health, MCP session activity, liquidity-job status.
-- The pulse itself is the only decorative motion sanctioned outside of state-change transitions — subtle, on a 2px dot, never on a whole card.
-- Underlying data refresh stays poll-based (5-15s depending on page cost), surfaced via the same `Skeleton`-on-load / no-spinner-mid-content rule from the product register.
+All org routes below are scoped under `/app/{orgSlug}`.
+
+| Route | Page | Shell | Purpose |
+|---|---|---|---|
+| `/auth` | Auth | No | Google session and workspace selection |
+| `/onboarding` | Onboarding | No | Optional setup wizard after first org creation |
+| `/overview` | Overview | Yes | Org health dashboard |
+| `/agents` | Agents | Yes | Agent registry |
+| `/agents/{agentId}` | Agent detail | Yes | Agent identity, access, credentials, wallets, activity |
+| `/controls` | Controls | Yes | Policy library, drafts, bindings, decision history |
+| `/operations` | Operations | Yes | Tool catalog, rate limits, runtime decisions |
+| `/approvals` | Approvals | Yes | Human approval inbox and history |
+| `/payments` | Treasury overview | Yes | Payment health, balances, readiness summary |
+| `/payments/sources` | Treasury sources and rails | Yes | Treasury, Circle wallets, sources, rail proofs |
+| `/payments/access` | Treasury agent access | Yes | Agent budgets, caps, rails, approval thresholds |
+| `/payments/liquidity` | Treasury liquidity | Yes | Liquidity jobs, top-ups, deposits, rebalancing |
+| `/payments/activity` | Treasury activity | Yes | Payment ledger, route observations, reservations, provider jobs |
+| `/settings` | Workspace settings | Yes | Members, teams, org profile |
+
+### Sidebar IA
+
+Use grouped navigation, matching the shadcn-fintech pattern, but with agentOps domains:
+
+Workspace:
+- Overview
+
+Identity:
+- Agents
+- Controls
+
+Runtime:
+- Operations
+- Approvals
+
+Treasury:
+- Payments parent, route `/payments`, expandable in the sidebar.
+- Children:
+  - Overview
+  - Sources & Rails
+  - Agent Access
+  - Liquidity
+  - Activity & Evidence
+
+Org:
+- Settings
+
+Implementation note:
+- Keep `ConsoleShell` as a server component.
+- Move nav interactivity into a small client component that uses `usePathname()` for active state and Treasury expansion.
+- Do not keep caller-supplied active keys. Subroutes need route-derived partial matching.
+- The Payments parent label should be product copy, not a mixed "Payments/Treasury" string. Recommendation: label the sidebar parent **Treasury**, keep URLs as `/payments` for route compatibility.
 
 ---
 
-## Part 7: Step-by-step build-out roadmap
+## 4. Layout Blueprints
 
-This assumes the backend-hardening plan (member mgmt, policy metadata/simulation, rail verification, wallet-refs rendering, hardcode removal) is in flight or complete — visual work sequenced to not race ahead of real data/actions.
+The product should reuse three structural layouts instead of inventing a page shape every time.
 
-**Phase 0 — Design system foundation** (blocks everything else)
-- Install `recharts`, `cmdk`, `class-variance-authority`, `next-themes`, `date-fns` into `apps/web`.
-- Build `apps/web/src/components/ui/*` primitives (Card, Table, Sidebar upgrade, Chart wrapper, Command, Dialog, Tabs, Badge, Select, Popover, Sheet, Tooltip, Skeleton) restyled to `DESIGN.md` tokens.
-- Build the shared fixed-height/hidden-scrollbar table shell.
-- Run `impeccable document` once this exists to generate an updated `DESIGN.md` capturing the real component library (so it stops being a token-only doc).
-- *Skill to invoke:* `impeccable shape` for this phase specifically, since it's pure component/system work with no page-level UX decisions left open.
+### A. Aggregator
 
-**Phase 1 — Overview redesign**
-- Build the four stat tiles, "Needs attention" panel, org-wide activity feed, trimmed agent roster.
-- Requires: pending-approvals count (existing `approval_requests` query), policy-coverage-gap query (new, simple `agents` LEFT JOIN `policy_bindings`), failed-payment-events-24h query (existing `payment_events` filtered), org-wide `activity_items` query (existing table, new "no agent filter" query variant).
-- *Skill:* `impeccable craft` (shape, then build, single page).
+Used by:
+- Overview
+- Treasury overview
 
-**Phase 2 — Per-page tab restructure + Activity & history tabs**
-- Roll out the `[Overview | Activity & history | Settings]` tab shape to Agents (detail), Controls, Operations, Payments, Approvals, one page at a time.
-- Each page's Activity & history tab wired to the tables in Part 3.
-- Wallet refs panel re-attached to Agent Detail as part of this phase (Agents page).
-- *Skill:* `impeccable craft` per page; `impeccable critique` after each to catch cognitive-load regressions before moving to the next page.
+Shape:
+- Header with page title, one-line operational context, primary action if any.
+- Four compact status tiles maximum.
+- One main chart or trend panel only if it answers a current operator question.
+- A "Needs attention" list with links into source pages.
+- One recent activity table/feed.
 
-**Phase 3 — Wizards**
-- Onboarding multi-step form.
-- Controls policy-draft stepper, wired to the backend's policy-actions metadata endpoint.
-- *Skill:* `impeccable shape` first (these are genuinely new UX flows, not reskins), then `craft`.
+Rules:
+- No decorative hero metric.
+- No table that grows past the first viewport.
+- No action-heavy forms on aggregator pages.
 
-**Phase 4 — Workspace Settings (new page)**
-- Members list/invite/role-change/remove, teams CRUD — gated on the backend-hardening plan's member APIs landing.
-- *Skill:* `impeccable craft`.
+### B. Index
 
-**Phase 5 — Hardening pass**
-- Run `impeccable audit` (a11y, perf, responsive) and `impeccable polish` across the full app.
-- Verify every interactive component has all states (default/hover/focus/active/disabled/loading/error) per the product register's component bar — the audit's "no edit/discard/unbind" findings become explicit empty/disabled-state checks here, not just missing buttons.
-- Empty states rewritten to teach the interface (per product register), not "nothing here" placeholders — this matters especially for the new Activity & history tabs on orgs with little history yet.
+Used by:
+- Agents list
+- Approvals inbox
+- Operations decisions
+- Policy library
+- Treasury activity ledgers
+- Settings members/teams
 
-**Ordering rationale**: Phase 0 first because every later phase consumes its primitives. Phase 1 (Overview) second because it's the highest-visibility, most self-contained win and validates the design system against real layout pressure before rolling out to five more pages. Phases 2-4 can run in parallel across pages once Phase 0/1 are done, if using `subagent-driven-development` with one implementer per page (they don't share state). Phase 5 always last.
+Shape:
+- Header.
+- Toolbar with search, filters, view toggles, and one primary action.
+- Fixed-height table shell with sticky header and hidden scrollbar.
+- Row click opens a Sheet drawer for details.
+- Bulk actions only when the backend actually supports them.
+
+Rules:
+- Tables show the 80 percent fields only.
+- JSON, hashes, raw IDs, provider payloads, and proof details live in drawers.
+- Pagination or "load more" on high-volume logs.
+
+### C. Focus Canvas
+
+Used by:
+- Onboarding wizard
+- Policy draft builder
+- Agent payment access form
+- Treasury source setup
+- Liquidity/rebalance action forms
+- Credential rotate/revoke confirmations
+
+Shape:
+- Single-column or two-pane stepper.
+- Left pane: steps and short state summary.
+- Right pane: current input group.
+- Footer: Back, Save draft when relevant, Continue, Submit.
+
+Rules:
+- Multi-step actions are never one giant form.
+- Inline validation before submit.
+- Review step before irreversible actions.
+- Drawers can take the width from content edge to right edge, but must not overlap the sidebar.
 
 ---
 
-## Open decisions flagged, not blocking
+## 5. Page Designs
 
-- **Workspace Settings nav placement**: under the org-name dropdown vs. a seventh top-level nav item — recommend the dropdown (keeps the six-item domain nav clean per your "no extra nav items" direction), but worth a quick visual check once built.
-- **Chart color mapping**: recharts series need a small, fixed categorical palette (rail types, decision types, job statuses) — will define exact hex values against `DESIGN.md` tokens during Phase 0, not guessed here.
+Pages are ordered from least dense to most dense. This order is analysis order, not sidebar order.
+
+### 5.1 Auth
+
+Current data/actions:
+- Reads session/workspaces.
+- Starts Google OAuth.
+- Lets signed-in user choose a workspace.
+
+New layout:
+- Centered auth panel, no console sidebar.
+- Left/top brand lockup and one sentence explaining "Agent operations control plane".
+- Primary button: Continue with Google.
+- If signed in, show workspace table/list with org name and role.
+
+No charts, no metrics, no fake marketing feature grid.
+
+Empty state:
+- If signed in with no workspaces, show one compact action row: create a workspace. Do not show a feature tour.
+
+Mobile:
+- Single-column centered panel with the workspace list becoming stacked rows. OAuth button stays full width.
+
+### 5.2 Onboarding
+
+Current data/actions:
+- Creates org.
+- Backend supports domain/use case and onboarding state, but setup should not become mandatory.
+
+New layout:
+- Standalone Focus Canvas.
+- Step 1 required: Organization name.
+- After org creation, all setup steps are optional and skippable:
+  1. Sync Circle wallet.
+  2. Fund treasury.
+  3. Create first agent.
+  4. Create credential.
+  5. Attach starter policy.
+  6. Enable payment access.
+  7. Test API/MCP request.
+
+Behavior:
+- User can leave after org name and do every step later from the relevant page.
+- Each optional step writes `org_onboarding_states`.
+- Empty or skipped setup must not block console access.
+
+Empty state:
+- Optional steps show "Not set up yet" with the one next action and a Skip link. No warning styling until the step blocks a real requested action.
+
+Mobile:
+- Step rail collapses to a compact progress header. The active step form becomes a single column with sticky bottom actions.
+
+### 5.3 Approvals
+
+Current data/actions:
+- Lists approval requests.
+- Approve/deny.
+- Approval actions and consumptions exist but need a fuller operator view.
+
+New layout:
+- Index layout.
+- Tabs: Inbox, History.
+- Inbox table columns: request, agent, decision required, amount/resource, age/expires, status.
+- Row drawer shows full context, matched policy, request body summary, approval actions, and consumption proof if present.
+- Approve/deny opens a confirmation drawer with optional reason.
+
+Analytics:
+- Approval rate.
+- Average time to decision.
+- Expired vs approved vs denied.
+- Top policies requesting approval.
+
+Empty state:
+- Inbox empty state says no pending approvals and links to Controls policies that can require approval.
+- History empty state says resolved approvals appear after approve, deny, expire, or consume events.
+
+Mobile:
+- Toolbar filters collapse into a Filter sheet. Approval rows become cards with request, age, amount/resource, and status visible before opening the detail sheet.
+
+### 5.4 Settings
+
+Current data/actions:
+- Member APIs and team APIs are backend-backed.
+
+New layout:
+- Index layout with tabs: Members, Teams, Org Profile.
+- Members table: user, email, role, status, joined, actions.
+- Teams table: name, status, default, agent count, actions.
+- Org profile: name/domain/use case where supported.
+
+Actions:
+- Add member.
+- Change member role.
+- Remove member.
+- Create/update/archive team.
+
+No analytics beyond small counts. This is a management page.
+
+Empty state:
+- Members empty state shows the owner row plus an add-member action if only the creator exists.
+- Teams empty state shows the default team and a create-team action.
+
+Mobile:
+- Members and teams use card rows with role/status actions in a trailing menu. Org profile stays a single-column form.
+
+### 5.5 Overview
+
+Current data/actions:
+- Currently mostly an agent summary. It needs to become the org dashboard.
+
+New layout:
+- Aggregator layout.
+- Top tiles:
+  - Active agents.
+  - Pending approvals.
+  - Treasury available.
+  - Blocked/rate-limited actions in last 24h.
+- Main body:
+  - Agent roster preview, compact and fixed-height.
+  - Needs attention list:
+    - Pending approval older than threshold.
+    - Agent with no active policy binding.
+    - Payment rail not verified.
+    - Failed payment or provider job.
+    - Rate limit repeatedly hit.
+  - Recent org-wide activity feed.
+
+No dedicated action forms. Actions are links into domain pages.
+
+Empty state:
+- Empty org shows the first real sequence: create agent, create credential, attach policy, enable payment access. Each item links to its source page.
+
+Mobile:
+- Stat tiles become a two-column grid, then one column under narrow widths. Needs-attention and activity lists stack below the agent preview.
+
+### 5.6 Operations
+
+Current data/actions:
+- Tool catalog.
+- Blocked/rate-limited operations.
+- Rate limits.
+- MCP sessions and rate counters are important but need better exposure.
+
+New layout:
+- Index layout.
+- Tabs:
+  - Tool Catalog
+  - Rate Limits
+  - Decisions
+  - Sessions
+
+Tool Catalog:
+- Table: tool, category, status, last updated, actions.
+- Drawer: schema/context, edit/archive.
+- Action: import tool.
+
+Rate Limits:
+- Table: target, action/tool, window, limit, current usage, status.
+- Utilization bar sourced from `operational_rate_counters`.
+- Actions: create, edit, disable.
+
+Decisions:
+- Table: agent, action, tool/resource, decision, reason, time.
+- Filters: agent, decision, action, date.
+
+Sessions:
+- MCP sessions table with live/idle/offline indicator.
+
+Empty state:
+- Tool Catalog empty state points to import tool.
+- Rate Limits empty state points to create limit.
+- Decisions empty state explains that runtime checks will populate the table.
+- Sessions empty state explains that active MCP/API sessions appear after an agent connects.
+
+Mobile:
+- Operations tabs remain horizontal with overflow. Tool/rate/decision/session tables become compact cards, and filters open in a sheet.
+
+### 5.7 Controls
+
+Current data/actions:
+- Policy drafts.
+- Policy versions.
+- Policy bindings.
+- Policy decisions.
+- Policy simulations.
+
+New layout:
+- Index layout plus Focus Canvas for creation.
+- Top toolbar:
+  - Search policies.
+  - Filter by decision/action/status.
+  - Primary action: Create Policy.
+  - Secondary toggle: Drafts.
+
+Tables:
+- Policy library table is default.
+- Drafts appear in the same workbench via the Drafts toggle, not as a separate page.
+- Bindings and decisions are available as table tabs/segments inside Controls.
+
+Create Policy:
+- Full-height drawer from content edge, not a small modal.
+- Stepper:
+  1. Action surface and decision.
+  2. Conditions, driven by backend `policy_action_registry` metadata.
+  3. Scope and target preview.
+  4. Validate and simulate.
+  5. Review and create draft.
+
+Policy detail drawer:
+- Shows version, bindings, statements, tags, simulation history, decisions caused by this policy.
+- Actions: bind, unbind, archive, create version.
+
+Important rule:
+- The UI must never expose condition fields that do not apply to the selected action.
+
+Empty state:
+- Policy library empty state points to Create Policy.
+- Drafts empty state says draft policies appear before activation.
+- Decision history empty state says policy checks appear after runtime/API/MCP requests.
+
+Mobile:
+- Controls table toolbar collapses search and filters into a sheet. Create Policy uses a full-screen sheet from the content edge, with the stepper shown as a top progress bar.
+
+### 5.8 Agents
+
+Current data/actions:
+- Agents list and create.
+- Agent detail includes policies, credentials, wallet refs, live activity, blocked operations.
+
+Agents list layout:
+- Index layout.
+- Header with inline create control:
+  - Input placeholder: "Authorize a new agent".
+  - Pill button: Add.
+- Table columns: agent, team, status, credential state, policy coverage, last activity.
+- Row opens agent detail route.
+
+Agent detail layout:
+- Tabs:
+  - Overview
+  - Policies & Access
+  - Credentials & Wallets
+  - Activity
+
+Overview:
+- Agent identity, status, team, hierarchy, description/labels if present.
+- Actions: edit, pause, activate, deactivate.
+
+Policies & Access:
+- Active bindings.
+- Allowed runtime actions.
+- Blocked/rate-limited operations.
+- Link to Controls for editing policies.
+
+Credentials & Wallets:
+- Credentials table with create/rotate/revoke/test.
+- Wallet refs table with attach/detach.
+- Payment access summary linking to Treasury Agent Access.
+
+Activity:
+- Live activity feed.
+- Config audit.
+- Payment events filtered to agent.
+- Operation decisions filtered to agent.
+
+Empty state:
+- Agents list empty state keeps the inline create control visible and explains that credentials are created on the detail page.
+- Agent detail Activity empty state says API/MCP calls and configuration changes will appear here after the agent is used.
+
+Mobile:
+- Agents list keeps create input and Add button stacked above the table. Agent detail tabs stay sticky below the page header; table sections become row cards.
+
+### 5.9 Treasury
+
+Treasury is the highest-density domain. It must not be one long page.
+
+#### `/payments` - Treasury Overview
+
+Purpose:
+- Calm, high-level state.
+
+Data:
+- Treasury balance.
+- Provider mode.
+- Rail readiness summary.
+- Recent failed jobs/payments.
+- Agent payment access count.
+
+Layout:
+- Aggregator layout.
+- Top tiles:
+  - Available USDC.
+  - Verified rails.
+  - Agents with payment access.
+  - In-flight reservations.
+- Needs attention:
+  - Unverified supported rail.
+  - Failed provider job.
+  - Liquidity job stalled.
+  - Agent budget near cap.
+
+Actions:
+- Switch test/live mode.
+- Sync treasury.
+- Navigate to focused subroutes.
+
+Empty state:
+- If no treasury exists, show one setup action: Sync Circle treasury. Do not expose chain buckets on this overview state.
+
+Mobile:
+- Treasury subnavigation becomes a horizontal segmented nav under the page header. Status tiles stack two by two, then one per row.
+
+#### `/payments/sources` - Sources & Rails
+
+Purpose:
+- Setup and diagnostics.
+
+Data:
+- `org_treasuries`
+- `payment_sources`
+- `circle_chain_capabilities`
+- `circle_wallet_sets`
+- `circle_chain_wallets`
+- live balances
+- rail readiness
+
+Layout:
+- Index layout.
+- Segments: Sources, Rails, Wallets.
+
+Actions:
+- Create source.
+- Sync Circle wallet.
+- Run proof for one rail.
+- Run proofs for all unverified rails.
+- Request testnet faucet.
+
+Create Source:
+- Focus Canvas drawer.
+- Explicit provider, chain, rail, label.
+- No hidden hardcoded provider/chain choices.
+
+Empty state:
+- Sources empty state points to create source or sync Circle wallet, depending on whether treasury exists.
+- Rails empty state should not occur after setup; if it does, show a provider configuration error and link to diagnostics.
+
+Mobile:
+- Sources, Rails, and Wallets segments remain at the top. Rail proof actions collapse into row action menus to keep rows readable.
+
+#### `/payments/access` - Agent Access
+
+Purpose:
+- Payment permissions per agent.
+
+Data:
+- `agent_payment_accounts`
+- agents
+- verified rails
+- recent spend by agent
+
+Layout:
+- Index layout.
+- Table columns: agent, status, monthly budget, spent, per-request cap, approval threshold, rails, last payment.
+- Drawer for one agent account.
+
+Actions:
+- Enable/disable payment access.
+- Set budget.
+- Set per-request cap.
+- Set approval threshold.
+- Choose allowed settlement-verified rails.
+
+Empty state:
+- If no agents exist, link to Agents.
+- If agents exist but none have access, show enable payment access as the primary action and explain that access is off by default.
+
+Mobile:
+- Agent access rows become budget cards with status, spent, rails, and one edit button. The edit drawer becomes full-screen on phones.
+
+#### `/payments/liquidity` - Liquidity
+
+Purpose:
+- Internal treasury plumbing, hidden from normal Overview but available to operators.
+
+Data:
+- `circle_provider_jobs`
+- liquidity jobs
+- rebalance recommendations
+- Gateway balances
+- exact wallet balances
+
+Layout:
+- Index layout.
+- Segments: Jobs, Recommendations, Deposits, Top-ups.
+
+Actions:
+- Gateway deposit.
+- Bridge/top up exact wallet.
+- Retry liquidity job.
+- Cancel liquidity job.
+- Reconcile provider jobs.
+
+Rule:
+- Every rebalance action must show source, destination, rail, amount, policy status, and expected result before submit.
+
+Empty state:
+- Jobs empty state says no liquidity operations are in progress.
+- Recommendations empty state says treasury liquidity is balanced for current usage.
+
+Mobile:
+- Liquidity job and recommendation tables become timeline cards. Rebalance/deposit/top-up forms use full-screen stepped sheets.
+
+#### `/payments/activity` - Activity & Evidence
+
+Purpose:
+- Ledger and proof trail.
+
+Data:
+- `payment_events`
+- `payment_route_observations`
+- `payment_reservations`
+- `circle_provider_jobs`
+- payment-related `audit_events`
+
+Layout:
+- Index layout.
+- Tabs:
+  - Ledger
+  - Routes
+  - Reservations
+  - Provider Jobs
+  - Audit
+
+Drawers:
+- Payment event detail with x402 quote hash, rail, provider mode, status, and audit link.
+- Route observation detail with accepted/rejected reason.
+- Reservation detail with lifecycle and settlement.
+- Provider job detail with request/response summary and retryability.
+
+Empty state:
+- Ledger empty state says payments appear after approved x402 settlement.
+- Routes empty state says accepted and rejected payment attempts will be recorded.
+- Reservations empty state says in-flight payment holds appear during execution.
+- Provider Jobs empty state says Circle treasury operations appear after setup or payment activity.
+
+Mobile:
+- Activity tabs become a horizontally scrollable tab list. Ledger, route, reservation, provider-job, and audit rows become compact evidence cards with detail sheets.
+
+---
+
+## 6. Visual System And Component Requirements
+
+This section is the implementation contract for Phase 0. It replaces generic "make it shadcn-like" direction with concrete rules verified from the `shadcn-fintech` source.
+
+### 6.1 Visual Tokens
+
+Elevation:
+- Cards and static panels use a 1px ring or border equivalent to `ring-1 ring-foreground/10`.
+- Do not use `box-shadow` on cards, tables, stat panels, or repeated rows.
+- Shadows are allowed only for overlays and transient layers: Sheet, Popover, Menu, Tooltip, drag state.
+
+Radius:
+- Cards and panels use the `rounded-xl` role.
+- Inputs and compact controls use a tighter control radius.
+- Status badges, count pills, and segmented-control pills use the pill radius role.
+
+Color:
+- Charts default to neutral/grayscale series.
+- Semantic chart color is allowed only when the series itself is semantic state, such as success vs failed.
+- Semantic states use tinted backgrounds at 10-20% opacity with full-opacity text/icon.
+- Avoid solid-fill warning/error/success badges except for destructive confirmation buttons.
+
+Typography:
+- Montserrat remains the product font.
+- Numbers use tabular figures.
+- IDs, hashes, wallet addresses, and proof values use the existing monospace token.
+
+Motion:
+- 150-250ms transitions.
+- Animate opacity and transform, not layout properties.
+- Empty-state illustrations may use small draw-in or fade/translate motion through the existing `motion` dependency.
+
+### 6.2 Direct Reuse From shadcn-fintech
+
+Port structure, not content:
+- `src/components/ui/card.tsx`
+- `src/components/ui/badge.tsx`
+- `src/components/ui/table.tsx`
+- `src/components/ui/chart.tsx`
+- `src/components/ui/sidebar.tsx`
+- `src/components/empty-state.tsx`
+- the radius scale pattern from `globals.css`
+
+Adaptations required:
+- Keep agentOps color tokens from `DESIGN.md`; do not replace them with the reference repo's literal grayscale app colors.
+- Keep Tabler icons and mechanically substitute any Lucide imports during porting.
+- Strip `@base-ui/react` polymorphic `render` support while porting unless a component truly needs it. The first implementation path should not add `@base-ui/react`.
+- Do not import reference crypto/trading/wallet-first content components.
+- Do not adopt `three`, `three-globe`, drag/drop dashboard customization, or reference crypto pages.
+
+Dependencies allowed for Phase 0:
+- `cmdk`
+- `class-variance-authority`
+- `date-fns`
+- `next-themes`
+- `recharts`
+
+Dependencies already present and reused:
+- `motion`
+- `@tabler/icons-react`
+- `tailwind-merge`
+- `clsx`
+
+### 6.3 Required Primitives
+
+Create or replace these primitives before redesigning any page:
+- `Card`
+- `Badge`
+- `Table`
+- `Chart`
+- `Sidebar`
+- `Sheet`
+- `Tabs`
+- `Command`
+- `Tooltip`
+- `Skeleton`
+- `EmptyState`
+- `StatusBadge`
+- `EntityLink`
+- `PageHeader`
+- `SectionToolbar`
+- `TableShell`
+- `FocusCanvas`
+
+TableShell:
+- Fixed max height.
+- Sticky header.
+- Hidden visual scrollbar while preserving wheel, trackpad, and keyboard scroll.
+- Row click opens a Sheet detail view.
+
+Sheet:
+- On desktop, opens from the content edge and must not overlap the sidebar.
+- On mobile, becomes full-screen or near-full-screen depending on action risk.
+
+EmptyState:
+- Variant-driven component with agentOps domains: `agents`, `policies`, `approvals`, `operations`, `treasury`, `payments`, `activity`, `settings`, `search`, `filter`, `generic`.
+- Each variant has a restrained SVG illustration or icon composition, title, one-sentence description, and optional real action.
+- Empty states are designed during page implementation, not added in final QA.
+
+### 6.4 Command Palette Scope
+
+Phase 0 command palette is page-jump only:
+- Overview
+- Agents
+- Controls
+- Operations
+- Approvals
+- Treasury Overview
+- Treasury Sources & Rails
+- Treasury Agent Access
+- Treasury Liquidity
+- Treasury Activity & Evidence
+- Settings
+
+Do not build "jump to entity" in Phase 0. The backend has no cross-entity search/autocomplete route today. Entity search becomes a later explicit feature with:
+- backend endpoint,
+- server client,
+- authorization,
+- result ranking,
+- entity-specific destinations,
+- tests.
+
+### 6.5 Mobile Rules
+
+Global:
+- Sidebar collapses to an icon rail/tablet mode and to an overlay drawer/mobile mode.
+- Treasury subroutes become a horizontal segmented nav under the page header on mobile.
+- Page toolbars collapse filters into a Filter sheet.
+- Dense table rows become cards below the configured breakpoint.
+- Action drawers become full-screen on phones.
+- Critical submit/cancel controls stay sticky at the bottom of full-screen forms.
+
+Per-page mobile rules are specified in Section 5 and must be implemented with the page, not deferred to Phase 7.
+
+---
+
+## 7. Form Rules
+
+Single-step inline forms:
+- Add agent.
+- Add member.
+- Create team.
+- Import tool.
+- Toggle provider mode.
+- Run rail proof.
+- Retry/cancel job.
+
+Confirmation drawers:
+- Revoke credential.
+- Rotate credential.
+- Pause/deactivate agent.
+- Archive policy.
+- Unbind policy.
+- Disable rate limit.
+
+Stepper drawers:
+- Create policy.
+- Configure agent payment access.
+- Create treasury source.
+- Gateway deposit.
+- Bridge/top up exact wallet.
+- Optional onboarding setup.
+
+Validation:
+- Field validation inline.
+- Backend validation errors mapped to the exact field when possible.
+- Review step before any financial or irreversible action.
+
+---
+
+## 8. Analytics Placement
+
+Analytics are page-local.
+
+Overview:
+- Org health rollup.
+- Needs attention.
+- Recent activity.
+
+Agents:
+- Per-agent activity, operations, payments, config audit.
+
+Controls:
+- Policy decision frequency.
+- Simulation outcomes.
+- Decision breakdown by action/target.
+
+Operations:
+- Rate-limit utilization.
+- Decisions by action/tool.
+- Live MCP/session status.
+
+Approvals:
+- Time to decision.
+- Approval/denial/expiry rate.
+- Consumption proof.
+
+Treasury:
+- Spend over time.
+- Budget burn-down.
+- Rail success/failure rate.
+- Route rejection reasons.
+- Liquidity prep latency.
+- Provider job success/failure.
+
+Settings:
+- No charts unless membership/team growth becomes meaningful later.
+
+---
+
+## 9. Implementation Roadmap
+
+The implementation order must move from least domain-dependent foundation work to the most cross-dependent pages. Each phase follows the same gate:
+
+1. Plan the phase against this spec.
+2. Implement only that phase.
+3. Run unit/type/lint tests scoped to the changed code.
+4. Run browser verification at desktop and mobile widths.
+5. Audit visually and functionally against this spec.
+6. Refine failures.
+7. Re-test.
+8. Commit before starting the next phase.
+
+No later phase starts while the current phase has known visual, mobile, functional, or backend-action gaps.
+
+### Phase 0 - Foundation Contract
+
+Purpose:
+- Lock the design system and app shell before touching domain pages.
+
+Build:
+- Required dependencies and primitive ports.
+- Token/radius/elevation/chart system.
+- EmptyState variants.
+- TableShell.
+- Sheet/FocusCanvas.
+- Route-aware grouped sidebar.
+- Treasury expandable parent.
+- Page-jump command palette only.
+
+Verification:
+- Desktop shell.
+- Mobile shell.
+- Sidebar parent/child active states.
+- Treasury subroute active states.
+- Page-jump command palette.
+- EmptyState component variants.
+- No card shadows outside overlays.
+
+### Phase 1 - Low-Density Standalone Pages
+
+Purpose:
+- Prove the primitives on low-risk pages before rebuilding dense pages.
+
+Build:
+- Auth.
+- Settings.
+- Approvals inbox/history.
+
+Verification:
+- Auth signed-out and signed-in states.
+- Members and teams CRUD.
+- Approval approve/deny and history/detail drawer.
+- Mobile cards and filter sheet.
+- Empty/loading/error states per page.
+
+### Phase 2 - Agents
+
+Purpose:
+- Rebuild identity surfaces before dependent Controls, Operations, and Treasury pages reference agents.
+
+Build:
+- Agents list.
+- Agent detail tabs.
+- Agent update actions.
+- Credentials & Wallets tab.
+- WalletRefsPanel integration.
+- Agent activity tab.
+
+Verification:
+- Create agent.
+- Edit agent.
+- Credential lifecycle.
+- Wallet ref attach/detach.
+- Activity update after API/MCP call.
+- Mobile detail tabs and row cards.
+
+### Phase 3 - Operations
+
+Purpose:
+- Make runtime/tool evidence visible before policy creation is reworked.
+
+Build:
+- Tool Catalog.
+- Rate Limits.
+- Decisions.
+- Sessions.
+- Full row detail sheets and utilization views.
+
+Verification:
+- Tool import/edit/archive.
+- Rate limit create/edit/disable.
+- Rate-limit utilization from counters.
+- Decisions filters.
+- MCP/session empty and active states.
+- Mobile toolbar and card rows.
+
+### Phase 4 - Controls
+
+Purpose:
+- Rebuild policy creation after shell, agents, and operations surfaces are stable.
+
+Build:
+- Policy library and drafts toggle.
+- Policy detail drawer.
+- Policy creation Focus Canvas.
+- Backend-driven condition fields.
+- Validate and simulate.
+- Bind, unbind, archive, and create-version flows.
+
+Verification:
+- HTTP policy with resource fields only.
+- x402 policy with payment fields.
+- tool.call policy with tool fields.
+- simulation before activation.
+- bind/unbind/archive/version actions.
+- Mobile full-screen policy builder.
+- Empty states for policy library, drafts, and decisions.
+
+### Phase 5 - Treasury Route Split
+
+Purpose:
+- Split the densest surface only after shared primitives and less-dense domain pages prove the system.
+
+Build:
+- `/payments` Overview.
+- `/payments/sources`.
+- `/payments/access`.
+- `/payments/liquidity`.
+- `/payments/activity`.
+- Focused data loaders per subroute.
+- Detail drawers for payment event, route observation, reservation, provider job, and audit event.
+
+Verification:
+- Test mode setup.
+- Source creation.
+- Rail proof.
+- Agent access.
+- Gateway deposit.
+- Exact wallet top-up.
+- Retry/cancel liquidity job.
+- Reconcile provider jobs.
+- Payment ledger, route, reservation, provider-job detail sheets.
+- Mobile Treasury subnav.
+
+### Phase 6 - Overview
+
+Purpose:
+- Build the true dashboard after domain pages expose the data it links to.
+
+Build:
+- Org health rollup.
+- Needs attention.
+- Recent org activity.
+- Compact agent preview.
+
+Verification:
+- Empty org.
+- Org with agent but no policies.
+- Org with pending approval.
+- Org with payment/provider issue.
+- Org with rate-limited operation.
+- All cards link to the correct source page.
+
+### Phase 7 - Optional Onboarding
+
+Purpose:
+- Build optional setup after destination pages exist.
+
+Build:
+- Minimal required org creation.
+- Optional post-org setup steps.
+- Skip/resume state persistence.
+- Links into Treasury, Agents, Controls, and runtime test flows.
+
+Verification:
+- Create org and skip all optional steps.
+- Resume each step later.
+- Complete full testnet setup path.
+- Mobile stepper.
+
+### Phase 8 - Whole Product Polish
+
+Purpose:
+- Final cross-page QA only after all phases pass locally.
+
+Build:
+- Cross-page visual alignment.
+- Copy cleanup.
+- Accessibility fixes.
+- Dark mode adjustments.
+- Performance cleanup.
+
+Verification:
+- Browser pass over every route.
+- Desktop and mobile screenshots.
+- Keyboard navigation.
+- Focus states.
+- Empty/loading/error states.
+- No fake actions.
+- No table infinite growth.
+- Drawers do not overlap sidebar.
+- Typecheck, lint, tests, and build.
+
+---
+
+## 10. Acceptance Criteria
+
+The redesign is ready only when:
+
+- Every sidebar item maps to a real route.
+- Every route uses one of the three layout blueprints.
+- Treasury is split into focused subroutes.
+- No visible action is a mock, placeholder, or future promise.
+- No hidden hardcoded provider/chain/rail choices remain in operator-facing forms.
+- Every high-volume table has fixed-height behavior, filters/search where needed, and detail drawers.
+- Every financial action has review and confirmation.
+- Every policy action form only exposes valid condition fields for that action.
+- Every page has local history/evidence where the backend already records it.
+- Overview shows true org health, not a duplicate agent list.
+- Browser QA proves desktop and mobile layouts do not overlap, overflow, or hide critical actions.

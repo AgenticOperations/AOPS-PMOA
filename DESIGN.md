@@ -34,8 +34,10 @@ The public landing/marketing site is explicitly **out of scope** here. It is a s
 - Surface: near-white panel (kept — `--bg-panel`), plus a second, slightly cooler-tinted neutral layer for sidebar/toolbar chrome (new — distinguishes nav chrome from content surface, per shadcn-fintech's own sidebar treatment).
 - Text: dark neutral with a subtle cool tint, never pure black (kept).
 - Accent: clear blue for primary actions and selected states (kept — also directionally close to USDC's own brand blue, useful when pairing with the USDC mark next to amounts).
-- Semantic state colors: success/warning/danger/info, used on badges and status indicators only, never as background washes (kept, more consistently applied than before).
-- Radius: 8px or less for cards and controls (kept — consistent with shadcn-fintech's own restrained radius).
+- Semantic state colors: success/warning/danger/info, used as 10-20% opacity tints behind full-opacity text/icons. Never use solid-fill warning/error/success slabs for inactive status.
+- Elevation: cards and panels use a 1px ring/border treatment (`ring-1`/`border-subtle` equivalent), not drop shadows. Shadows are reserved for overlays such as sheets, menus, popovers, and drag states.
+- Radius roles: cards and panels use the shadcn-fintech `rounded-xl` role; inputs and compact controls stay tighter; status badges and pills use a full-pill radius. Do not flatten all components to one radius.
+- Charts: neutral/grayscale series by default. Use color only when a series encodes semantic state such as success vs. failed, and use the same tint discipline as badges.
 
 ## Typography
 

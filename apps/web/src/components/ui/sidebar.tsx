@@ -1,188 +1,112 @@
-"use client";
-import { cn } from "@/lib/utils";
-import React, { useState, createContext, useContext } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { IconMenu2, IconX } from "@tabler/icons-react";
+'use client';
 
-interface Links {
-  label: string;
-  href: string;
-  icon: React.JSX.Element | React.ReactNode;
+import * as React from 'react';
+import { cn } from '@/lib/utils';
+
+function Sidebar({ className, ...props }: React.ComponentProps<'aside'>) {
+  return (
+    <aside
+      className={cn(
+        'flex h-full flex-col overflow-hidden bg-[var(--bg-soft)] text-[var(--text-primary)] ring-1 ring-[var(--border-subtle)]',
+        className,
+      )}
+      data-slot="sidebar"
+      {...props}
+    />
+  );
 }
 
-interface SidebarContextProps {
-  open: boolean;
-  setOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  animate: boolean;
+function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>) {
+  return <div className={cn('border-b border-[var(--border-subtle)] p-3', className)} data-slot="sidebar-header" {...props} />;
 }
 
-const SidebarContext = createContext<SidebarContextProps | undefined>(
-  undefined
-);
+function SidebarContent({ className, ...props }: React.ComponentProps<'div'>) {
+  return <div className={cn('min-h-0 flex-1 overflow-auto p-3', className)} data-slot="sidebar-content" {...props} />;
+}
 
-export const useSidebar = () => {
-  const context = useContext(SidebarContext);
-  if (!context) {
-    throw new Error("useSidebar must be used within a SidebarProvider");
-  }
-  return context;
-};
+function SidebarFooter({ className, ...props }: React.ComponentProps<'div'>) {
+  return <div className={cn('border-t border-[var(--border-subtle)] p-3', className)} data-slot="sidebar-footer" {...props} />;
+}
 
-export const SidebarProvider = ({
-  children,
-  open: openProp,
-  setOpen: setOpenProp,
-  animate = true,
-}: {
-  children: React.ReactNode;
-  open?: boolean | undefined;
-  setOpen?: React.Dispatch<React.SetStateAction<boolean>> | undefined;
-  animate?: boolean | undefined;
-}) => {
-  const [openState, setOpenState] = useState(false);
+function SidebarGroup({ className, ...props }: React.ComponentProps<'section'>) {
+  return <section className={cn('grid gap-2 py-2', className)} data-slot="sidebar-group" {...props} />;
+}
 
-  const open = openProp !== undefined ? openProp : openState;
-  const setOpen = setOpenProp !== undefined ? setOpenProp : setOpenState;
-
+function SidebarGroupLabel({ className, ...props }: React.ComponentProps<'p'>) {
   return (
-    <SidebarContext.Provider value={{ open, setOpen, animate: animate }}>
-      {children}
-    </SidebarContext.Provider>
-  );
-};
-
-export const Sidebar = ({
-  children,
-  open,
-  setOpen,
-  animate,
-}: {
-  children: React.ReactNode;
-  open?: boolean | undefined;
-  setOpen?: React.Dispatch<React.SetStateAction<boolean>> | undefined;
-  animate?: boolean | undefined;
-}) => {
-  return (
-    <SidebarProvider open={open} setOpen={setOpen} animate={animate}>
-      {children}
-    </SidebarProvider>
-  );
-};
-
-export const SidebarBody = (props: React.ComponentProps<typeof motion.div>) => {
-  return (
-    <>
-      <DesktopSidebar {...props} />
-      <MobileSidebar {...(props as unknown as React.ComponentProps<"div">)} />
-    </>
-  );
-};
-
-export const DesktopSidebar = ({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<typeof motion.div>): React.ReactNode => {
-  const { open, setOpen, animate } = useSidebar();
-  return (
-    <motion.div
+    <p
       className={cn(
-        "h-full py-4 hidden md:flex md:flex-col bg-soft border-r border-subtle w-[300px] shrink-0",
-        className
+        'px-2 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--text-muted)]',
+        className,
       )}
-      animate={{
-        width: animate ? (open ? "300px" : "60px") : "300px",
-        paddingLeft: animate ? (open ? "16px" : "8px") : "16px",
-        paddingRight: animate ? (open ? "16px" : "8px") : "16px",
-      }}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      data-slot="sidebar-group-label"
       {...props}
-    >
-      {children}
-    </motion.div>
+    />
   );
-};
+}
 
-export const MobileSidebar = ({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<"div">) => {
-  const { open, setOpen } = useSidebar();
-  return (
-    <>
-      <div
-        className={cn(
-          "h-12 px-4 py-4 flex flex-row md:hidden items-center justify-between bg-soft border-b border-subtle w-full"
-        )}
-        {...props}
-      >
-        <div className="flex justify-end z-20 w-full">
-          <IconMenu2
-            className="text-primary cursor-pointer"
-            onClick={() => setOpen(!open)}
-          />
-        </div>
-        <AnimatePresence>
-          {open && (
-            <motion.div
-              initial={{ x: "-100%", opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: "-100%", opacity: 0 }}
-              transition={{
-                duration: 0.3,
-                ease: "easeInOut",
-              }}
-              className={cn(
-                "fixed h-full w-full inset-0 bg-panel p-10 z-[100] flex flex-col justify-between",
-                className
-              )}
-            >
-              <div
-                className="absolute right-10 top-10 z-50 text-primary cursor-pointer"
-                onClick={() => setOpen(!open)}
-              >
-                <IconX />
-              </div>
-              {children}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </>
-  );
-};
+function SidebarMenu({ className, ...props }: React.ComponentProps<'ul'>) {
+  return <ul className={cn('grid list-none gap-1 p-0 m-0', className)} data-slot="sidebar-menu" {...props} />;
+}
 
-export const SidebarLink = ({
-  link,
+function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
+  return <li className={cn('min-w-0', className)} data-slot="sidebar-menu-item" {...props} />;
+}
+
+function SidebarMenuButton({
   className,
+  isActive,
   ...props
-}: {
-  link: Links;
-  className?: string;
-}) => {
-  const { open, animate } = useSidebar();
+}: React.ComponentProps<'button'> & { readonly isActive?: boolean }) {
   return (
-    <a
-      href={link.href}
+    <button
       className={cn(
-        "flex items-center justify-start gap-2 group/sidebar py-2 text-decoration-none",
-        className
+        'flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-panel)] hover:text-[var(--text-primary)]',
+        isActive && 'bg-[var(--accent-tint)] text-[var(--accent-blue)]',
+        className,
       )}
+      data-active={isActive ? 'true' : undefined}
+      data-slot="sidebar-menu-button"
+      type="button"
       {...props}
-    >
-      {link.icon}
-
-      <motion.span
-        animate={{
-          display: animate ? (open ? "inline-block" : "none") : "inline-block",
-          opacity: animate ? (open ? 1 : 0) : 1,
-        }}
-        className="text-primary text-sm group-hover/sidebar:translate-x-1 transition duration-150 whitespace-pre inline-block !p-0 !m-0"
-      >
-        {link.label}
-      </motion.span>
-    </a>
+    />
   );
+}
+
+function SidebarMenuSub({ className, ...props }: React.ComponentProps<'ul'>) {
+  return <ul className={cn('grid list-none gap-1 p-0 pl-6 m-0', className)} data-slot="sidebar-menu-sub" {...props} />;
+}
+
+function SidebarMenuSubButton({
+  className,
+  isActive,
+  ...props
+}: React.ComponentProps<'button'> & { readonly isActive?: boolean }) {
+  return (
+    <button
+      className={cn(
+        'flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-semibold text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-panel)] hover:text-[var(--text-primary)]',
+        isActive && 'bg-[var(--accent-tint)] text-[var(--accent-blue)]',
+        className,
+      )}
+      data-active={isActive ? 'true' : undefined}
+      data-slot="sidebar-menu-sub-button"
+      type="button"
+      {...props}
+    />
+  );
+}
+
+export {
+  Sidebar,
+  SidebarHeader,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
 };
