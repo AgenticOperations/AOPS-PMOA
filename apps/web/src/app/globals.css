@@ -22,8 +22,8 @@
   --state-danger-tint: oklch(0.95 0.02 25);
   --radius: 8px;
   --shadow-panel: 0 1px 3px rgb(0 0 0 / 0.02), 0 8px 24px rgb(0 0 0 / 0.015);
-  --font-ui: "Aptos", "SF Pro Text", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: "Aptos Display", "SF Pro Display", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", "SF Mono", Consolas, monospace;
   --entry-bg: oklch(0.976 0.004 245);
   --entry-panel-text: var(--text-primary);

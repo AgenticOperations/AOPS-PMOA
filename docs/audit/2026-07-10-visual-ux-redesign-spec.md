@@ -2,9 +2,10 @@
 
 Date: 2026-07-10
 Builds on: `docs/audit/2026-07-10-console-feature-data-audit.md` (data/feature inventory — read that first for exact tables/columns cited here)
-Governing constraints: `PRODUCT.md` (register: product; anti-crypto-trading-dashboard; anti-wallet-first), `DESIGN.md` (restrained color, warm off-white/light theme, Stripe/RazorpayX/Linear anchors, 8px radius ceiling)
-Design-skill grounding: `impeccable` product register (`~/.claude/skills/impeccable/reference/product.md`) governs — this is a product UI, not a marketing surface. `high-end-visual-design` and `frontend-design` are brand/hero-page skills; their glass/mesh/huge-radius/exotic-font guidance is **not** applied here because it directly conflicts with `DESIGN.md`'s light, restrained, 8px-radius, familiar-navigation mandate. What carries over from them: disciplined spacing rhythm, purposeful micro-motion, "earn every element" restraint — the spirit, not the literal techniques.
-Visual reference: `shadcn-fintech` (github.com/abderrahimghazali/shadcn-fintech, MIT) — mined for component structure and interaction patterns only, not its wallet-first/crypto-trading content or dark accents.
+Governing constraint: `DESIGN.md` (rewritten 2026-07-10 to be canonical — read that first; this spec is consistent with it, not a competing source)
+Scope: the authenticated product only — Auth, Onboarding, and the full console (Overview, Agents, Controls, Operations, Payments, Approvals, Workspace Settings). Everything from the moment a user clicks "Get Started" onward. The public landing/marketing page is explicitly out of scope for this pass; it gets its own future spec in the brand register using `high-end-visual-design`.
+Visual reference: **`shadcn-fintech`** (github.com/abderrahimghazali/shadcn-fintech, MIT) is the canonical dashboard reference per `DESIGN.md` — its component structure, layout patterns, card/table/chart treatment, and overall fintech-SaaS polish level are the target, not just a source mined for structure. What doesn't carry over is its wallet-first/crypto-trading *content* (leading with token balances, a dedicated Crypto page) — `PRODUCT.md`'s anti-references remain in force at the content/IA level, not the visual-style level.
+Design-skill grounding: `impeccable` product register (`~/.claude/skills/impeccable/reference/product.md`) still governs baseline product-UI discipline (component states, motion restraint, familiar navigation). `high-end-visual-design` and `frontend-design` are reserved for the future landing page — a different register (brand, not product) — and are deliberately not applied to the console.
 
 ---
 
@@ -30,7 +31,7 @@ That's why the parallel backend-hardening plan (member management, policy simula
 
 ### Typography
 
-- One system sans family (`-apple-system, "Segoe UI", system-ui` stack — legitimate per product register, and correct for a console used for hours of scanning work). No display face anywhere in the app chrome.
+- **Montserrat** (via `next/font/google`) as the primary face for both UI and display roles — headings, labels, buttons, body, data. Fallback stack ends in system-ui/sans-serif for resilience. This replaces the prior system-font-stack-only guidance.
 - Fixed rem scale, ratio ~1.15 between steps (tighter than a marketing site — more type sizes needed for dense data screens).
 - Tabular figures (`font-variant-numeric: tabular-nums`) on every number column — amounts, counts, dates — so columns of numbers align. This single change will visibly lift every table in the app.
 - Line length rule (65-75ch) applies to prose blocks (policy descriptions, empty-state copy) only; tables run as dense as the data needs.
