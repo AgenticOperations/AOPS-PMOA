@@ -16,6 +16,8 @@ import {
   importTools,
   listAgentAllowedActions,
   listBlockedOperations,
+  listMcpSessions,
+  listOperationDecisions,
   listRateLimits,
   listTools,
   recordOperation,
@@ -94,6 +96,13 @@ const updateRateLimitSchema = z.object({
 
 const blockedQuerySchema = z.object({
   agent_id: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+});
+
+const decisionQuerySchema = z.object({
+  agent_id: z.string().trim().min(1).optional(),
+  action: operationalActionSchema.optional(),
+  decision: z.enum(['allow', 'deny', 'approval_required', 'observe', 'rate_limited']).optional(),
   limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
@@ -219,6 +228,26 @@ export function registerOperationRoutes(app: FastifyInstance, deps: RegisterOper
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
     const query = blockedQuerySchema.parse(request.query ?? {});
     return { blocked: await listBlockedOperations(deps.pool, params.orgId, { agentId: query.agent_id, limit: query.limit }) };
+  });
+
+  app.get('/v1/orgs/:orgId/operations/decisions', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = decisionQuerySchema.parse(request.query ?? {});
+    return {
+      decisions: await listOperationDecisions(deps.pool, params.orgId, {
+        agentId: query.agent_id,
+        action: query.action,
+        decision: query.decision,
+        limit: query.limit,
+      }),
+    };
+  });
+
+  app.get('/v1/orgs/:orgId/operations/mcp-sessions', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return { sessions: await listMcpSessions(deps.pool, params.orgId) };
   });
 
   app.post('/v1/orgs/:orgId/operations/rate-limits', async (request, reply) => {

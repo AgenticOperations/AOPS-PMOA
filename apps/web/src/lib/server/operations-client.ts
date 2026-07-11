@@ -4,7 +4,10 @@ import { readWebEnv } from '../env';
 import type {
   AgentAllowedActionRecord,
   BlockedOperationRecord,
+  McpSessionRecord,
   OperationalAction,
+  OperationalDecisionRecord,
+  OperationDecision,
   RateLimitUtilizationRecord,
   ToolCatalogRecord,
   ToolRiskLevel,
@@ -107,6 +110,34 @@ export async function listBlockedOperations(
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
   const body = await apiFetch<{ readonly blocked: BlockedOperationRecord[] }>(`/v1/orgs/${orgId}/operations/blocked${suffix}`);
   return body.blocked;
+}
+
+export async function listOperationDecisions(
+  orgId: string,
+  input: {
+    readonly agentId?: string | undefined;
+    readonly action?: OperationalAction | undefined;
+    readonly decision?: OperationDecision | undefined;
+    readonly limit?: number | undefined;
+  } = {},
+): Promise<OperationalDecisionRecord[]> {
+  const query = new URLSearchParams();
+  if (input.agentId !== undefined) query.set('agent_id', input.agentId);
+  if (input.action !== undefined) query.set('action', input.action);
+  if (input.decision !== undefined) query.set('decision', input.decision);
+  if (input.limit !== undefined) query.set('limit', String(input.limit));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  const body = await apiFetch<{ readonly decisions: OperationalDecisionRecord[] }>(
+    `/v1/orgs/${orgId}/operations/decisions${suffix}`,
+  );
+  return body.decisions;
+}
+
+export async function listMcpSessions(orgId: string): Promise<McpSessionRecord[]> {
+  const body = await apiFetch<{ readonly sessions: McpSessionRecord[] }>(
+    `/v1/orgs/${orgId}/operations/mcp-sessions`,
+  );
+  return body.sessions;
 }
 
 export async function createRateLimit(

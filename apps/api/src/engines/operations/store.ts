@@ -12,7 +12,9 @@ import type {
   BlockedOperationRecord,
   CreateRateLimitInput,
   ImportToolInput,
+  McpSessionRecord,
   OperationCheckInput,
+  OperationDecisionListInput,
   OperationalAction,
   OperationalDecisionRecord,
   OperationalDecisionValue,
@@ -88,6 +90,16 @@ type RateLimitUtilizationRow = RateLimitRow & {
   readonly current_bucket: string | null;
   readonly current_count: number | null;
   readonly current_window_start: Date | null;
+};
+
+type McpSessionRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string;
+  readonly protocol: string;
+  readonly last_seen_at: Date;
+  readonly created_at: Date;
 };
 
 type AgentPolicyRow = {
@@ -273,6 +285,18 @@ function rateLimitWithUtilizationFromRow(row: RateLimitUtilizationRow): RateLimi
       current_count: row.current_count ?? 0,
       current_window_start: row.current_window_start === null ? null : row.current_window_start.toISOString(),
     },
+  };
+}
+
+function mcpSessionFromRow(row: McpSessionRow): McpSessionRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    agent_id: row.agent_id,
+    connection_id: row.connection_id,
+    protocol: row.protocol,
+    last_seen_at: row.last_seen_at.toISOString(),
+    created_at: row.created_at.toISOString(),
   };
 }
 
@@ -884,6 +908,38 @@ export async function listBlockedOperations(
     [orgId, input.agentId ?? null, limit],
   );
   return result.rows.map(operationFromRow) as BlockedOperationRecord[];
+}
+
+export async function listOperationDecisions(
+  pool: pg.Pool,
+  orgId: string,
+  input: OperationDecisionListInput,
+): Promise<OperationalDecisionRecord[]> {
+  const limit = Math.min(Math.max(Math.trunc(input.limit ?? 100), 1), 200);
+  const result = await pool.query<OperationalDecisionRow>(
+    `SELECT od.*, '[]'::jsonb AS matched
+       FROM operational_decisions od
+      WHERE od.org_id = $1
+        AND ($2::text IS NULL OR od.agent_id = $2)
+        AND ($3::text IS NULL OR od.action_id = $3)
+        AND ($4::text IS NULL OR od.decision = $4)
+      ORDER BY od.created_at DESC, od.id DESC
+      LIMIT $5`,
+    [orgId, input.agentId ?? null, input.action ?? null, input.decision ?? null, limit],
+  );
+  return result.rows.map(operationFromRow);
+}
+
+export async function listMcpSessions(pool: pg.Pool, orgId: string): Promise<McpSessionRecord[]> {
+  const result = await pool.query<McpSessionRow>(
+    `SELECT id, org_id, agent_id, connection_id, protocol, last_seen_at, created_at
+       FROM mcp_sessions
+      WHERE org_id = $1
+      ORDER BY last_seen_at DESC, id DESC
+      LIMIT 100`,
+    [orgId],
+  );
+  return result.rows.map(mcpSessionFromRow);
 }
 
 export async function listAgentAllowedActions(

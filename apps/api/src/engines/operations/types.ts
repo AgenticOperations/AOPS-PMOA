@@ -79,6 +79,23 @@ export type BlockedOperationRecord = Omit<OperationalDecisionRecord, 'decision'>
   readonly decision: 'deny' | 'rate_limited';
 };
 
+export type OperationDecisionListInput = {
+  readonly agentId?: string | undefined;
+  readonly action?: OperationalAction | undefined;
+  readonly decision?: OperationalDecisionValue | undefined;
+  readonly limit?: number | undefined;
+};
+
+export type McpSessionRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string;
+  readonly protocol: string;
+  readonly last_seen_at: string;
+  readonly created_at: string;
+};
+
 export type RateLimitRecord = {
   readonly id: string;
   readonly org_id: string;

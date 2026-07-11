@@ -12,7 +12,13 @@ import {
 } from '@/app/actions/operations';
 import { listAgents, getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { listAuditEvents } from '@/lib/server/audit-client';
-import { listBlockedOperations, listRateLimits, listTools } from '@/lib/server/operations-client';
+import {
+  listBlockedOperations,
+  listMcpSessions,
+  listOperationDecisions,
+  listRateLimits,
+  listTools,
+} from '@/lib/server/operations-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,9 +35,11 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
     redirect('/auth');
   }
 
-  const [agents, blocked, tools, rateLimits, auditEvents] = await Promise.all([
+  const [agents, blocked, decisions, sessions, tools, rateLimits, auditEvents] = await Promise.all([
     listAgents(org.id),
     listBlockedOperations(org.id, { limit: 50 }),
+    listOperationDecisions(org.id, { limit: 100 }),
+    listMcpSessions(org.id),
     listTools(org.id),
     listRateLimits(org.id),
     listAuditEvents(org.id, 30),
@@ -43,11 +51,13 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
         agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
         archiveToolAction={archiveToolAction.bind(null, org.id, org.slug)}
         blocked={blocked}
+        decisions={decisions}
         disableRateLimitAction={disableOperationLimitAction.bind(null, org.id, org.slug)}
         importAction={importToolAction.bind(null, org.id, org.slug)}
         rateLimits={rateLimits}
         rateLimitAction={createOperationLimitAction.bind(null, org.id, org.slug)}
         tools={tools}
+        sessions={sessions}
         updateRateLimitAction={updateOperationLimitAction.bind(null, org.id, org.slug)}
         updateToolAction={updateToolAction.bind(null, org.id, org.slug)}
       />

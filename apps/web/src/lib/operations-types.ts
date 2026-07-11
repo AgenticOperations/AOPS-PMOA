@@ -30,6 +30,27 @@ export type BlockedOperationRecord = {
   readonly created_at: string;
 };
 
+export type OperationalDecisionRecord = Omit<BlockedOperationRecord, 'decision'> & {
+  readonly policyDecisionId: string | null;
+  readonly approvalId: string | null;
+  readonly decision: OperationDecision;
+  readonly matched: readonly unknown[];
+  readonly tool_risk_level: string | null;
+  readonly resource_domain: string | null;
+  readonly resource_category: string | null;
+  readonly context: Record<string, unknown>;
+};
+
+export type McpSessionRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string;
+  readonly protocol: string;
+  readonly last_seen_at: string;
+  readonly created_at: string;
+};
+
 export type AgentAllowedActionRecord = {
   readonly action: OperationalAction;
   readonly label: string;

@@ -54,6 +54,29 @@ type BlockedOperationsResponse = {
   }>;
 };
 
+type OperationDecisionsResponse = {
+  readonly decisions: Array<{
+    readonly id: string;
+    readonly action: string;
+    readonly agent_id: string;
+    readonly decision: 'allow' | 'deny' | 'approval_required' | 'observe' | 'rate_limited';
+    readonly reasonCode: string;
+    readonly tool_name: string | null;
+    readonly resource_label: string | null;
+  }>;
+};
+
+type McpSessionsResponse = {
+  readonly sessions: Array<{
+    readonly id: string;
+    readonly org_id: string;
+    readonly agent_id: string;
+    readonly connection_id: string;
+    readonly protocol: string;
+    readonly last_seen_at: string;
+  }>;
+};
+
 type ToolCatalogResponse = {
   readonly tools: Array<{
     readonly id: string;
@@ -278,6 +301,21 @@ describe('Section 5 operational controls', () => {
       }),
     ]);
 
+    const decisionsResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/operations/decisions?agent_id=${agentId}&decision=deny`,
+    });
+    expect(decisionsResponse.statusCode, decisionsResponse.body).toBe(200);
+    expect(decisionsResponse.json<OperationDecisionsResponse>().decisions).toEqual([
+      expect.objectContaining({
+        action: 'tool.call',
+        agent_id: agentId,
+        decision: 'deny',
+        reasonCode: 'policy_denied',
+        tool_name: 'browser.search',
+      }),
+    ]);
+
     const allowedActionsResponse = await app.inject({
       method: 'GET',
       url: `/v1/orgs/${orgId}/agents/${agentId}/allowed-actions`,
@@ -393,6 +431,18 @@ describe('Section 5 operational controls', () => {
       reasonCode: 'operation_rate_limited',
       tool_name: 'browser.search',
     });
+
+    const decisionsResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/operations/decisions?action=tool.call&limit=10`,
+    });
+    expect(decisionsResponse.statusCode, decisionsResponse.body).toBe(200);
+    expect(decisionsResponse.json<OperationDecisionsResponse>().decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ agent_id: agentId, decision: 'allow', tool_name: 'browser.search' }),
+        expect.objectContaining({ agent_id: agentId, decision: 'rate_limited', reasonCode: 'operation_rate_limited' }),
+      ]),
+    );
   });
 
   it('updates and archives imported tools from the catalog', async () => {
@@ -535,5 +585,29 @@ describe('Section 5 operational controls', () => {
     });
     expect(secondCheck.statusCode, secondCheck.body).toBe(200);
     expect(secondCheck.json<OperationCheckResponse>().operation.decision).toBe('allow');
+  });
+
+  it('lists observed MCP sessions for operations telemetry', async () => {
+    const { orgId, agentId, connectionId } = await createOrgAgentAndConnection(app);
+    await store.pool.query(
+      `INSERT INTO mcp_sessions (id, org_id, agent_id, connection_id, protocol, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, now())`,
+      ['mcp_session_test', orgId, agentId, connectionId, 'stdio'],
+    );
+
+    const sessionsResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/operations/mcp-sessions`,
+    });
+    expect(sessionsResponse.statusCode, sessionsResponse.body).toBe(200);
+    expect(sessionsResponse.json<McpSessionsResponse>().sessions).toEqual([
+      expect.objectContaining({
+        id: 'mcp_session_test',
+        org_id: orgId,
+        agent_id: agentId,
+        connection_id: connectionId,
+        protocol: 'stdio',
+      }),
+    ]);
   });
 });
