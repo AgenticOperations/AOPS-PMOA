@@ -92,6 +92,14 @@ export type RateLimitRecord = {
   readonly created_at: string;
 };
 
+export type RateLimitUtilizationRecord = RateLimitRecord & {
+  readonly utilization: {
+    readonly current_count: number;
+    readonly current_bucket: string | null;
+    readonly current_window_start: string | null;
+  };
+};
+
 export type CreateRateLimitInput = {
   readonly target_type: OperationalTargetType;
   readonly target_id: string;
@@ -99,6 +107,21 @@ export type CreateRateLimitInput = {
   readonly bucket?: string | undefined;
   readonly limit: number;
   readonly window_seconds: number;
+};
+
+export type UpdateRateLimitInput = {
+  readonly bucket?: string | undefined;
+  readonly limit?: number | undefined;
+  readonly window_seconds?: number | undefined;
+  readonly status?: RateLimitRecord['status'] | undefined;
+};
+
+export type UpdateToolInput = {
+  readonly display_name?: string | undefined;
+  readonly category?: string | undefined;
+  readonly risk_level?: ToolRiskLevel | undefined;
+  readonly description?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
 };
 
 export type AgentAllowedActionRecord = {

@@ -14,6 +14,7 @@ import {
   revokeConnection,
   rotateConnection,
   testConnection,
+  updateAgent,
 } from '@/lib/server/identity-spine-client';
 
 export type ConnectionActionState = {
@@ -90,6 +91,22 @@ export async function createAgentAction(orgId: string, orgSlug: string, formData
     name: stringField(formData, 'name'),
   });
 
+  revalidatePath(agentListPath(orgSlug));
+}
+
+export async function updateAgentAction(orgId: string, orgSlug: string, agentId: string, formData: FormData): Promise<void> {
+  const labels = stringField(formData, 'labels')
+    .split(',')
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+  await updateAgent(orgId, agentId, {
+    name: requiredStringField(formData, 'name'),
+    team_id: optionalStringField(formData, 'teamId'),
+    description: stringField(formData, 'description'),
+    labels,
+    default_environment: optionalStringField(formData, 'defaultEnvironment') ?? null,
+  });
+  revalidatePath(agentDetailPath(orgSlug, agentId));
   revalidatePath(agentListPath(orgSlug));
 }
 

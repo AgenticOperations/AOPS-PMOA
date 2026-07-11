@@ -8,7 +8,11 @@ import type {
   CircleProviderHealth,
   OrgPaymentModeRecord,
   PaymentChain,
+  PaymentEventRecord,
   PaymentRail,
+  PaymentRailReadinessRecord,
+  PaymentReservationRecord,
+  PaymentRouteObservationRecord,
   PaymentSourceRecord,
   RebalanceRecommendationRecord,
   TreasuryOverviewRecord,
@@ -35,10 +39,16 @@ type PaymentsWorkbenchProps = {
   readonly liquidityJobs: readonly CircleProviderJobRecord[];
   readonly modeAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly paymentMode: OrgPaymentModeRecord;
+  readonly paymentEvents: readonly PaymentEventRecord[];
+  readonly paymentReservations: readonly PaymentReservationRecord[];
   readonly providerHealth: CircleProviderHealth;
+  readonly railReadiness: readonly PaymentRailReadinessRecord[];
   readonly rebalanceRecommendations: readonly RebalanceRecommendationRecord[];
   readonly reconcileJobsAction?: (() => Promise<void>) | undefined;
+  readonly routeObservations: readonly PaymentRouteObservationRecord[];
   readonly retryLiquidityJobAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly verifyRailAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly verifyUnverifiedRailsAction?: (() => Promise<void>) | undefined;
   readonly sourceAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly sources: readonly PaymentSourceRecord[];
   readonly testnetFundsAction?: ((formData: FormData) => Promise<void>) | undefined;
@@ -62,6 +72,10 @@ const PRIMARY_RAILS: readonly PaymentRail[] = [
   'exact_arbitrum',
   'gateway_polygon',
   'exact_polygon',
+  'gateway_optimism',
+  'exact_optimism',
+  'gateway_avalanche',
+  'exact_avalanche',
 ];
 
 function titleCase(value: string): string {
@@ -77,6 +91,42 @@ function formatRail(value: string): string {
   if (value.startsWith('gateway_')) return `Gateway · ${CHAIN_LABELS[value.replace('gateway_', '') as PaymentChain] ?? titleCase(value)}`;
   if (value.startsWith('exact_')) return `Exact · ${CHAIN_LABELS[value.replace('exact_', '') as PaymentChain] ?? titleCase(value)}`;
   return titleCase(value);
+}
+
+function formatRailProofState(rail: PaymentRailReadinessRecord): string {
+  if (typeof rail.last_proof_status === 'string' && rail.last_proof_status.length > 0) {
+    return titleCase(rail.last_proof_status);
+  }
+  if (rail.last_payment_at !== null) return 'Payment submitted';
+  if (rail.last_observed_at !== null) return 'Observed';
+  return 'No run yet';
+}
+
+function formatOptionalRail(value: string | null): string {
+  return value === null ? 'None' : formatRail(value);
+}
+
+function chainFromRail(rail: PaymentRail): PaymentChain {
+  return rail.replace(/^gateway_/, '').replace(/^exact_/, '') as PaymentChain;
+}
+
+function capabilityForRail(
+  capabilities: readonly CircleChainCapabilityRecord[],
+  rail: PaymentRail,
+): CircleChainCapabilityRecord | null {
+  return capabilities.find((capability) => capability.chain === chainFromRail(rail)) ?? null;
+}
+
+function railIsSettlementVerified(
+  capabilities: readonly CircleChainCapabilityRecord[],
+  rail: PaymentRail,
+): boolean {
+  const capability = capabilityForRail(capabilities, rail);
+  if (capability === null) return false;
+  if (rail.startsWith('gateway_')) {
+    return capability.gateway_supported && capability.nanopayments_supported && capability.gateway_settlement_verified;
+  }
+  return capability.wallet_supported && capability.exact_settlement_verified;
 }
 
 function formatMoney(value: string | null): string {
@@ -150,10 +200,16 @@ export function PaymentsWorkbench({
   liquidityJobs,
   modeAction,
   paymentMode,
+  paymentEvents,
+  paymentReservations,
   providerHealth,
+  railReadiness,
   rebalanceRecommendations,
   reconcileJobsAction,
+  routeObservations,
   retryLiquidityJobAction,
+  verifyRailAction,
+  verifyUnverifiedRailsAction,
   sources,
   testnetFundsAction,
   treasuries,
@@ -167,6 +223,7 @@ export function PaymentsWorkbench({
   const modeLabel = paymentMode.mode === 'live' ? 'Live mode' : 'Test mode';
   const baseBalance = chainBalance(circleBalances, 'base');
   const firstRecommendation = rebalanceRecommendations[0] ?? null;
+  const unverifiedSupportedRailCount = railReadiness.filter((rail) => rail.supported && !rail.settlement_verified).length;
 
   return (
     <div className="ops-page payments-workbench">
@@ -236,34 +293,43 @@ export function PaymentsWorkbench({
                   <span role="columnheader">Status</span>
                   <span role="columnheader">Action</span>
                 </div>
-                {liquidityJobs.map((job) => (
-                  <article className="payments-table-row payments-jobs-row" key={job.id} role="row">
-                    <div role="cell">
-                      <strong>{typeof job.metadata.rail === 'string' ? formatRail(job.metadata.rail) : titleCase(job.job_type.replace('.', '_'))}</strong>
-                      <span>{typeof job.metadata.source_bucket === 'string' && typeof job.metadata.destination_bucket === 'string'
-                        ? `${job.metadata.source_bucket} -> ${job.metadata.destination_bucket}`
-                        : new Date(job.created_at).toLocaleString()}</span>
-                    </div>
-                    <span role="cell">{formatMoney(job.amount_usdc)}</span>
-                    <span className={`ops-state-pill ops-state-${job.status}`} role="cell">
-                      {job.status}
-                    </span>
-                    <div className="payments-job-actions" role="cell">
-                      <form action={retryLiquidityJobAction}>
-                        <input name="jobId" type="hidden" value={job.id} />
-                        <button className="button-secondary" disabled={job.status === 'complete' || job.status === 'blocked'} type="submit">
-                          Retry
-                        </button>
-                      </form>
-                      <form action={cancelLiquidityJobAction}>
-                        <input name="jobId" type="hidden" value={job.id} />
-                        <button className="button-secondary" disabled={job.status === 'complete' || job.status === 'blocked'} type="submit">
-                          Cancel
-                        </button>
-                      </form>
-                    </div>
-                  </article>
-                ))}
+                {liquidityJobs.map((job) => {
+                  const canRetry = job.status === 'failed';
+                  const canCancel = job.status === 'queued' || job.status === 'submitted';
+                  return (
+                    <article className="payments-table-row payments-jobs-row" key={job.id} role="row">
+                      <div role="cell">
+                        <strong>{typeof job.metadata.rail === 'string' ? formatRail(job.metadata.rail) : titleCase(job.job_type.replace('.', '_'))}</strong>
+                        <span>{typeof job.metadata.source_bucket === 'string' && typeof job.metadata.destination_bucket === 'string'
+                          ? `${job.metadata.source_bucket} -> ${job.metadata.destination_bucket}`
+                          : new Date(job.created_at).toLocaleString()}</span>
+                      </div>
+                      <span role="cell">{formatMoney(job.amount_usdc)}</span>
+                      <span className={`ops-state-pill ops-state-${job.status}`} role="cell">
+                        {job.status}
+                      </span>
+                      <div className="payments-job-actions" role="cell">
+                        {canRetry ? (
+                          <form action={retryLiquidityJobAction}>
+                            <input name="jobId" type="hidden" value={job.id} />
+                            <button className="button-secondary" type="submit">
+                              Retry
+                            </button>
+                          </form>
+                        ) : null}
+                        {canCancel ? (
+                          <form action={cancelLiquidityJobAction}>
+                            <input name="jobId" type="hidden" value={job.id} />
+                            <button className="button-secondary" type="submit">
+                              Cancel
+                            </button>
+                          </form>
+                        ) : null}
+                        {!canRetry && !canCancel ? <span className="payments-job-action-note">No action</span> : null}
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
@@ -327,6 +393,14 @@ export function PaymentsWorkbench({
                         <dt>Gateway</dt>
                         <dd>{formatMoney(chainBalance(circleBalances, capability.chain)?.gateway?.available ?? '0')}</dd>
                       </div>
+                      <div>
+                        <dt>Exact</dt>
+                        <dd>{capability.exact_settlement_verified ? 'Verified' : 'Unverified'}</dd>
+                      </div>
+                      <div>
+                        <dt>Gateway x402</dt>
+                        <dd>{capability.gateway_settlement_verified ? 'Verified' : 'Unverified'}</dd>
+                      </div>
                     </dl>
                   </article>
                 );
@@ -381,6 +455,175 @@ export function PaymentsWorkbench({
                     <span role="cell">{formatMoney(sourceDisplayBalance(source, circleBalances))}</span>
                     <span className={`ops-state-pill ops-state-${source.status}`} role="cell">
                       {source.status}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ops-surface" aria-labelledby="rail-readiness-title">
+            <div className="ops-surface-heading">
+              <div>
+                <h2 id="rail-readiness-title">Rail readiness</h2>
+                <p>Settlement support is explicit. Unverified rails stay unavailable for agent access until a successful testnet proof exists.</p>
+              </div>
+              <div className="payments-heading-actions">
+                <span className="ops-count-pill">{railReadiness.filter((rail) => rail.status === 'ready').length} ready</span>
+                <form action={verifyUnverifiedRailsAction}>
+                  <button
+                    className="button-secondary"
+                    disabled={!providerHealth.configured || unverifiedSupportedRailCount === 0 || verifyUnverifiedRailsAction === undefined}
+                    type="submit"
+                  >
+                    Run unverified proofs
+                  </button>
+                </form>
+              </div>
+            </div>
+            <div className="payments-table" role="table" aria-label="Payment rail readiness">
+              <div className="payments-table-head payments-rails-head" role="row">
+                <span role="columnheader">Rail</span>
+                <span role="columnheader">Type</span>
+                <span role="columnheader">Status</span>
+                <span role="columnheader">Last proof</span>
+                <span role="columnheader">Action</span>
+              </div>
+              {railReadiness.map((rail) => (
+                <article className="payments-table-row payments-rails-row" key={rail.rail} role="row">
+                  <div role="cell">
+                    <strong>{formatRail(rail.rail)}</strong>
+                    <span>{rail.reason}</span>
+                  </div>
+                  <span role="cell">{titleCase(rail.rail_type)}</span>
+                  <span className={`ops-state-pill ops-state-${rail.status === 'ready' ? 'active' : 'pending'}`} role="cell">
+                    {rail.status}
+                  </span>
+                  <span role="cell">{formatRailProofState(rail)}</span>
+                  <div className="payments-job-actions" role="cell">
+                    <form action={verifyRailAction}>
+                      <input name="rail" type="hidden" value={rail.rail} />
+                      <button
+                        className="button-secondary"
+                        disabled={!providerHealth.configured || !rail.supported || verifyRailAction === undefined}
+                        type="submit"
+                      >
+                        Run proof
+                      </button>
+                    </form>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="ops-surface" aria-labelledby="payment-route-observations-title">
+            <div className="ops-surface-heading">
+              <div>
+                <h2 id="payment-route-observations-title">Route observations</h2>
+                <p>Every x402 request is recorded with the selected rail or rejection reason before settlement.</p>
+              </div>
+              <span className="ops-count-pill">{routeObservations.length} recent</span>
+            </div>
+            {routeObservations.length === 0 ? (
+              <div className="ops-empty-state">
+                <h3>No route observations</h3>
+                <p>Agent payment attempts will appear here even when policy, liquidity, or rail readiness blocks them.</p>
+              </div>
+            ) : (
+              <div className="payments-table" role="table" aria-label="Payment route observations">
+                <div className="payments-table-head" role="row">
+                  <span role="columnheader">Request</span>
+                  <span role="columnheader">Selected rail</span>
+                  <span role="columnheader">Amount</span>
+                  <span role="columnheader">Outcome</span>
+                </div>
+                {routeObservations.slice(0, 8).map((observation) => (
+                  <article className="payments-table-row" key={observation.id} role="row">
+                    <div role="cell">
+                      <strong>{observation.resource_category ?? observation.requested_asset ?? 'x402 request'}</strong>
+                      <span>{observation.reason_code}</span>
+                    </div>
+                    <span role="cell">{formatOptionalRail(observation.supported_rail)}</span>
+                    <span role="cell">{formatMoney(observation.amount_usdc)}</span>
+                    <span className={`ops-state-pill ${observation.outcome === 'accepted' ? 'ops-state-active' : 'ops-state-pending'}`} role="cell">
+                      {observation.outcome}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ops-surface" aria-labelledby="payment-ledger-title">
+            <div className="ops-surface-heading">
+              <div>
+                <h2 id="payment-ledger-title">Payment ledger</h2>
+                <p>Submitted x402 payments with the settlement rail, provider mode, recipient, and resource category.</p>
+              </div>
+              <span className="ops-count-pill">{paymentEvents.length} event{paymentEvents.length === 1 ? '' : 's'}</span>
+            </div>
+            {paymentEvents.length === 0 ? (
+              <div className="ops-empty-state">
+                <h3>No payment events</h3>
+                <p>Approved and submitted x402 payments will be recorded here with audit evidence.</p>
+              </div>
+            ) : (
+              <div className="payments-table" role="table" aria-label="Payment events">
+                <div className="payments-table-head" role="row">
+                  <span role="columnheader">Payment</span>
+                  <span role="columnheader">Rail</span>
+                  <span role="columnheader">Amount</span>
+                  <span role="columnheader">Mode</span>
+                </div>
+                {paymentEvents.slice(0, 8).map((event) => (
+                  <article className="payments-table-row" key={event.id} role="row">
+                    <div role="cell">
+                      <strong>{event.resource_category ?? event.asset}</strong>
+                      <span>{new Date(event.created_at).toLocaleString()}</span>
+                    </div>
+                    <span role="cell">{formatRail(event.rail)}</span>
+                    <span role="cell">{formatMoney(event.amount_usdc)}</span>
+                    <span className="ops-state-pill ops-state-active" role="cell">
+                      {event.provider_mode}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ops-surface" aria-labelledby="payment-reservations-title">
+            <div className="ops-surface-heading">
+              <div>
+                <h2 id="payment-reservations-title">Reservations</h2>
+                <p>In-flight and settled payment reservations tied to source buckets and x402 quote hashes.</p>
+              </div>
+              <span className="ops-count-pill">{paymentReservations.length} recent</span>
+            </div>
+            {paymentReservations.length === 0 ? (
+              <div className="ops-empty-state">
+                <h3>No reservations</h3>
+                <p>Reservations appear when payment execution locks budget against an agent account.</p>
+              </div>
+            ) : (
+              <div className="payments-table" role="table" aria-label="Payment reservations">
+                <div className="payments-table-head" role="row">
+                  <span role="columnheader">Reservation</span>
+                  <span role="columnheader">Rail</span>
+                  <span role="columnheader">Amount</span>
+                  <span role="columnheader">Status</span>
+                </div>
+                {paymentReservations.slice(0, 8).map((reservation) => (
+                  <article className="payments-table-row" key={reservation.id} role="row">
+                    <div role="cell">
+                      <strong>{reservation.reason_code}</strong>
+                      <span>{reservation.quote_hash.slice(0, 12)}...</span>
+                    </div>
+                    <span role="cell">{formatRail(reservation.rail)}</span>
+                    <span role="cell">{formatMoney(reservation.amount_usdc)}</span>
+                    <span className={`ops-state-pill ops-state-${reservation.status === 'settled' ? 'active' : 'pending'}`} role="cell">
+                      {reservation.status}
                     </span>
                   </article>
                 ))}
@@ -660,7 +903,7 @@ export function PaymentsWorkbench({
             <div className="ops-surface-heading">
               <div>
                 <h2 id="agent-access-title">Agent access</h2>
-                <p>Enable spending for one agent on the Base Gateway rail.</p>
+                <p>Enable spending for one agent on settlement-verified exact or Gateway rails.</p>
               </div>
             </div>
             <form action={accessAction} className="operations-form">
@@ -691,12 +934,23 @@ export function PaymentsWorkbench({
                   <input defaultValue="2.00" inputMode="decimal" name="perRequestCap" required />
                 </label>
               </div>
+              <label>
+                <span>Approval threshold</span>
+                <input defaultValue="1.00" inputMode="decimal" name="approvalThreshold" />
+              </label>
               <fieldset className="payments-rail-fieldset">
                 <legend>Rails</legend>
                 {PRIMARY_RAILS.map((rail) => (
                   <label key={rail}>
-                    <input defaultChecked={rail === 'gateway_base' || rail === 'exact_base'} name="allowedRails" type="checkbox" value={rail} />
+                    <input
+                      defaultChecked={(rail === 'gateway_base' || rail === 'exact_base') && railIsSettlementVerified(capabilities, rail)}
+                      disabled={!railIsSettlementVerified(capabilities, rail)}
+                      name="allowedRails"
+                      type="checkbox"
+                      value={rail}
+                    />
                     <span>{formatRail(rail)}</span>
+                    {!railIsSettlementVerified(capabilities, rail) ? <small>Settlement unverified</small> : null}
                   </label>
                 ))}
               </fieldset>

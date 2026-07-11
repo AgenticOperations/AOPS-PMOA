@@ -11,6 +11,11 @@ type AgentsPageProps = {
   readonly params: Promise<{ readonly orgSlug: string }>;
 };
 
+function formatLastActivity(value: string | null): string {
+  if (value === null) return 'No activity';
+  return new Date(value).toLocaleString();
+}
+
 export default async function AgentsPage({ params }: AgentsPageProps) {
   const { orgSlug } = await params;
   let org;
@@ -34,7 +39,7 @@ export default async function AgentsPage({ params }: AgentsPageProps) {
           <form action={createAgentAction.bind(null, org.id, org.slug)} className="agents-inline-create-form">
             <label className="agents-inline-label">
               <span>Agent name</span>
-              <input aria-label="Agent name" name="name" placeholder="Authorise a new agent" required />
+              <input aria-label="Agent name" name="name" placeholder="Authorize a new agent" required />
             </label>
             <button className="agents-inline-add-button" type="submit">
               Add
@@ -65,8 +70,10 @@ export default async function AgentsPage({ params }: AgentsPageProps) {
                 <div className="agents-roster-header" role="row">
                   <span role="columnheader">Agent</span>
                   <span role="columnheader">Team</span>
-                  <span role="columnheader">Credential</span>
                   <span role="columnheader">Agent status</span>
+                  <span role="columnheader">Credential state</span>
+                  <span role="columnheader">Policy coverage</span>
+                  <span role="columnheader">Last activity</span>
                   <span role="columnheader">Open</span>
                 </div>
                 {agents.map((agent) => (
@@ -88,6 +95,9 @@ export default async function AgentsPage({ params }: AgentsPageProps) {
                     <span className="agents-team-pill" role="cell">
                       {agent.team.name}
                     </span>
+                    <span className={`agents-state-pill agents-state-${agent.status}`} role="cell">
+                      {formatStatus(agent.status)}
+                    </span>
                     <span className="agents-health-cell" role="cell">
                       <span
                         className={`agents-health-dot agents-health-${agent.connection_health}`}
@@ -95,8 +105,11 @@ export default async function AgentsPage({ params }: AgentsPageProps) {
                       />
                       {formatConnectionHealth(agent.connection_health)}
                     </span>
-                    <span className={`agents-state-pill agents-state-${agent.status}`} role="cell">
-                      {formatStatus(agent.status)}
+                    <span className="agents-coverage-cell" role="cell">
+                      {agent.policy_coverage === 0 ? 'No policies' : `${agent.policy_coverage} active`}
+                    </span>
+                    <span className="agents-last-activity-cell" role="cell">
+                      {formatLastActivity(agent.last_activity_at)}
                     </span>
                     <span className="agents-open-action" role="cell">
                       <span aria-hidden="true">↗</span>

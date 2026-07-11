@@ -20,10 +20,14 @@ import {
   initiateCircleGatewayDeposit,
   listCircleBalances,
   listPaymentSources,
+  listPaymentEvents,
   listCircleChainCapabilities,
   listCircleProviderJobs,
   reconcileCircleProviderJobs,
   listLiquidityJobs,
+  listPaymentRailReadiness,
+  listPaymentReservations,
+  listPaymentRouteObservations,
   listRebalanceRecommendations,
   listCircleWallets,
   listTreasuries,
@@ -34,6 +38,8 @@ import {
   retryLiquidityJob,
   setOrgPaymentMode,
   setAgentPaymentAccess,
+  verifyPaymentRails,
+  verifyPaymentRail,
 } from './store.js';
 import { createCircleTreasuryProvider, type CircleTreasuryProvider } from './circle-provider.js';
 
@@ -111,6 +117,11 @@ const testnetFaucetSchema = z.object({
   chains: z.array(chainSchema).min(1).max(5),
 });
 
+const railVerificationBatchSchema = z.object({
+  only_unverified: z.boolean().default(true),
+  rails: z.array(railSchema).min(1).max(10).optional(),
+});
+
 const bridgeTopUpSchema = z.object({
   amount_usdc: moneySchema,
   from_chain: chainSchema,
@@ -131,6 +142,10 @@ const runtimeX402Schema = z.object({
   resource: z.record(z.string(), z.unknown()).optional(),
   accepts: z.array(runtimeAcceptSchema).min(1).max(20),
   context: z.record(z.string(), z.unknown()).optional(),
+});
+
+const historyQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(250).default(100),
 });
 
 function extractBearerToken(request: FastifyRequest, sessionCookieName = 'agentops_session'): string | null {
@@ -274,6 +289,35 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     return { capabilities: await listCircleChainCapabilities(deps.pool, mode) };
   });
 
+  app.get('/v1/orgs/:orgId/payments/rail-readiness', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return { rails: await listPaymentRailReadiness(deps.pool, params.orgId) };
+  });
+
+  app.post('/v1/orgs/:orgId/payments/rail-readiness/verify', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const jobs = await verifyPaymentRails(
+      deps.pool,
+      operator,
+      params.orgId,
+      parseBody(railVerificationBatchSchema, request),
+      circleProvider,
+    );
+    return reply.code(202).send({
+      failed: jobs.filter((job) => job.status === 'failed' || job.status === 'blocked').length,
+      jobs,
+    });
+  });
+
+  app.post('/v1/orgs/:orgId/payments/rail-readiness/:rail/verify', async (request, reply) => {
+    const params = request.params as { readonly orgId: string; readonly rail: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const job = await verifyPaymentRail(deps.pool, operator, params.orgId, params.rail, circleProvider);
+    return reply.code(job.status === 'failed' || job.status === 'blocked' ? 409 : 202).send({ job });
+  });
+
   app.post('/v1/orgs/:orgId/payments/circle/treasury', async (request, reply) => {
     const params = request.params as { readonly orgId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
@@ -320,7 +364,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   app.get('/v1/orgs/:orgId/payments/liquidity-jobs', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return { jobs: await listLiquidityJobs(deps.pool, params.orgId) };
+    return { jobs: await listLiquidityJobs(deps.pool, params.orgId, 20, circleProvider) };
   });
 
   app.post('/v1/orgs/:orgId/payments/liquidity-jobs/:jobId/retry', async (request, reply) => {
@@ -392,6 +436,27 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
     const source = await createPaymentSource(deps.pool, operator, params.orgId, parseBody(paymentSourceSchema, request));
     return reply.code(201).send({ source });
+  });
+
+  app.get('/v1/orgs/:orgId/payments/events', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = historyQuerySchema.parse(request.query ?? {});
+    return { events: await listPaymentEvents(deps.pool, params.orgId, query.limit) };
+  });
+
+  app.get('/v1/orgs/:orgId/payments/route-observations', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = historyQuerySchema.parse(request.query ?? {});
+    return { observations: await listPaymentRouteObservations(deps.pool, params.orgId, query.limit) };
+  });
+
+  app.get('/v1/orgs/:orgId/payments/reservations', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = historyQuerySchema.parse(request.query ?? {});
+    return { reservations: await listPaymentReservations(deps.pool, params.orgId, query.limit) };
   });
 
   app.get('/v1/orgs/:orgId/agents/:agentId/payments', async (request) => {

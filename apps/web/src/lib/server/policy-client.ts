@@ -1,7 +1,15 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { readWebEnv } from '../env';
-import type { AgentPolicyLibrary, PolicyLibrary } from '../policy-types';
+import type {
+  AgentPolicyLibrary,
+  PolicyDraft,
+  PolicyActionRecord,
+  PolicyDecisionRequest,
+  PolicyLibrary,
+  PolicyVersion,
+  PolicySimulationRecord,
+} from '../policy-types';
 
 type ApiErrorBody = {
   readonly error?: string;
@@ -48,6 +56,56 @@ export async function listPolicyLibrary(orgId: string): Promise<PolicyLibrary> {
   return apiFetch<PolicyLibrary>(`/v1/orgs/${orgId}/policies`);
 }
 
+export async function listPolicyActions(orgId: string): Promise<PolicyActionRecord[]> {
+  const body = await apiFetch<{ readonly actions: PolicyActionRecord[] }>(`/v1/orgs/${orgId}/policy-actions`);
+  return body.actions;
+}
+
+export async function listPolicySimulations(orgId: string): Promise<PolicySimulationRecord[]> {
+  const body = await apiFetch<{ readonly simulations: PolicySimulationRecord[] }>(
+    `/v1/orgs/${orgId}/policy-simulations`,
+  );
+  return body.simulations;
+}
+
+export async function simulatePolicyDraft(
+  orgId: string,
+  draftId: string,
+  request: PolicyDecisionRequest,
+): Promise<PolicySimulationRecord> {
+  const body = await apiFetch<{ readonly simulation: PolicySimulationRecord }>(
+    `/v1/orgs/${orgId}/policy-drafts/${draftId}/simulations`,
+    {
+      method: 'POST',
+      body: JSON.stringify(request),
+    },
+  );
+  return body.simulation;
+}
+
+export async function updatePolicyDraft(
+  orgId: string,
+  draftId: string,
+  input: {
+    readonly name?: string | undefined;
+    readonly description?: string | undefined;
+    readonly category?: 'management' | 'operational' | 'capability' | undefined;
+  },
+): Promise<PolicyDraft> {
+  const body = await apiFetch<{ readonly draft: PolicyDraft }>(`/v1/orgs/${orgId}/policy-drafts/${draftId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return body.draft;
+}
+
+export async function discardPolicyDraft(orgId: string, draftId: string): Promise<PolicyDraft> {
+  const body = await apiFetch<{ readonly draft: PolicyDraft }>(`/v1/orgs/${orgId}/policy-drafts/${draftId}/discard`, {
+    method: 'POST',
+  });
+  return body.draft;
+}
+
 export async function listAgentPolicies(orgId: string, agentId: string): Promise<AgentPolicyLibrary> {
   return apiFetch<AgentPolicyLibrary>(`/v1/orgs/${orgId}/agents/${agentId}/policies`);
 }
@@ -77,10 +135,10 @@ export async function createPolicyDraft(
   }
 
   function targetTypesForAction(action: string): string[] {
-    if (action === 'management.connection.rotate' || action === 'management.connection.revoke') return ['connection'];
-    if (action === 'management.agent.create') return ['org'];
-    return ['agent'];
+    return actions.find((candidate) => candidate.action_id === action)?.binding_target_types ?? ['agent'];
   }
+
+  const actions = await listPolicyActions(orgId);
 
   const resource =
     input.resourceCategory === undefined && input.resourceDomain === undefined
@@ -158,4 +216,33 @@ export async function bindPolicy(
       target_id: input.targetId,
     }),
   });
+}
+
+export async function removePolicyBinding(orgId: string, policyId: string, bindingId: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/policies/${policyId}/bindings/${bindingId}/remove`, { method: 'POST' });
+}
+
+export async function archivePolicy(orgId: string, policyId: string, changeReason: string): Promise<PolicyVersion> {
+  const body = await apiFetch<{ readonly policy: PolicyVersion }>(`/v1/orgs/${orgId}/policies/${policyId}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ change_reason: changeReason }),
+  });
+  return body.policy;
+}
+
+export async function createPolicyVersion(
+  orgId: string,
+  policyId: string,
+  input: {
+    readonly name?: string | undefined;
+    readonly description?: string | undefined;
+    readonly category?: 'management' | 'operational' | 'capability' | undefined;
+    readonly change_reason?: string | undefined;
+  },
+): Promise<PolicyVersion> {
+  const body = await apiFetch<{ readonly policy: PolicyVersion }>(`/v1/orgs/${orgId}/policies/${policyId}/versions`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return body.policy;
 }

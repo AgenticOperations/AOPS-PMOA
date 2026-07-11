@@ -54,6 +54,31 @@ type BlockedOperationsResponse = {
   }>;
 };
 
+type ToolCatalogResponse = {
+  readonly tools: Array<{
+    readonly id: string;
+    readonly name: string;
+    readonly display_name: string;
+    readonly category: string;
+    readonly status: 'active' | 'archived';
+  }>;
+};
+
+type RateLimitListResponse = {
+  readonly rate_limits: Array<{
+    readonly id: string;
+    readonly target_type: string;
+    readonly target_id: string;
+    readonly limit: number;
+    readonly status: 'active' | 'disabled';
+    readonly utilization: {
+      readonly current_count: number;
+      readonly current_bucket: string | null;
+      readonly current_window_start: string | null;
+    };
+  }>;
+};
+
 type AllowedActionsResponse = {
   readonly actions: Array<{
     readonly action: string;
@@ -368,5 +393,147 @@ describe('Section 5 operational controls', () => {
       reasonCode: 'operation_rate_limited',
       tool_name: 'browser.search',
     });
+  });
+
+  it('updates and archives imported tools from the catalog', async () => {
+    const { orgId } = await createOrgAgentAndConnection(app);
+
+    const importResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/tools/import`,
+      payload: {
+        tools: [
+          {
+            name: 'browser.search',
+            display_name: 'Browser search',
+            category: 'browser',
+            risk_level: 'low',
+            description: 'Managed web search tool',
+          },
+        ],
+      },
+    });
+    expect(importResponse.statusCode, importResponse.body).toBe(201);
+    const tool = importResponse.json<ToolCatalogResponse>().tools[0];
+    expect(tool?.id).toMatch(/^tool_/);
+
+    const updateResponse = await app.inject({
+      method: 'PATCH',
+      url: `/v1/orgs/${orgId}/tools/${tool?.id}`,
+      payload: {
+        display_name: 'Managed browser search',
+        category: 'research',
+        risk_level: 'medium',
+        description: 'Search routed through agentOps.',
+      },
+    });
+    expect(updateResponse.statusCode, updateResponse.body).toBe(200);
+    expect(updateResponse.json<{ readonly tool: { readonly display_name: string; readonly category: string } }>().tool).toMatchObject({
+      display_name: 'Managed browser search',
+      category: 'research',
+    });
+
+    const archiveResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/tools/${tool?.id}/archive`,
+    });
+    expect(archiveResponse.statusCode, archiveResponse.body).toBe(200);
+    expect(archiveResponse.json<{ readonly tool: { readonly id: string; readonly status: string } }>().tool).toMatchObject({
+      id: tool?.id,
+      status: 'archived',
+    });
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/tools`,
+    });
+    expect(listResponse.statusCode, listResponse.body).toBe(200);
+    expect(listResponse.json<ToolCatalogResponse>().tools).toEqual([]);
+  });
+
+  it('lists, updates, disables, and reports utilization for rate limits', async () => {
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/operations/rate-limits`,
+      payload: {
+        target_type: 'agent',
+        target_id: agentId,
+        action: 'tool.call',
+        limit: 2,
+        window_seconds: 60,
+        bucket: 'tool:browser.search',
+      },
+    });
+    expect(createResponse.statusCode, createResponse.body).toBe(201);
+    const rateLimitId = createResponse.json<{ readonly rate_limit: { readonly id: string } }>().rate_limit.id;
+
+    const firstCheck = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/operations/check',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        action: 'tool.call',
+        tool: { name: 'browser.search', riskLevel: 'low' },
+      },
+    });
+    expect(firstCheck.statusCode, firstCheck.body).toBe(200);
+
+    const listResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/operations/rate-limits`,
+    });
+    expect(listResponse.statusCode, listResponse.body).toBe(200);
+    const [listedRateLimit] = listResponse.json<RateLimitListResponse>().rate_limits;
+    expect(listedRateLimit).toBeDefined();
+    expect(listedRateLimit).toMatchObject({
+      id: rateLimitId,
+      target_type: 'agent',
+      target_id: agentId,
+      limit: 2,
+      status: 'active',
+    });
+    expect(listedRateLimit?.utilization).toMatchObject({
+      current_count: 1,
+      current_bucket: 'tool:browser.search',
+    });
+
+    const updateResponse = await app.inject({
+      method: 'PATCH',
+      url: `/v1/orgs/${orgId}/operations/rate-limits/${rateLimitId}`,
+      payload: {
+        limit: 5,
+        window_seconds: 120,
+        status: 'active',
+      },
+    });
+    expect(updateResponse.statusCode, updateResponse.body).toBe(200);
+    expect(updateResponse.json<{ readonly rate_limit: { readonly limit: number; readonly window_seconds: number } }>().rate_limit).toMatchObject({
+      limit: 5,
+      window_seconds: 120,
+    });
+
+    const disableResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/operations/rate-limits/${rateLimitId}/disable`,
+    });
+    expect(disableResponse.statusCode, disableResponse.body).toBe(200);
+    expect(disableResponse.json<{ readonly rate_limit: { readonly id: string; readonly status: string } }>().rate_limit).toMatchObject({
+      id: rateLimitId,
+      status: 'disabled',
+    });
+
+    const secondCheck = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/operations/check',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        action: 'tool.call',
+        tool: { name: 'browser.search', riskLevel: 'low' },
+      },
+    });
+    expect(secondCheck.statusCode, secondCheck.body).toBe(200);
+    expect(secondCheck.json<OperationCheckResponse>().operation.decision).toBe('allow');
   });
 });

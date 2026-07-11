@@ -3,8 +3,14 @@
 import { revalidatePath } from 'next/cache';
 import {
   activatePolicyDraft,
+  archivePolicy,
   bindPolicy,
   createPolicyDraft,
+  createPolicyVersion,
+  discardPolicyDraft,
+  removePolicyBinding,
+  simulatePolicyDraft,
+  updatePolicyDraft,
   validatePolicyDraft,
 } from '@/lib/server/policy-client';
 
@@ -68,6 +74,80 @@ export async function bindPolicyAction(orgId: string, orgSlug: string, formData:
     policyVersion: Number(requiredStringField(formData, 'policyVersion')),
     targetId: target.targetId,
     targetType: target.targetType,
+  });
+  revalidatePath(controlsPath(orgSlug));
+}
+
+export async function updatePolicyDraftAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await updatePolicyDraft(orgId, requiredStringField(formData, 'draftId'), {
+    name: requiredStringField(formData, 'name'),
+    description: optionalStringField(formData, 'description'),
+    category: requiredStringField(formData, 'category') as 'management' | 'operational' | 'capability',
+  });
+  revalidatePath(controlsPath(orgSlug));
+}
+
+export async function discardPolicyDraftAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await discardPolicyDraft(orgId, requiredStringField(formData, 'draftId'));
+  revalidatePath(controlsPath(orgSlug));
+}
+
+export async function removePolicyBindingAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await removePolicyBinding(orgId, requiredStringField(formData, 'policyId'), requiredStringField(formData, 'bindingId'));
+  revalidatePath(controlsPath(orgSlug));
+}
+
+export async function archivePolicyAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await archivePolicy(orgId, requiredStringField(formData, 'policyId'), optionalStringField(formData, 'changeReason') ?? 'Archived from Controls.');
+  revalidatePath(controlsPath(orgSlug));
+}
+
+export async function createPolicyVersionAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await createPolicyVersion(orgId, requiredStringField(formData, 'policyId'), {
+    name: optionalStringField(formData, 'name'),
+    description: optionalStringField(formData, 'description'),
+    category: optionalStringField(formData, 'category') as 'management' | 'operational' | 'capability' | undefined,
+    change_reason: optionalStringField(formData, 'changeReason') ?? 'New version from Controls.',
+  });
+  revalidatePath(controlsPath(orgSlug));
+}
+
+export async function simulatePolicyDraftAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  const target = targetFromKey(requiredStringField(formData, 'targetKey'));
+  const context: Record<string, unknown> = {};
+  const resourceCategory = optionalStringField(formData, 'resourceCategory');
+  const resourceDomain = optionalStringField(formData, 'resourceDomain');
+  const paymentAmount = optionalStringField(formData, 'paymentAmount');
+  const paymentAsset = optionalStringField(formData, 'paymentAsset');
+  const toolName = optionalStringField(formData, 'toolName');
+
+  if (resourceCategory !== undefined || resourceDomain !== undefined) {
+    context.resource = {
+      ...(resourceCategory === undefined ? {} : { category: resourceCategory }),
+      ...(resourceDomain === undefined ? {} : { domain: resourceDomain }),
+    };
+  }
+  if (paymentAmount !== undefined || paymentAsset !== undefined) {
+    context.payment = {
+      ...(paymentAmount === undefined ? {} : { amount: paymentAmount }),
+      ...(paymentAsset === undefined ? {} : { asset: paymentAsset }),
+    };
+  }
+  if (toolName !== undefined) {
+    context.tool = { name: toolName };
+  }
+
+  await simulatePolicyDraft(orgId, requiredStringField(formData, 'draftId'), {
+    actor: {
+      type: 'user',
+      role: optionalStringField(formData, 'actorRole') ?? 'member',
+    },
+    action: requiredStringField(formData, 'action'),
+    target: {
+      type: target.targetType as 'agent' | 'connection' | 'org' | 'team',
+      id: target.targetId,
+    },
+    context,
   });
   revalidatePath(controlsPath(orgSlug));
 }

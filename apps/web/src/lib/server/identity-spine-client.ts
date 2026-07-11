@@ -7,7 +7,10 @@ import type {
   AgentRosterItem,
   ConnectionRecord,
   CurrentSession,
+  MemberRecord,
+  OnboardingStateRecord,
   Org,
+  Role,
   TeamRecord,
   WalletRefRecord,
 } from '../identity-spine-types';
@@ -139,10 +142,93 @@ export async function listTeams(orgId: string): Promise<TeamRecord[]> {
   return body.teams;
 }
 
+export async function createTeam(
+  orgId: string,
+  input: { readonly name: string; readonly description?: string | undefined },
+): Promise<TeamRecord> {
+  const body = await apiFetch<{ readonly team: TeamRecord }>(`/v1/orgs/${orgId}/teams`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return body.team;
+}
+
+export async function updateTeam(
+  orgId: string,
+  teamId: string,
+  input: { readonly name?: string | undefined; readonly description?: string | undefined },
+): Promise<TeamRecord> {
+  const body = await apiFetch<{ readonly team: TeamRecord }>(`/v1/orgs/${orgId}/teams/${teamId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return body.team;
+}
+
+export async function archiveTeam(orgId: string, teamId: string): Promise<TeamRecord> {
+  const body = await apiFetch<{ readonly team: TeamRecord }>(`/v1/orgs/${orgId}/teams/${teamId}/archive`, {
+    method: 'POST',
+  });
+  return body.team;
+}
+
+export async function listMembers(orgId: string): Promise<MemberRecord[]> {
+  const body = await apiFetch<{ readonly members: MemberRecord[] }>(`/v1/orgs/${orgId}/members`);
+  return body.members;
+}
+
+export async function addMember(
+  orgId: string,
+  input: { readonly email: string; readonly name?: string | undefined; readonly role: Role },
+): Promise<MemberRecord> {
+  const body = await apiFetch<{ readonly member: MemberRecord }>(`/v1/orgs/${orgId}/members`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return body.member;
+}
+
+export async function updateMember(orgId: string, memberId: string, input: { readonly role: Role }): Promise<MemberRecord> {
+  const body = await apiFetch<{ readonly member: MemberRecord }>(`/v1/orgs/${orgId}/members/${memberId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return body.member;
+}
+
+export async function removeMember(orgId: string, memberId: string): Promise<MemberRecord> {
+  const body = await apiFetch<{ readonly member: MemberRecord }>(`/v1/orgs/${orgId}/members/${memberId}/remove`, {
+    method: 'POST',
+  });
+  return body.member;
+}
+
+export async function listOnboardingStates(orgId: string): Promise<OnboardingStateRecord[]> {
+  const body = await apiFetch<{ readonly states: OnboardingStateRecord[] }>(`/v1/orgs/${orgId}/onboarding-states`);
+  return body.states;
+}
+
+export async function upsertOnboardingState(
+  orgId: string,
+  flowKey: string,
+  input: { readonly status: OnboardingStateRecord['status']; readonly payload?: Record<string, unknown> | undefined },
+): Promise<OnboardingStateRecord> {
+  const body = await apiFetch<{ readonly state: OnboardingStateRecord }>(
+    `/v1/orgs/${orgId}/onboarding-states/${encodeURIComponent(flowKey)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ payload: input.payload ?? {}, status: input.status }),
+    },
+  );
+  return body.state;
+}
+
 export async function createAgent(
   orgId: string,
   input: {
     readonly name: string;
+    readonly team_id?: string | undefined;
+    readonly parent_agent_id?: string | null | undefined;
     readonly description?: string | undefined;
     readonly labels?: string[] | undefined;
     readonly default_environment?: string | null | undefined;
@@ -169,6 +255,25 @@ export async function getAgentDetail(orgId: string, agentId: string): Promise<Ag
     walletRefs: body.wallet_refs,
     activity: body.activity,
   };
+}
+
+export async function updateAgent(
+  orgId: string,
+  agentId: string,
+  input: {
+    readonly name?: string | undefined;
+    readonly team_id?: string | undefined;
+    readonly parent_agent_id?: string | null | undefined;
+    readonly description?: string | undefined;
+    readonly labels?: string[] | undefined;
+    readonly default_environment?: string | null | undefined;
+  },
+): Promise<AgentDetailBundle['agent']> {
+  const body = await apiFetch<{ readonly agent: AgentDetailBundle['agent'] }>(`/v1/orgs/${orgId}/agents/${agentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return body.agent;
 }
 
 export async function getAgentActivityFeed(

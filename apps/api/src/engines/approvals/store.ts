@@ -7,7 +7,14 @@ import type { ConnectionAuthResult } from '../identity/store.js';
 import type { OperatorContext } from '../identity/types.js';
 import { checkPolicyDecision } from '../policy/store.js';
 import type { PolicyDecisionRequest } from '../policy/types.js';
-import type { ActivityCategory, ActivityOutcome, ActivityRecord, ApprovalRecord } from './types.js';
+import type {
+  ActivityCategory,
+  ActivityOutcome,
+  ActivityRecord,
+  ApprovalActionRecord,
+  ApprovalConsumptionRecord,
+  ApprovalRecord,
+} from './types.js';
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -50,10 +57,34 @@ type ActivityRow = {
   readonly created_at: Date;
 };
 
+type ApprovalActionRow = {
+  readonly id: string;
+  readonly approval_id: string;
+  readonly actor_type: ApprovalActionRecord['actor_type'];
+  readonly actor_id: string;
+  readonly action: ApprovalActionRecord['action'];
+  readonly note: string;
+  readonly created_at: Date;
+};
+
+type ApprovalConsumptionRow = {
+  readonly id: string;
+  readonly approval_id: string;
+  readonly decision_id: string;
+  readonly connection_id: string;
+  readonly context_hash: string;
+  readonly created_at: Date;
+};
+
 function objectFromJson(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function effectiveApprovalStatus(row: ApprovalRow): ApprovalRecord['status'] {
+  if (row.status === 'pending' && row.expires_at.getTime() <= Date.now()) return 'expired';
+  return row.status;
 }
 
 function approvalFromRow(row: ApprovalRow): ApprovalRecord {
@@ -63,7 +94,7 @@ function approvalFromRow(row: ApprovalRow): ApprovalRecord {
     agent_id: row.agent_id,
     connection_id: row.connection_id,
     decision_id: row.decision_id,
-    status: row.status,
+    status: effectiveApprovalStatus(row),
     action_id: row.action_id,
     target_type: row.target_type,
     target_id: row.target_id,
@@ -97,6 +128,69 @@ function activityFromRow(row: ActivityRow): ActivityRecord {
     payload: objectFromJson(row.payload),
     created_at: row.created_at.toISOString(),
   };
+}
+
+function approvalActionFromRow(row: ApprovalActionRow): ApprovalActionRecord {
+  return {
+    id: row.id,
+    actor_type: row.actor_type,
+    actor_id: row.actor_id,
+    action: row.action,
+    note: row.note,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+function approvalConsumptionFromRow(row: ApprovalConsumptionRow): ApprovalConsumptionRecord {
+  return {
+    id: row.id,
+    decision_id: row.decision_id,
+    connection_id: row.connection_id,
+    context_hash: row.context_hash,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+async function attachApprovalDetails(db: Db, orgId: string, approvals: readonly ApprovalRecord[]): Promise<ApprovalRecord[]> {
+  if (approvals.length === 0) return [];
+
+  const approvalIds = approvals.map((approval) => approval.id);
+  const [actionsResult, consumptionsResult] = await Promise.all([
+    db.query<ApprovalActionRow>(
+      `SELECT id, approval_id, actor_type, actor_id, action, note, created_at
+         FROM approval_actions
+        WHERE org_id = $1
+          AND approval_id = ANY($2::text[])
+        ORDER BY created_at ASC, id ASC`,
+      [orgId, approvalIds],
+    ),
+    db.query<ApprovalConsumptionRow>(
+      `SELECT id, approval_id, decision_id, connection_id, context_hash, created_at
+         FROM approval_consumptions
+        WHERE org_id = $1
+          AND approval_id = ANY($2::text[])
+        ORDER BY created_at ASC, id ASC`,
+      [orgId, approvalIds],
+    ),
+  ]);
+
+  const actionsByApproval = new Map<string, ApprovalActionRecord[]>();
+  for (const row of actionsResult.rows) {
+    const current = actionsByApproval.get(row.approval_id) ?? [];
+    current.push(approvalActionFromRow(row));
+    actionsByApproval.set(row.approval_id, current);
+  }
+
+  const consumptionByApproval = new Map<string, ApprovalConsumptionRecord>();
+  for (const row of consumptionsResult.rows) {
+    consumptionByApproval.set(row.approval_id, approvalConsumptionFromRow(row));
+  }
+
+  return approvals.map((approval) => ({
+    ...approval,
+    actions: actionsByApproval.get(approval.id) ?? [],
+    consumption: consumptionByApproval.get(approval.id) ?? null,
+  }));
 }
 
 async function withTransaction<T>(
@@ -355,11 +449,12 @@ export async function denyApproval(
         WHERE org_id = $1
           AND id = $2
           AND status = 'pending'
+          AND expires_at > now()
         RETURNING *`,
       [orgId, approvalId, operator.actorId, note],
     );
     const row = updated.rows[0];
-    if (row === undefined) throw conflict('approval_not_pending', 'Approval is not pending.');
+    if (row === undefined) throw conflict('approval_not_pending', 'Approval is not pending or has expired.');
     await client.query(
       `INSERT INTO approval_actions (id, org_id, approval_id, actor_type, actor_id, action, note)
        VALUES ($1, $2, $3, 'user', $4, 'denied', $5)`,
@@ -376,7 +471,9 @@ export async function getApproval(pool: pg.Pool, orgId: string, approvalId: stri
   ]);
   const row = result.rows[0];
   if (row === undefined) throw notFound('Approval was not found.');
-  return approvalFromRow(row);
+  const [approval] = await attachApprovalDetails(pool, orgId, [approvalFromRow(row)]);
+  if (approval === undefined) throw notFound('Approval was not found.');
+  return approval;
 }
 
 export async function listApprovals(pool: pg.Pool, orgId: string): Promise<ApprovalRecord[]> {
@@ -387,7 +484,7 @@ export async function listApprovals(pool: pg.Pool, orgId: string): Promise<Appro
       ORDER BY created_at DESC, id DESC`,
     [orgId],
   );
-  return result.rows.map(approvalFromRow);
+  return attachApprovalDetails(pool, orgId, result.rows.map(approvalFromRow));
 }
 
 export async function consumeApproval(

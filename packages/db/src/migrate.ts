@@ -11,11 +11,11 @@ export type RunMigrationsOptions = {
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 function defaultMigrationsDir(): string {
-  const compiledDir = path.join(currentDir, 'migrations');
-  if (existsSync(compiledDir)) return compiledDir;
-
   const sourceDir = path.join(currentDir, '..', '..', 'src', 'migrations');
   if (existsSync(sourceDir)) return sourceDir;
+
+  const compiledDir = path.join(currentDir, 'migrations');
+  if (existsSync(compiledDir)) return compiledDir;
 
   return compiledDir;
 }

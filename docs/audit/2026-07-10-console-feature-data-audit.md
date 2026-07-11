@@ -106,18 +106,18 @@ Reference: `shadcn-fintech` (github.com/abderrahimghazali/shadcn-fintech, MIT) w
 
 **Purpose:** Treasury/Circle Agent Wallet setup, Gateway/x402 rail configuration, liquidity job monitoring, per-agent payment budgets.
 
-**Data shown:** `org_treasuries`, `payment_sources`, `circle_provider_jobs` (all job types), `circle_chain_capabilities`, `circle_wallet_sets`/`circle_chain_wallets`, `agent_payment_accounts` (per agent), `org_payment_modes`, live Circle balance calls (not DB). Rebalance recommendations computed server-side from `payment_events` vs wallet balances (not shown directly).
+**Data shown:** `org_treasuries`, `payment_sources`, `circle_provider_jobs` (all job types), `circle_chain_capabilities` with settlement-verification flags, `circle_wallet_sets`/`circle_chain_wallets`, `agent_payment_accounts` (per agent), `org_payment_modes`, `payment_events`, `payment_route_observations`, `payment_reservations`, live Circle balances, rail-readiness diagnostics, and server-computed rebalance recommendations.
 
-**Actions & forms:** Provider mode toggle; Sync Agent Wallet; Gateway deposit; Testnet faucet (test-mode only); Reconcile provider jobs; Bridge exact wallet top-up; Retry/Cancel liquidity job; Create treasury (hardcoded `chain: 'base'`); Create Gateway source (hardcoded `provider: 'simulation'`, `chain: 'base'`); Set agent payment access (`agent_payment_accounts`, UI restricts `allowedRails` to Base/Arbitrum/Polygon even though schema/capabilities support Optimism/Avalanche too).
+**Actions & forms:** Provider mode toggle; Sync Agent Wallet; Gateway deposit; Testnet faucet (test-mode only); Reconcile provider jobs; Bridge exact wallet top-up; Retry/Cancel liquidity job; Run rail proof for one rail or all unverified rails; Create treasury; Create Gateway source with explicit provider/chain/rail; Set agent payment access with budget, per-request cap, approval threshold, and settlement-verified exact/Gateway rails.
 
-**Current gaps (confirmed against HANDOFF.md):**
-- **Open blocker:** Arbitrum Gateway x402 settlement fails (`payment_settlement_failed`) even with liquidity funded — traced to `provider.settleGatewayX402()` in `apps/api/src/engines/payments/store.ts` (~line 3464); Base Gateway and Arbitrum "exact" work, non-Base Gateway settlement does not. HANDOFF.md's next steps (diff Base vs Arbitrum facilitator payloads, add regression test, UI copy for "liquidity ready, settlement unverified") are not yet implemented.
-- "Create Gateway source" hardcoded to simulation/base — can't create a live or non-Base source from the UI.
-- Agent access UI omits Optimism/Avalanche rails despite backend support.
-- `approval_threshold_usdc` on `agent_payment_accounts` is never surfaced in any form.
-- Reconcile-jobs button only covers a narrow `isReconcilableProviderJob` heuristic — other failure reasons have no visible retry path.
+**Current gaps:**
+- The page is now the densest surface in the product: setup, diagnostics, sources, balances, agent budgets, reservations, provider jobs, route observations, liquidity jobs, rail proofs, and event ledgers all compete in one long page. This is functionally real, but not cognitively sustainable.
+- Payment events, route observations, reservations, and provider jobs are shown as recent snippets, not full operator ledgers with filters, pagination, export, or detail drawers.
+- Treasury setup, source/rail diagnostics, agent access, liquidity management, and payment history are separate operator jobs but currently share one route and one large data load.
+- Settlement verification is correctly explicit, but the UI still needs clearer separation between "Circle supports this rail", "agentOps has verified this rail for this org/mode", and "this rail is enabled for an agent".
+- Reconcile/retry affordances exist for some provider/liquidity failures, but the operator cannot yet open a job detail drawer that explains every failure reason and available next action.
 
-**Analytics opportunity:** `payment_route_observations` (routing accept/reject history per agent/rail) and full `payment_events` history (only "last payment" shown today) have **no UI** — this is the richest untapped analytics surface in the app: spend-over-time, rail success rates, per-agent budget burn-down, rejected-route reasons.
+**Analytics opportunity:** The raw data is now surfaced, but not yet composed. `payment_events`, `payment_route_observations`, `payment_reservations`, `circle_provider_jobs`, and `agent_payment_accounts` can support spend-over-time, rail success rates, per-agent budget burn-down, rejected-route reasons, liquidity-prep latency, settlement-failure rate, and approval-threshold hit rate. These belong inside Payments/Treasury subroutes, not a global analytics page.
 
 **shadcn-fintech pattern fit:** `Accounts` + `Transfers` pages (balances/sources list, transfer stats) for the setup surfaces; `Analytics` page's month-over-month + category-style breakdowns for the payment-events history once built; `Transactions` table pattern for `circle_provider_jobs`/`payment_events` listings.
 
@@ -231,11 +231,11 @@ Reference: `shadcn-fintech` (github.com/abderrahimghazali/shadcn-fintech, MIT) w
 | Table | Stores | Current UI |
 |---|---|---|
 | `org_treasuries` | treasury config | Payments |
-| `payment_sources` | funding sources/rails | Payments (create hardcoded to base/simulation) |
-| `agent_payment_accounts` | per-agent budget/caps/rails | Payments (approval_threshold_usdc never shown) |
-| `payment_route_observations` | routing accept/reject history | **No UI** (used only server-side for rebalance calc) |
-| `payment_reservations` | in-flight payment holds | **No UI** |
-| `payment_events` | full payment ledger | Payments ("last payment" summary only) |
+| `payment_sources` | funding sources/rails | Payments (explicit provider/chain/rail source creation) |
+| `agent_payment_accounts` | per-agent budget/caps/rails | Payments (budget, per-request cap, approval threshold, allowed rails) |
+| `payment_route_observations` | routing accept/reject history | Payments (recent route observations only) |
+| `payment_reservations` | in-flight payment holds | Payments (recent reservations only) |
+| `payment_events` | full payment ledger | Payments (recent ledger only) |
 | `org_payment_modes` | test/live toggle | Payments |
 | `circle_chain_capabilities` | per-chain provider capability | Payments (diagnostics) |
 | `circle_wallet_sets` / `circle_chain_wallets` | Circle wallet infra | Payments |
@@ -253,7 +253,7 @@ Reference: `shadcn-fintech` (github.com/abderrahimghazali/shadcn-fintech, MIT) w
 Pulled from the per-page analytics-opportunity sections above, shortlisted for the Overview page rollup (vs. staying page-local):
 
 1. **Pending approvals** — count + oldest-pending age, from `approval_requests` (urgency signal, currently invisible outside the Approvals inbox itself).
-2. **Payment health** — current treasury balance, today's spend vs. budget, any recent `failed` `payment_events` (surfaces the known Arbitrum blocker at the org level, not just buried in Payments).
+2. **Payment health** — current treasury balance, today's spend vs. budget, any recent `failed` `payment_events`, and any settlement-supported rails that still lack org-level verification.
 3. **Blocked/rate-limited operations trend** — rolling count from `operational_decisions`.
 4. **Policy coverage gaps** — agents with zero active `policy_bindings` (computable from existing tables, currently not surfaced anywhere).
 5. **Recent critical/warning audit events** — using `audit_events.severity`, org-wide, not agent-scoped.
@@ -269,4 +269,4 @@ Everything else (tool catalog detail, per-agent policy list, liquidity job detai
 - **Unexposed features (not just analytics gaps):** `policy_simulations` (dry-run policy testing) and multi-step `org_onboarding_states` (the schema is built for a wizard that was never built) are complete backend capabilities with zero frontend surface.
 - **No member/team management UI** anywhere, despite full CRUD existing server-side for both.
 - **Duplicated/hand-maintained metadata:** policy action labels and condition-field visibility are hardcoded in two separate UI files instead of reading `policy_action_registry` — a real drift risk, worth fixing during the redesign rather than just re-skinning around it.
-- **Hardcoded provider assumptions:** Payments' "Create Gateway source" (simulation/base only) and agent payment-access rails (omits Optimism/Avalanche) don't match what the schema and other Payments panels already support.
+- **Payments density:** Payments has become a real testnet control plane, but it is now too dense for a single route. Treasury overview, sources/rails, agent access, liquidity operations, and activity/evidence should be split before visual polish.

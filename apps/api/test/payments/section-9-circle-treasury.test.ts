@@ -56,6 +56,17 @@ type CircleTreasuryResponse = {
   }>;
 };
 
+type PaymentCapabilitiesResponse = {
+  readonly capabilities: ReadonlyArray<{
+    readonly chain: string;
+    readonly exact_settlement_verified: boolean;
+    readonly gateway_settlement_verified: boolean;
+    readonly gateway_supported: boolean;
+    readonly nanopayments_supported: boolean;
+    readonly wallet_supported: boolean;
+  }>;
+};
+
 type WalletsResponse = {
   readonly wallets: ReadonlyArray<{
     readonly chain: string;
@@ -92,6 +103,11 @@ type ProviderJobResponse = {
 };
 
 type ProviderJobsResponse = {
+  readonly jobs: ReadonlyArray<ProviderJobResponse['job']>;
+};
+
+type ProviderJobBatchResponse = {
+  readonly failed: number;
   readonly jobs: ReadonlyArray<ProviderJobResponse['job']>;
 };
 
@@ -148,6 +164,48 @@ type RebalanceRecommendationsResponse = {
   }>;
 };
 
+type PaymentEventsResponse = {
+  readonly events: ReadonlyArray<{
+    readonly amount_usdc: string;
+    readonly decision: string;
+    readonly provider_mode: 'simulation' | 'test' | 'live';
+    readonly rail: string;
+    readonly resource_category: string | null;
+    readonly result: Record<string, unknown>;
+  }>;
+};
+
+type PaymentRouteObservationsResponse = {
+  readonly observations: ReadonlyArray<{
+    readonly amount_usdc: string | null;
+    readonly outcome: 'accepted' | 'rejected';
+    readonly reason_code: string;
+    readonly requested_rail: string | null;
+    readonly supported_rail: string | null;
+  }>;
+};
+
+type PaymentReservationsResponse = {
+  readonly reservations: ReadonlyArray<{
+    readonly amount_usdc: string;
+    readonly rail: string;
+    readonly reason_code: string;
+    readonly status: string;
+  }>;
+};
+
+type PaymentRailReadinessResponse = {
+  readonly rails: ReadonlyArray<{
+    readonly rail: string;
+    readonly status: 'ready' | 'unverified' | 'unsupported';
+    readonly settlement_verified: boolean;
+    readonly last_observed_at: string | null;
+    readonly last_payment_at: string | null;
+    readonly last_proof_at: string | null;
+    readonly last_proof_status: string | null;
+  }>;
+};
+
 let gatewaySettlement: Awaited<ReturnType<CircleTreasuryProvider['settleGatewayX402']>> = {
   network: 'eip155:84532',
   providerMode: 'test',
@@ -155,6 +213,7 @@ let gatewaySettlement: Awaited<ReturnType<CircleTreasuryProvider['settleGatewayX
   transaction: '0xtest',
 };
 let gatewaySettleCalls = 0;
+let exactSettleCalls = 0;
 let gatewayDepositCalls = 0;
 let bridgeTopUpCalls = 0;
 let bridgeTopUpIdempotencyKeys: string[] = [];
@@ -163,6 +222,7 @@ let gatewayUsdcByChain: Record<string, string> = {};
 let gatewayDepositCreditsBalance = true;
 let gatewayDepositNeverSettles = false;
 let gatewayBalanceFailureChains = new Set<string>();
+let bridgeTopUpCreditsBalance = true;
 let bridgeTopUpNeverSettles = false;
 let exactSettlement: Awaited<ReturnType<CircleTreasuryProvider['settleExactX402']>> = {
   network: 'eip155:84532',
@@ -243,6 +303,7 @@ function fakeCircleProvider(): CircleTreasuryProvider {
       bridgeTopUpCalls += 1;
       bridgeTopUpIdempotencyKeys.push(idempotencyKey ?? '');
       if (bridgeTopUpNeverSettles) return new Promise(() => undefined);
+      if (bridgeTopUpCreditsBalance) walletUsdcByChain[toChain] = amount;
       return Promise.resolve({
         amount,
         fromChain,
@@ -252,7 +313,10 @@ function fakeCircleProvider(): CircleTreasuryProvider {
         transaction: `circle_bridge_${mode}_${fromChain}_${toChain}`,
       });
     },
-    settleExactX402: () => Promise.resolve(exactSettlement),
+    settleExactX402: () => {
+      exactSettleCalls += 1;
+      return Promise.resolve(exactSettlement);
+    },
     settleGatewayX402: () => {
       gatewaySettleCalls += 1;
       return Promise.resolve(gatewaySettlement);
@@ -326,6 +390,17 @@ async function createActivatedPaymentDenyPolicy(app: FastifyInstance, orgId: str
   return policy;
 }
 
+async function markGatewayRailVerified(store: PostgresTestStore, chain: string): Promise<void> {
+  await store.pool.query(
+    `UPDATE circle_chain_capabilities
+        SET gateway_settlement_verified = true,
+            metadata = metadata || jsonb_build_object('test_override', 'gateway rail verified for liquidity-prep regression')
+      WHERE mode = 'test'
+        AND chain = $1`,
+    [chain],
+  );
+}
+
 describe('Section 9 Circle treasury foundation', () => {
   let store: PostgresTestStore;
   let app: FastifyInstance;
@@ -365,12 +440,14 @@ describe('Section 9 Circle treasury foundation', () => {
     appBaseUrl = `http://127.0.0.1:${address.port}`;
   }, 90_000);
 
-  beforeEach(() => {
+  beforeEach(async () => {
     walletAddressNibble = 'a';
     gatewaySettleCalls = 0;
+    exactSettleCalls = 0;
     gatewayDepositCalls = 0;
     bridgeTopUpCalls = 0;
     bridgeTopUpIdempotencyKeys = [];
+    bridgeTopUpCreditsBalance = true;
     bridgeTopUpNeverSettles = false;
     gatewayDepositNeverSettles = false;
     gatewayBalanceFailureChains = new Set();
@@ -402,6 +479,12 @@ describe('Section 9 Circle treasury foundation', () => {
       success: true,
       transaction: '0xtest',
     };
+    await store.pool.query(
+      `UPDATE circle_chain_capabilities
+          SET gateway_settlement_verified = (chain = 'base'),
+              exact_settlement_verified = true
+        WHERE mode = 'test'`,
+    );
   });
 
   afterAll(async () => {
@@ -424,6 +507,391 @@ describe('Section 9 Circle treasury foundation', () => {
       mode: 'test',
       missing: [],
     });
+  });
+
+  it('marks non-Base Gateway x402 settlement as unverified while exact rails stay enabled', async () => {
+    const orgId = await createOrg(app);
+
+    const capabilities = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/capabilities`,
+    });
+    expect(capabilities.statusCode, capabilities.body).toBe(200);
+    expect(capabilities.json<PaymentCapabilitiesResponse>().capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chain: 'base',
+          exact_settlement_verified: true,
+          gateway_settlement_verified: true,
+        }),
+        expect.objectContaining({
+          chain: 'arbitrum',
+          exact_settlement_verified: true,
+          gateway_settlement_verified: false,
+        }),
+      ]),
+    );
+  });
+
+  it('verifies a non-Base Gateway rail only after a successful provider proof job', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    gatewaySettlement = {
+      network: 'eip155:421614',
+      payer: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      providerMode: 'test',
+      success: true,
+      transaction: '0xgatewayarbitrumproof',
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/gateway_arbitrum/verify`,
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(gatewaySettleCalls).toBe(1);
+    expect(response.json<ProviderJobResponse>().job).toMatchObject({
+      chain: 'arbitrum',
+      job_type: 'rail.verify',
+      provider_ref: '0xgatewayarbitrumproof',
+      status: 'complete',
+    });
+    expect(response.json<ProviderJobResponse>().job.metadata).toMatchObject({
+      rail: 'gateway_arbitrum',
+      settlement_success: true,
+      settlement_transaction: '0xgatewayarbitrumproof',
+      verification_method: 'circle_gateway_x402_settlement',
+    });
+
+    const readiness = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness`,
+    });
+    expect(readiness.statusCode, readiness.body).toBe(200);
+    expect(readiness.json<PaymentRailReadinessResponse>().rails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rail: 'gateway_arbitrum',
+          settlement_verified: true,
+          status: 'ready',
+        }),
+      ]),
+    );
+  });
+
+  it('prepares Gateway liquidity before proving an empty non-Base Gateway rail', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    gatewaySettlement = {
+      network: 'eip155:80002',
+      payer: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      providerMode: 'test',
+      success: true,
+      transaction: '0xgatewaypolygonproof',
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/gateway_polygon/verify`,
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(bridgeTopUpCalls).toBe(1);
+    expect(gatewayDepositCalls).toBe(1);
+    expect(gatewaySettleCalls).toBe(1);
+    expect(response.json<ProviderJobResponse>().job).toMatchObject({
+      chain: 'polygon',
+      job_type: 'rail.verify',
+      provider_ref: '0xgatewaypolygonproof',
+      status: 'complete',
+    });
+    expect(response.json<ProviderJobResponse>().job.metadata).toMatchObject({
+      liquidity_preparation_status: 'complete',
+      rail: 'gateway_polygon',
+      settlement_success: true,
+    });
+  });
+
+  it('prepares exact-wallet liquidity before proving an empty non-Base exact rail', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    exactSettlement = {
+      network: 'eip155:80002',
+      payer: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      providerMode: 'test',
+      success: true,
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/exact_polygon/verify`,
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(bridgeTopUpCalls).toBe(1);
+    expect(gatewayDepositCalls).toBe(0);
+    expect(exactSettleCalls).toBe(1);
+    expect(response.json<ProviderJobResponse>().job).toMatchObject({
+      chain: 'polygon',
+      job_type: 'rail.verify',
+      provider_ref: null,
+      status: 'complete',
+    });
+    expect(response.json<ProviderJobResponse>().job.metadata).toMatchObject({
+      liquidity_preparation_status: 'complete',
+      observed_wallet_usdc: '0.05',
+      rail: 'exact_polygon',
+      settlement_success: true,
+      settlement_transaction: null,
+    });
+  });
+
+  it('keeps an exact proof submitted while the exact wallet top-up waits for balance visibility', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    bridgeTopUpCreditsBalance = false;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/exact_avalanche/verify`,
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(bridgeTopUpCalls).toBe(1);
+    expect(exactSettleCalls).toBe(0);
+    expect(response.json<ProviderJobResponse>().job).toMatchObject({
+      chain: 'avalanche',
+      error_code: null,
+      job_type: 'rail.verify',
+      status: 'submitted',
+    });
+    expect(response.json<ProviderJobResponse>().job.metadata).toMatchObject({
+      liquidity_preparation_status: 'submitted',
+      observed_wallet_usdc: '0.00',
+      rail: 'exact_avalanche',
+    });
+  });
+
+  it('keeps a Gateway proof submitted while the Gateway deposit waits for confirmations', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    gatewayDepositCreditsBalance = false;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/gateway_optimism/verify`,
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(gatewayDepositCalls).toBe(1);
+    expect(gatewaySettleCalls).toBe(0);
+    expect(response.json<ProviderJobResponse>().job).toMatchObject({
+      chain: 'optimism',
+      error_code: null,
+      job_type: 'rail.verify',
+      status: 'submitted',
+    });
+    expect(response.json<ProviderJobResponse>().job.metadata).toMatchObject({
+      liquidity_preparation_status: 'submitted',
+      observed_gateway_usdc: '0.00',
+      rail: 'gateway_optimism',
+    });
+
+    const readiness = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness`,
+    });
+    expect(readiness.statusCode, readiness.body).toBe(200);
+    expect(readiness.json<PaymentRailReadinessResponse>().rails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          last_proof_status: 'submitted',
+          rail: 'gateway_optimism',
+          settlement_verified: false,
+          status: 'unverified',
+        }),
+      ]),
+    );
+    const optimismReadiness = readiness
+      .json<PaymentRailReadinessResponse>()
+      .rails.find((rail) => rail.rail === 'gateway_optimism');
+    expect(optimismReadiness?.last_proof_at).not.toBeNull();
+  });
+
+  it('reconciles open liquidity jobs when current balances prove the destination bucket is funded', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Reconciliation treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    gatewayUsdcByChain.optimism = '1.00';
+
+    await store.pool.query(
+      `INSERT INTO circle_provider_jobs (
+         id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by
+       )
+       VALUES (
+         'cjob_reconcile_liquidity', $1, 'test', 'liquidity.prepare', 'optimism', 'submitted', 0.50::numeric,
+         $2::jsonb, 'usr_circle_owner'
+       )`,
+      [
+        orgId,
+        JSON.stringify({
+          destination_chain: 'optimism',
+          rail: 'gateway_optimism',
+          source_chain: 'base',
+          strategy: 'wallet_rebalance_then_gateway_deposit',
+        }),
+      ],
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/liquidity-jobs`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const reconciledJob = response
+      .json<ProviderJobsResponse>()
+      .jobs.find((job) => job.id === 'cjob_reconcile_liquidity');
+    expect(reconciledJob).toBeDefined();
+    expect(reconciledJob).toMatchObject({
+      id: 'cjob_reconcile_liquidity',
+      status: 'complete',
+      error_code: null,
+    });
+    expect(reconciledJob?.metadata).toMatchObject({
+      observed_gateway_usdc: '1.00',
+      prep_status: 'complete',
+      reconciled_by: 'balance_snapshot',
+    });
+  });
+
+  it('keeps a Gateway rail unverified when the provider proof fails', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    gatewaySettlement = {
+      errorReason: 'gateway_settlement_failed',
+      network: 'eip155:80002',
+      providerMode: 'test',
+      success: false,
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/gateway_polygon/verify`,
+    });
+
+    expect(response.statusCode, response.body).toBe(409);
+    expect(gatewaySettleCalls).toBe(1);
+    expect(response.json<ProviderJobResponse>().job).toMatchObject({
+      chain: 'polygon',
+      error_code: 'rail_verify_failed',
+      job_type: 'rail.verify',
+      status: 'failed',
+    });
+    expect(response.json<ProviderJobResponse>().job.metadata).toMatchObject({
+      error_message: 'gateway_settlement_failed',
+      rail: 'gateway_polygon',
+    });
+
+    const readiness = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness`,
+    });
+    expect(readiness.statusCode, readiness.body).toBe(200);
+    expect(readiness.json<PaymentRailReadinessResponse>().rails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rail: 'gateway_polygon',
+          settlement_verified: false,
+          status: 'unverified',
+        }),
+      ]),
+    );
+  });
+
+  it('runs proof jobs for every supported unverified rail in one batch', async () => {
+    const orgId = await createOrg(app);
+    const setup = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Verification treasury' },
+    });
+    expect(setup.statusCode, setup.body).toBe(201);
+    gatewaySettlement = {
+      network: 'eip155:421614',
+      payer: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      providerMode: 'test',
+      success: true,
+      transaction: '0xgatewayproof',
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness/verify`,
+      payload: { only_unverified: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json<ProviderJobBatchResponse>()).toMatchObject({ failed: 0 });
+    const jobs = response.json<ProviderJobBatchResponse>().jobs;
+    expect(jobs).toHaveLength(4);
+    expect(jobs.map((job) => job.metadata.rail).sort()).toEqual([
+      'gateway_arbitrum',
+      'gateway_avalanche',
+      'gateway_optimism',
+      'gateway_polygon',
+    ]);
+    expect(jobs.every((job) => job.job_type === 'rail.verify' && job.status === 'complete')).toBe(true);
+    expect(gatewaySettleCalls).toBe(4);
+
+    const readiness = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness`,
+    });
+    expect(readiness.statusCode, readiness.body).toBe(200);
+    expect(readiness.json<PaymentRailReadinessResponse>().rails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rail: 'gateway_arbitrum', status: 'ready' }),
+        expect.objectContaining({ rail: 'gateway_polygon', status: 'ready' }),
+        expect.objectContaining({ rail: 'gateway_optimism', status: 'ready' }),
+        expect.objectContaining({ rail: 'gateway_avalanche', status: 'ready' }),
+      ]),
+    );
   });
 
   it('publishes a deterministic Base Sepolia testnet x402 quote for verifier QA', async () => {
@@ -483,57 +951,97 @@ describe('Section 9 Circle treasury foundation', () => {
     });
   });
 
-  it('publishes deterministic Arbitrum Sepolia exact and Gateway x402 quotes for cross-chain QA', async () => {
-    const exactQuote = await app.inject({
-      method: 'GET',
-      url: '/v1/testnet/x402/arbitrum/weather',
-    });
-
-    expect(exactQuote.statusCode, exactQuote.body).toBe(402);
-    expect(exactQuote.json()).toMatchObject({
-      error: 'payment_required',
-      accepts: [
-        {
-          amount: '10000',
-          asset: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
-          network: 'eip155:421614',
-          payTo: '0x000000000000000000000000000000000000dEaD',
-          scheme: 'exact',
-        },
-      ],
-      resource: {
-        category: 'weather',
-        method: 'GET',
+  it('publishes deterministic exact and Gateway x402 quotes for all five testnet chains', async () => {
+    const chainQuotes = [
+      {
+        asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+        chain: 'base',
+        exactUrl: '/v1/testnet/x402/weather',
+        gatewayUrl: '/v1/testnet/x402/gateway-weather',
+        network: 'eip155:84532',
       },
-    });
+      {
+        asset: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+        chain: 'arbitrum',
+        exactUrl: '/v1/testnet/x402/arbitrum/weather',
+        gatewayUrl: '/v1/testnet/x402/arbitrum/gateway-weather',
+        network: 'eip155:421614',
+      },
+      {
+        asset: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
+        chain: 'polygon',
+        exactUrl: '/v1/testnet/x402/polygon/weather',
+        gatewayUrl: '/v1/testnet/x402/polygon/gateway-weather',
+        network: 'eip155:80002',
+      },
+      {
+        asset: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
+        chain: 'optimism',
+        exactUrl: '/v1/testnet/x402/optimism/weather',
+        gatewayUrl: '/v1/testnet/x402/optimism/gateway-weather',
+        network: 'eip155:11155420',
+      },
+      {
+        asset: '0x5425890298aed601595a70AB815c96711a31Bc65',
+        chain: 'avalanche',
+        exactUrl: '/v1/testnet/x402/avalanche/weather',
+        gatewayUrl: '/v1/testnet/x402/avalanche/gateway-weather',
+        network: 'eip155:43113',
+      },
+    ] as const;
 
-    const gatewayQuote = await app.inject({
-      method: 'GET',
-      url: '/v1/testnet/x402/arbitrum/gateway-weather',
-    });
+    for (const quote of chainQuotes) {
+      const exactQuote = await app.inject({
+        method: 'GET',
+        url: quote.exactUrl,
+      });
 
-    expect(gatewayQuote.statusCode, gatewayQuote.body).toBe(402);
-    expect(gatewayQuote.json()).toMatchObject({
-      error: 'payment_required',
-      accepts: [
-        {
-          amount: '1000',
-          asset: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
-          network: 'eip155:421614',
-          payTo: '0x000000000000000000000000000000000000dEaD',
-          scheme: 'exact',
-          extra: {
-            name: 'GatewayWalletBatched',
-            verifyingContract: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
-            version: '1',
+      expect(exactQuote.statusCode, `${quote.chain} exact: ${exactQuote.body}`).toBe(402);
+      expect(exactQuote.json()).toMatchObject({
+        error: 'payment_required',
+        accepts: [
+          {
+            amount: '10000',
+            asset: quote.asset,
+            network: quote.network,
+            payTo: '0x000000000000000000000000000000000000dEaD',
+            scheme: 'exact',
           },
+        ],
+        resource: {
+          category: 'weather',
+          method: 'GET',
         },
-      ],
-      resource: {
-        category: 'weather',
+      });
+
+      const gatewayQuote = await app.inject({
         method: 'GET',
-      },
-    });
+        url: quote.gatewayUrl,
+      });
+
+      expect(gatewayQuote.statusCode, `${quote.chain} gateway: ${gatewayQuote.body}`).toBe(402);
+      expect(gatewayQuote.json()).toMatchObject({
+        error: 'payment_required',
+        accepts: [
+          {
+            amount: '1000',
+            asset: quote.asset,
+            network: quote.network,
+            payTo: '0x000000000000000000000000000000000000dEaD',
+            scheme: 'exact',
+            extra: {
+              name: 'GatewayWalletBatched',
+              verifyingContract: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
+              version: '1',
+            },
+          },
+        ],
+        resource: {
+          category: 'weather',
+          method: 'GET',
+        },
+      });
+    }
   });
 
   it('deploys one org-maintained Circle wallet set and top-five EVM chain wallets in test mode', async () => {
@@ -883,6 +1391,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('prepares Gateway liquidity before settlement when the target chain Gateway bucket is empty', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
     const orgId = await createOrg(app);
 
     const agentResponse = await app.inject({
@@ -997,7 +1506,77 @@ describe('Section 9 Circle treasury foundation', () => {
     expect(gatewayDepositCalls).toBe(1);
   });
 
+  it('blocks non-Base Gateway x402 settlement after liquidity is ready until the rail is verified', async () => {
+    gatewayUsdcByChain.arbitrum = '0.50';
+    gatewayBalanceFailureChains.add('arbitrum');
+    const orgId = await createOrg(app);
+
+    const agentResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents`,
+      payload: { name: 'Unverified Gateway Settlement Agent' },
+    });
+    expect(agentResponse.statusCode, agentResponse.body).toBe(201);
+    const agentId = agentResponse.json<AgentResponse>().agent.id;
+
+    const connectionResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/connections`,
+      payload: { kind: 'agent_credential', name: 'Runtime credential' },
+    });
+    expect(connectionResponse.statusCode, connectionResponse.body).toBe(201);
+    const secret = connectionResponse.json<ConnectionCreateResponse>().secret;
+
+    const treasury = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Testnet org treasury' },
+    });
+    expect(treasury.statusCode, treasury.body).toBe(201);
+
+    const access = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/payment-access`,
+      payload: {
+        allowed_rails: ['gateway_arbitrum'],
+        budget_usdc: '5.00',
+        dedicated_wallet_required: false,
+        per_request_cap_usdc: '2.00',
+        status: 'active',
+      },
+    });
+    expect(access.statusCode, access.body).toBe(200);
+
+    const payment = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        accepts: [
+          {
+            amount: '1000',
+            asset: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+            extra: { name: 'GatewayWalletBatched' },
+            network: 'eip155:421614',
+            payTo: '0x1111111111111111111111111111111111111111',
+            scheme: 'exact',
+          },
+        ],
+        resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway-ready-unverified' },
+      },
+    });
+
+    expect(payment.statusCode, payment.body).toBe(409);
+    expect(payment.json()).toMatchObject({
+      error: 'payment_rail_unverified',
+    });
+    expect(gatewaySettleCalls).toBe(0);
+    expect(gatewayDepositCalls).toBe(0);
+    expect(bridgeTopUpCalls).toBe(0);
+  });
+
   it('does not duplicate a bridge when retry sees the destination wallet already funded', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
     const orgId = await createOrg(app);
 
     const agentResponse = await app.inject({
@@ -1083,6 +1662,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('does not rebalance or deposit when retry sees the target Gateway bucket already funded', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
     const orgId = await createOrg(app);
 
     const agentResponse = await app.inject({
@@ -1169,6 +1749,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('does not mark Gateway liquidity complete until the target Gateway balance is visible', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
     const orgId = await createOrg(app);
 
     const agentResponse = await app.inject({
@@ -1235,26 +1816,28 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/liquidity-jobs/${prep.jobId}/retry`,
     });
-    expect(retry.statusCode, retry.body).toBe(409);
+    expect(retry.statusCode, retry.body).toBe(202);
     const retriedGatewayJob = retry.json<ProviderJobResponse>().job;
     expect(retriedGatewayJob).toMatchObject({
       amount_usdc: '0.50',
       chain: 'arbitrum',
-      error_code: 'gateway_deposit_balance_unverified',
+      error_code: null,
       job_type: 'liquidity.prepare',
-      status: 'failed',
+      status: 'submitted',
     });
     expect(retriedGatewayJob.metadata).toMatchObject({
       bridge_status: 'already_sufficient_destination_balance',
       bridge_transaction_id: null,
       deposit_transaction_id: 'circle_tx_deposit_test_arbitrum',
       observed_gateway_usdc: '0.00',
+      prep_status: 'awaiting_gateway_balance',
     });
     expect(bridgeTopUpCalls).toBe(0);
     expect(gatewayDepositCalls).toBe(1);
   });
 
   it('queues Gateway liquidity preparation when Circle Gateway balance lookup is transiently unavailable', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
     gatewayBalanceFailureChains = new Set(['arbitrum']);
     const orgId = await createOrg(app);
 
@@ -1842,6 +2425,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('summarizes treasury liquidity, pending prep jobs, payment access, and last payment for the console', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
     const orgId = await createOrg(app);
 
     const agentResponse = await app.inject({
@@ -1951,5 +2535,84 @@ describe('Section 9 Circle treasury foundation', () => {
         wallet_usdc: '8.50',
       },
     });
+
+    const events = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/events?limit=10`,
+    });
+    expect(events.statusCode, events.body).toBe(200);
+    expect(events.json<PaymentEventsResponse>().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          amount_usdc: '0.01',
+          decision: 'submitted',
+          provider_mode: 'test',
+          rail: 'exact_base',
+          resource_category: 'weather',
+        }),
+      ]),
+    );
+
+    const observations = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/route-observations?limit=10`,
+    });
+    expect(observations.statusCode, observations.body).toBe(200);
+    expect(observations.json<PaymentRouteObservationsResponse>().observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          amount_usdc: '0.01',
+          outcome: 'accepted',
+          reason_code: 'submitted',
+          supported_rail: 'exact_base',
+        }),
+        expect.objectContaining({
+          amount_usdc: '0.001',
+          outcome: 'rejected',
+          reason_code: 'liquidity_preparing',
+          supported_rail: 'gateway_arbitrum',
+        }),
+      ]),
+    );
+
+    const reservations = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/reservations?limit=10`,
+    });
+    expect(reservations.statusCode, reservations.body).toBe(200);
+    expect(reservations.json<PaymentReservationsResponse>().reservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          amount_usdc: '0.01',
+          rail: 'exact_base',
+          reason_code: 'submitted',
+          status: 'settled',
+        }),
+      ]),
+    );
+
+    const readiness = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/rail-readiness`,
+    });
+    expect(readiness.statusCode, readiness.body).toBe(200);
+    expect(readiness.json<PaymentRailReadinessResponse>().rails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rail: 'exact_base',
+          settlement_verified: true,
+          status: 'ready',
+        }),
+        expect.objectContaining({
+          rail: 'gateway_polygon',
+          settlement_verified: false,
+          status: 'unverified',
+        }),
+      ]),
+    );
+    const exactBaseReadiness = readiness
+      .json<PaymentRailReadinessResponse>()
+      .rails.find((rail) => rail.rail === 'exact_base');
+    expect(exactBaseReadiness?.last_payment_at).not.toBeNull();
   });
 });

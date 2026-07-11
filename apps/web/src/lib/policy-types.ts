@@ -47,6 +47,55 @@ export type PolicyStatement = {
   } | undefined;
 };
 
+export type PolicyDecisionRequest = {
+  readonly actor: {
+    readonly type: 'agent' | 'connection' | 'system' | 'user';
+    readonly id?: string | undefined;
+    readonly role?: string | undefined;
+  };
+  readonly action: string;
+  readonly target: {
+    readonly type: 'agent' | 'connection' | 'org' | 'team';
+    readonly id?: string | undefined;
+  };
+  readonly context: Record<string, unknown>;
+};
+
+export type PolicyDecisionResult = {
+  readonly decision: 'allow' | 'approval_required' | 'deny' | 'observe';
+  readonly enforceability: 'enforceable';
+  readonly explanation: string;
+  readonly matched: Array<{
+    readonly decision: string;
+    readonly policyId: string;
+    readonly policyName: string;
+    readonly policyVersion: number;
+    readonly statementId: string;
+  }>;
+  readonly reasonCode: string;
+};
+
+export type PolicySimulationRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly draft_id: string | null;
+  readonly request: PolicyDecisionRequest;
+  readonly result: PolicyDecisionResult;
+  readonly created_by: string;
+  readonly created_at: string;
+};
+
+export type PolicyActionRecord = {
+  readonly action_id: string;
+  readonly category: string;
+  readonly label: string;
+  readonly description: string;
+  readonly enforceability: 'enforceable';
+  readonly introduced_section: number;
+  readonly condition_groups: Array<'payment' | 'resource' | 'tool'>;
+  readonly binding_target_types: Array<'agent' | 'connection' | 'org' | 'team'>;
+};
+
 export type PolicyBinding = {
   readonly id: string;
   readonly target_id: string;

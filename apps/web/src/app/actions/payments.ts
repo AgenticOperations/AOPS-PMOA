@@ -13,6 +13,8 @@ import {
   retryLiquidityJob,
   setProviderMode,
   setAgentPaymentAccess,
+  verifyPaymentRails,
+  verifyPaymentRail,
 } from '@/lib/server/payments-client';
 import type { PaymentChain, PaymentMode, PaymentRail } from '@/lib/payments-types';
 
@@ -33,6 +35,13 @@ function requiredStringField(formData: FormData, key: string): string {
 
 function moneyField(formData: FormData, key: string): string {
   const value = requiredStringField(formData, key);
+  if (!/^\d+(?:\.\d{1,6})?$/.test(value)) throw new Error(`${key} must be a USDC amount`);
+  return value;
+}
+
+function optionalMoneyField(formData: FormData, key: string): string | null {
+  const value = stringField(formData, key);
+  if (value.length === 0) return null;
   if (!/^\d+(?:\.\d{1,6})?$/.test(value)) throw new Error(`${key} must be a USDC amount`);
   return value;
 }
@@ -82,7 +91,25 @@ function railFields(formData: FormData): PaymentRail[] {
   const rails = formData
     .getAll('allowedRails')
     .filter((value): value is PaymentRail => typeof value === 'string' && PAYMENT_RAILS.has(value as PaymentRail));
-  return rails.length === 0 ? ['gateway_base'] : rails;
+  return [...new Set(rails)];
+}
+
+function railField(formData: FormData, key = 'rail'): PaymentRail {
+  const value = stringField(formData, key);
+  if (PAYMENT_RAILS.has(value as PaymentRail)) return value as PaymentRail;
+  throw new Error(`${key} is invalid`);
+}
+
+function sourceTypeForRail(rail: PaymentRail): 'direct_exact' | 'gateway' {
+  return rail.startsWith('gateway_') ? 'gateway' : 'direct_exact';
+}
+
+function providerField(formData: FormData, rail: PaymentRail): 'circle_gateway' | 'circle_wallets' | 'manual' | 'simulation' {
+  const value = stringField(formData, 'provider');
+  if (value === 'circle_gateway' || value === 'circle_wallets' || value === 'manual' || value === 'simulation') {
+    return value;
+  }
+  return rail.startsWith('gateway_') ? 'circle_gateway' : 'circle_wallets';
 }
 
 export async function setProviderModeAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
@@ -136,9 +163,19 @@ export async function cancelLiquidityJobAction(orgId: string, orgSlug: string, f
   revalidatePath(paymentsPath(orgSlug));
 }
 
+export async function verifyPaymentRailAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await verifyPaymentRail(orgId, railField(formData));
+  revalidatePath(paymentsPath(orgSlug));
+}
+
+export async function verifyUnverifiedPaymentRailsAction(orgId: string, orgSlug: string): Promise<void> {
+  await verifyPaymentRails(orgId, { only_unverified: true });
+  revalidatePath(paymentsPath(orgSlug));
+}
+
 export async function createTreasuryAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await createTreasury(orgId, {
-    chain: 'base',
+    chain: chainField(formData),
     label: requiredStringField(formData, 'label'),
     treasury_type: 'gateway',
   });
@@ -146,13 +183,18 @@ export async function createTreasuryAction(orgId: string, orgSlug: string, formD
 }
 
 export async function createGatewaySourceAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  const rail = railField(formData);
+  const provider = providerField(formData, rail);
   await createPaymentSource(orgId, {
-    chain: 'base',
+    account_type: rail.startsWith('gateway_') ? 'virtual' : 'sca',
+    address: stringField(formData, 'address') || null,
+    chain: chainField(formData),
+    external_wallet_id: stringField(formData, 'externalWalletId') || null,
     label: requiredStringField(formData, 'label'),
-    provider: 'simulation',
-    rail: 'gateway_base',
-    simulated_balance_usdc: moneyField(formData, 'simulatedBalance'),
-    source_type: 'gateway',
+    provider,
+    rail,
+    simulated_balance_usdc: provider === 'simulation' ? moneyField(formData, 'simulatedBalance') : undefined,
+    source_type: sourceTypeForRail(rail),
   });
   revalidatePath(paymentsPath(orgSlug));
 }
@@ -162,6 +204,7 @@ export async function setAgentPaymentAccessAction(orgId: string, orgSlug: string
     allowed_rails: railFields(formData),
     budget_usdc: moneyField(formData, 'budget'),
     dedicated_wallet_required: false,
+    approval_threshold_usdc: optionalMoneyField(formData, 'approvalThreshold'),
     per_request_cap_usdc: moneyField(formData, 'perRequestCap'),
     status: statusField(formData),
   });

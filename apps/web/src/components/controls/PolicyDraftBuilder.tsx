@@ -1,70 +1,110 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import type { PolicyActionRecord } from '@/lib/policy-types';
 
 type PolicyDraftBuilderProps = {
+  readonly actions?: readonly PolicyActionRecord[] | undefined;
   readonly createAction?: ((formData: FormData) => Promise<void>) | undefined;
 };
 
-const policyActions = [
+const fallbackPolicyActions: readonly PolicyActionRecord[] = [
   {
-    id: 'runtime.http.request',
+    action_id: 'runtime.http.request',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'runtime',
+    condition_groups: ['resource'],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'External HTTP/API request',
-    sections: ['resource'],
-    summary: 'Deny, observe, or require approval before an agent accesses an external API or website.',
+    description: 'Deny, observe, or require approval before an agent accesses an external API or website.',
   },
   {
-    id: 'payment.x402.authorize',
+    action_id: 'payment.x402.authorize',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'payment',
+    condition_groups: ['resource', 'payment'],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Authorize x402 payment check',
-    sections: ['resource', 'payment'],
-    summary: 'Control x402 payment authorization checks before payment-capable sections are attached.',
+    description: 'Control x402 payment authorization checks before payment-capable sections are attached.',
   },
   {
-    id: 'tool.call',
+    action_id: 'tool.call',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'tool',
+    condition_groups: ['tool'],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Tool call',
-    sections: ['tool'],
-    summary: 'Control tool calls that pass through an agentOps-managed MCP or tool gateway.',
+    description: 'Control tool calls that pass through an agentOps-managed MCP or tool gateway.',
   },
   {
-    id: 'management.connection.issue',
+    action_id: 'management.connection.issue',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'management',
+    condition_groups: [],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Issue credential',
-    sections: [],
-    summary: 'Control whether operators can issue runtime credentials.',
+    description: 'Control whether operators can issue runtime credentials.',
   },
   {
-    id: 'management.connection.rotate',
+    action_id: 'management.connection.rotate',
+    binding_target_types: ['connection'],
+    category: 'management',
+    condition_groups: [],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Rotate credential',
-    sections: [],
-    summary: 'Control whether operators can rotate runtime credentials.',
+    description: 'Control whether operators can rotate runtime credentials.',
   },
   {
-    id: 'management.connection.revoke',
+    action_id: 'management.connection.revoke',
+    binding_target_types: ['connection'],
+    category: 'management',
+    condition_groups: [],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Revoke credential',
-    sections: [],
-    summary: 'Control whether operators can revoke runtime credentials.',
+    description: 'Control whether operators can revoke runtime credentials.',
   },
   {
-    id: 'management.agent.pause',
+    action_id: 'management.agent.pause',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'management',
+    condition_groups: [],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Pause agent',
-    sections: [],
-    summary: 'Control whether operators can pause agents.',
+    description: 'Control whether operators can pause agents.',
   },
   {
-    id: 'management.agent.activate',
+    action_id: 'management.agent.activate',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'management',
+    condition_groups: [],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Activate agent',
-    sections: [],
-    summary: 'Control whether operators can activate paused agents.',
+    description: 'Control whether operators can activate paused agents.',
   },
   {
-    id: 'management.agent.deactivate',
+    action_id: 'management.agent.deactivate',
+    binding_target_types: ['agent', 'org', 'team'],
+    category: 'management',
+    condition_groups: [],
+    enforceability: 'enforceable',
+    introduced_section: 2,
     label: 'Deactivate agent',
-    sections: [],
-    summary: 'Control whether operators can deactivate agents.',
+    description: 'Control whether operators can deactivate agents.',
   },
 ] as const;
 
-function fieldEnabled(action: (typeof policyActions)[number], section: 'payment' | 'resource' | 'tool'): boolean {
-  return action.sections.includes(section as never);
+const defaultPolicyAction = fallbackPolicyActions[0] as PolicyActionRecord;
+
+function fieldEnabled(action: PolicyActionRecord, section: 'payment' | 'resource' | 'tool'): boolean {
+  return action.condition_groups.includes(section);
 }
 
 function formatDecision(decision: string): string {
@@ -73,8 +113,9 @@ function formatDecision(decision: string): string {
   return 'Deny';
 }
 
-export function PolicyDraftBuilder({ createAction }: PolicyDraftBuilderProps) {
-  const [selectedAction, setSelectedAction] = useState<string>(policyActions[0].id);
+export function PolicyDraftBuilder({ actions = fallbackPolicyActions, createAction }: PolicyDraftBuilderProps) {
+  const availableActions = actions.length > 0 ? actions : fallbackPolicyActions;
+  const [selectedAction, setSelectedAction] = useState<string>(availableActions[0]?.action_id ?? defaultPolicyAction.action_id);
   const [decision, setDecision] = useState('deny');
   const [policyName, setPolicyName] = useState('');
   const [description, setDescription] = useState('');
@@ -84,9 +125,9 @@ export function PolicyDraftBuilder({ createAction }: PolicyDraftBuilderProps) {
   const [paymentMinAmount, setPaymentMinAmount] = useState('');
   const [paymentAsset, setPaymentAsset] = useState('');
   const [toolName, setToolName] = useState('');
-  const action = useMemo(
-    () => policyActions.find((candidate) => candidate.id === selectedAction) ?? policyActions[0],
-    [selectedAction],
+  const action = useMemo<PolicyActionRecord>(
+    () => availableActions.find((candidate) => candidate.action_id === selectedAction) ?? availableActions[0] ?? defaultPolicyAction,
+    [availableActions, selectedAction],
   );
   const conditionSummary = useMemo(() => {
     const conditions: string[] = [];
@@ -155,8 +196,8 @@ export function PolicyDraftBuilder({ createAction }: PolicyDraftBuilderProps) {
                     required
                     value={selectedAction}
                   >
-                    {policyActions.map((candidate) => (
-                      <option key={candidate.id} value={candidate.id}>
+                    {availableActions.map((candidate) => (
+                      <option key={candidate.action_id} value={candidate.action_id}>
                         {candidate.label}
                       </option>
                     ))}
@@ -182,7 +223,7 @@ export function PolicyDraftBuilder({ createAction }: PolicyDraftBuilderProps) {
               </div>
               <div className="policy-builder-note">
                 <strong>{action.label}</strong>
-                <span>{action.summary}</span>
+                <span>{action.description}</span>
               </div>
             </div>
           </section>

@@ -26,6 +26,7 @@ type PolicyDraftResponse = {
   readonly draft: {
     readonly id: string;
     readonly name: string;
+    readonly description: string;
     readonly status: string;
   };
 };
@@ -57,11 +58,19 @@ type PolicyBindingResponse = {
 };
 
 type PolicyLibraryResponse = {
+  readonly drafts: Array<{
+    readonly id: string;
+    readonly name: string;
+    readonly status: string;
+  }>;
   readonly policies: Array<{
     readonly id: string;
+    readonly version: number;
+    readonly status: string;
     readonly binding_target_types: string[];
     readonly bindings_count: number;
     readonly bindings: Array<{
+      readonly id: string;
       readonly target_id: string;
       readonly target_type: string;
     }>;
@@ -86,6 +95,28 @@ type DecisionResponse = {
     readonly decision: string;
     readonly reasonCode: string;
     readonly explanation: string;
+  };
+};
+
+type PolicyActionCatalogResponse = {
+  readonly actions: Array<{
+    readonly action_id: string;
+    readonly label: string;
+    readonly condition_groups: string[];
+    readonly binding_target_types: string[];
+  }>;
+};
+
+type PolicySimulationResponse = {
+  readonly simulation: {
+    readonly id: string;
+    readonly draft_id: string;
+    readonly request: Record<string, unknown>;
+    readonly result: {
+      readonly decision: string;
+      readonly reasonCode: string;
+      readonly matched: Array<{ readonly statementId: string }>;
+    };
   };
 };
 
@@ -252,6 +283,98 @@ describe('Section 2 policy routes', () => {
       'policy.decision.recorded',
     ]);
     expect(audit.rows[3]).toMatchObject({ event_domain: 'policy', related_policy_id: policy.policyId });
+  });
+
+  it('serves canonical policy action metadata from the backend catalog', async () => {
+    const { orgId } = await createOrgAndAgent(ownerApp);
+
+    const response = await ownerApp.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/policy-actions`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<PolicyActionCatalogResponse>().actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_id: 'runtime.http.request',
+          label: 'External HTTP request',
+          condition_groups: ['resource'],
+          binding_target_types: ['org', 'team', 'agent'],
+        }),
+        expect.objectContaining({
+          action_id: 'payment.x402.authorize',
+          condition_groups: ['resource', 'payment'],
+          binding_target_types: ['org', 'team', 'agent'],
+        }),
+        expect.objectContaining({
+          action_id: 'management.connection.rotate',
+          condition_groups: [],
+          binding_target_types: ['connection'],
+        }),
+      ]),
+    );
+  });
+
+  it('dry-runs draft policy simulations without recording enforcement decisions', async () => {
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const draftResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts`,
+      payload: {
+        source: 'structured',
+        name: 'Draft weather block',
+        category: 'operational',
+        statements: [
+          {
+            id: 'stmt_draft_weather',
+            decision: 'deny',
+            actions: ['runtime.http.request'],
+            target: { types: ['agent'], ids: [agentId] },
+            conditions: { resource: { categories: ['weather'] } },
+            audit: 'detailed',
+          },
+        ],
+      },
+    });
+    expect(draftResponse.statusCode, draftResponse.body).toBe(201);
+    const draft = draftResponse.json<PolicyDraftResponse>().draft;
+
+    const before = await store.pool.query<{ count: string }>('SELECT count(*) FROM policy_decisions WHERE org_id = $1', [
+      orgId,
+    ]);
+
+    const simulationResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts/${draft.id}/simulations`,
+      payload: {
+        actor: { type: 'agent', id: agentId },
+        action: 'runtime.http.request',
+        target: { type: 'agent', id: agentId },
+        context: { resource: { category: 'weather', domain: 'api.weather.test' } },
+      },
+    });
+
+    expect(simulationResponse.statusCode, simulationResponse.body).toBe(201);
+    expect(simulationResponse.json<PolicySimulationResponse>().simulation).toMatchObject({
+      draft_id: draft.id,
+      result: {
+        decision: 'deny',
+        reasonCode: 'policy_denied',
+        matched: [expect.objectContaining({ statementId: 'stmt_draft_weather' })],
+      },
+    });
+
+    const after = await store.pool.query<{ count: string }>('SELECT count(*) FROM policy_decisions WHERE org_id = $1', [
+      orgId,
+    ]);
+    expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+
+    const stored = await store.pool.query<{ result: unknown }>(
+      'SELECT result FROM policy_simulations WHERE org_id = $1 AND draft_id = $2',
+      [orgId, draft.id],
+    );
+    expect(stored.rowCount).toBe(1);
   });
 
   it('returns active binding details for the policy library and agent effective policies', async () => {
@@ -433,5 +556,197 @@ describe('Section 2 policy routes', () => {
     expect(connectionBindingResponse.json()).toMatchObject({
       error: 'invalid_policy_binding_target',
     });
+  });
+
+  it('edits and discards mutable policy drafts without activating them', async () => {
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+
+    const draftResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts`,
+      payload: {
+        source: 'structured',
+        name: 'Temporary weather policy',
+        description: 'Old description',
+        category: 'operational',
+        statements: [
+          {
+            id: 'stmt_weather',
+            decision: 'deny',
+            actions: ['runtime.http.request'],
+            target: { types: ['agent'], ids: [agentId] },
+            conditions: { resource: { categories: ['weather'] } },
+            audit: 'detailed',
+          },
+        ],
+      },
+    });
+    expect(draftResponse.statusCode, draftResponse.body).toBe(201);
+    const draft = draftResponse.json<PolicyDraftResponse>().draft;
+
+    const editResponse = await ownerApp.inject({
+      method: 'PATCH',
+      url: `/v1/orgs/${orgId}/policy-drafts/${draft.id}`,
+      payload: {
+        name: 'Temporary market policy',
+        description: 'Edited description',
+        statements: [
+          {
+            id: 'stmt_market',
+            decision: 'approval_required',
+            actions: ['payment.x402.authorize'],
+            target: { types: ['agent'], ids: [agentId] },
+            conditions: {
+              resource: { categories: ['market-data'] },
+              payment: { minAmount: '1.00', assets: ['USDC'] },
+            },
+            audit: 'detailed',
+          },
+        ],
+      },
+    });
+    expect(editResponse.statusCode, editResponse.body).toBe(200);
+    expect(editResponse.json<PolicyDraftResponse>().draft).toMatchObject({
+      id: draft.id,
+      name: 'Temporary market policy',
+      description: 'Edited description',
+      status: 'draft',
+    });
+
+    const discardResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts/${draft.id}/discard`,
+    });
+    expect(discardResponse.statusCode, discardResponse.body).toBe(200);
+    expect(discardResponse.json<PolicyDraftResponse>().draft).toMatchObject({
+      id: draft.id,
+      status: 'discarded',
+    });
+
+    const validateDiscarded = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts/${draft.id}/validate`,
+    });
+    expect(validateDiscarded.statusCode).toBe(400);
+    expect(validateDiscarded.json()).toMatchObject({ error: 'policy_draft_locked' });
+
+    const libraryResponse = await ownerApp.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/policies`,
+    });
+    expect(libraryResponse.statusCode, libraryResponse.body).toBe(200);
+    expect(libraryResponse.json<PolicyLibraryResponse>().drafts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: draft.id, name: 'Temporary market policy', status: 'discarded' }),
+      ]),
+    );
+  });
+
+  it('removes bindings and archives policies so they no longer affect decisions', async () => {
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
+
+    const bindingResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policies/${policy.policyId}/bindings`,
+      payload: {
+        policy_version: policy.version,
+        target_type: 'agent',
+        target_id: agentId,
+      },
+    });
+    expect(bindingResponse.statusCode, bindingResponse.body).toBe(201);
+    const binding = bindingResponse.json<PolicyBindingResponse>().binding;
+
+    const deniedBeforeRemove = await operatorApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-decisions/check`,
+      payload: {
+        actor: { type: 'user', id: 'usr_operator', role: 'operator' },
+        action: 'management.connection.issue',
+        target: { type: 'agent', id: agentId },
+        context: {},
+      },
+    });
+    expect(deniedBeforeRemove.statusCode, deniedBeforeRemove.body).toBe(200);
+    expect(deniedBeforeRemove.json<DecisionResponse>().decision.decision).toBe('deny');
+
+    const removeResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policies/${policy.policyId}/bindings/${binding.id}/remove`,
+    });
+    expect(removeResponse.statusCode, removeResponse.body).toBe(200);
+    expect(removeResponse.json<PolicyBindingResponse>().binding).toMatchObject({
+      id: binding.id,
+      target_type: 'agent',
+      target_id: agentId,
+    });
+
+    const allowedAfterRemove = await operatorApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-decisions/check`,
+      payload: {
+        actor: { type: 'user', id: 'usr_operator', role: 'operator' },
+        action: 'management.connection.issue',
+        target: { type: 'agent', id: agentId },
+        context: {},
+      },
+    });
+    expect(allowedAfterRemove.statusCode, allowedAfterRemove.body).toBe(200);
+    expect(allowedAfterRemove.json<DecisionResponse>().decision).toMatchObject({
+      decision: 'allow',
+      reasonCode: 'no_matching_policy',
+    });
+
+    const archiveResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policies/${policy.policyId}/archive`,
+      payload: { change_reason: 'No longer needed' },
+    });
+    expect(archiveResponse.statusCode, archiveResponse.body).toBe(200);
+    expect(archiveResponse.json()).toMatchObject({ policy: { id: policy.policyId, status: 'archived' } });
+  });
+
+  it('creates a new active policy version from an existing policy', async () => {
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
+
+    const versionResponse = await ownerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policies/${policy.policyId}/versions`,
+      payload: {
+        name: 'Observe credential issue',
+        description: 'Downgrade credential issue controls to observation.',
+        statements: [
+          {
+            id: 'stmt_observe_issue',
+            decision: 'observe',
+            actions: ['management.connection.issue'],
+            actor: { roles: ['operator'] },
+            target: { types: ['agent'], ids: [agentId] },
+            audit: 'detailed',
+          },
+        ],
+        change_reason: 'QA versioning update',
+      },
+    });
+    expect(versionResponse.statusCode, versionResponse.body).toBe(201);
+    expect(versionResponse.json<PolicyActivationResponse>().policy).toMatchObject({
+      id: policy.policyId,
+      version: 2,
+      name: 'Observe credential issue',
+    });
+
+    const libraryResponse = await ownerApp.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/policies`,
+    });
+    expect(libraryResponse.statusCode, libraryResponse.body).toBe(200);
+    expect(libraryResponse.json<PolicyLibraryResponse>().policies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: policy.policyId, version: 1, status: 'active' }),
+        expect.objectContaining({ id: policy.policyId, version: 2, status: 'active' }),
+      ]),
+    );
   });
 });

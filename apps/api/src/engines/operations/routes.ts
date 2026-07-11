@@ -8,15 +8,20 @@ import { satisfiesRole } from '../identity/roles.js';
 import type { OperatorContext, Role } from '../identity/types.js';
 import { authenticateRuntimeConnection } from '../runtime/store.js';
 import {
+  archiveTool,
   checkOperation,
   checkRuntimeOperation,
   createRateLimit,
+  disableRateLimit,
   importTools,
   listAgentAllowedActions,
   listBlockedOperations,
+  listRateLimits,
   listTools,
   recordOperation,
   recordRuntimeOperation,
+  updateRateLimit,
+  updateTool,
 } from './store.js';
 
 export type RegisterOperationRoutesDeps = {
@@ -45,6 +50,14 @@ const importToolsSchema = z.object({
     .max(100),
 });
 
+const updateToolSchema = z.object({
+  display_name: z.string().trim().min(1).max(160).optional(),
+  category: z.string().trim().min(1).max(80).optional(),
+  risk_level: toolRiskLevelSchema.optional(),
+  description: z.string().trim().max(1000).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
 const operationCheckSchema = z.object({
   agent_id: z.string().trim().min(1),
   connection_id: z.string().trim().min(1).nullable().optional(),
@@ -70,6 +83,13 @@ const rateLimitSchema = z.object({
   bucket: z.string().trim().min(1).max(240).optional(),
   limit: z.number().int().positive().max(100_000),
   window_seconds: z.number().int().positive().max(86_400),
+});
+
+const updateRateLimitSchema = z.object({
+  bucket: z.string().trim().min(1).max(240).optional(),
+  limit: z.number().int().positive().max(100_000).optional(),
+  window_seconds: z.number().int().positive().max(86_400).optional(),
+  status: z.enum(['active', 'disabled']).optional(),
 });
 
 const blockedQuerySchema = z.object({
@@ -170,6 +190,18 @@ export function registerOperationRoutes(app: FastifyInstance, deps: RegisterOper
     return reply.code(201).send({ tools });
   });
 
+  app.patch('/v1/orgs/:orgId/tools/:toolId', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly toolId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
+    return { tool: await updateTool(deps.pool, operator, params.orgId, params.toolId, parseBody(updateToolSchema, request)) };
+  });
+
+  app.post('/v1/orgs/:orgId/tools/:toolId/archive', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly toolId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
+    return { tool: await archiveTool(deps.pool, operator, params.orgId, params.toolId) };
+  });
+
   app.post('/v1/orgs/:orgId/operations/check', async (request) => {
     const params = request.params as { readonly orgId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'viewer');
@@ -194,6 +226,32 @@ export function registerOperationRoutes(app: FastifyInstance, deps: RegisterOper
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
     const rateLimit = await createRateLimit(deps.pool, operator, params.orgId, parseBody(rateLimitSchema, request));
     return reply.code(201).send({ rate_limit: rateLimit });
+  });
+
+  app.get('/v1/orgs/:orgId/operations/rate-limits', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return { rate_limits: await listRateLimits(deps.pool, params.orgId) };
+  });
+
+  app.patch('/v1/orgs/:orgId/operations/rate-limits/:rateLimitId', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly rateLimitId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    return {
+      rate_limit: await updateRateLimit(
+        deps.pool,
+        operator,
+        params.orgId,
+        params.rateLimitId,
+        parseBody(updateRateLimitSchema, request),
+      ),
+    };
+  });
+
+  app.post('/v1/orgs/:orgId/operations/rate-limits/:rateLimitId/disable', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly rateLimitId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    return { rate_limit: await disableRateLimit(deps.pool, operator, params.orgId, params.rateLimitId) };
   });
 
   app.get('/v1/orgs/:orgId/agents/:agentId/allowed-actions', async (request) => {

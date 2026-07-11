@@ -11,8 +11,14 @@ export async function approveApprovalAction(
   orgId: string,
   orgSlug: string,
   approvalId: string,
+  formData?: FormData,
 ): Promise<void> {
-  await approveApproval(orgId, approvalId, 'Approved from agentOps approval inbox.');
+  const note = formData?.get('note');
+  await approveApproval(
+    orgId,
+    approvalId,
+    typeof note === 'string' && note.trim().length > 0 ? note.trim() : 'Approved from agentOps approval inbox.',
+  );
   revalidatePath(approvalsPath(orgSlug));
 }
 
@@ -20,7 +26,13 @@ export async function denyApprovalAction(
   orgId: string,
   orgSlug: string,
   approvalId: string,
+  formData?: FormData,
 ): Promise<void> {
-  await denyApproval(orgId, approvalId, 'Denied from agentOps approval inbox.');
+  const note = formData?.get('note');
+  await denyApproval(
+    orgId,
+    approvalId,
+    typeof note === 'string' && note.trim().length > 0 ? note.trim() : 'Denied from agentOps approval inbox.',
+  );
   revalidatePath(approvalsPath(orgSlug));
 }

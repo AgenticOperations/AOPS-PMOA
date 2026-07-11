@@ -54,6 +54,8 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0012_section_9_circle_agent_wallet_sca');
     expect(firstRun).toContain('0013_section_9_rebalance_jobs');
     expect(firstRun).toContain('0014_section_9_liquidity_manager');
+    expect(firstRun).toContain('0015_functional_hardening_core');
+    expect(firstRun).toContain('0016_rail_verify_provider_jobs');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -75,6 +77,8 @@ describe('PMOA database migrations', () => {
       '0012_section_9_circle_agent_wallet_sca',
       '0013_section_9_rebalance_jobs',
       '0014_section_9_liquidity_manager',
+      '0015_functional_hardening_core',
+      '0016_rail_verify_provider_jobs',
     ]);
 
     const sectionOneTable = await pool.query<{ exists: string }>(
@@ -298,16 +302,60 @@ describe('PMOA database migrations', () => {
       'mcp_sessions',
     ]);
 
-    const actions = await pool.query<{ action_id: string; introduced_section: number }>(
-      `SELECT action_id, introduced_section
+    const actions = await pool.query<{
+      action_id: string;
+      introduced_section: number;
+      condition_groups: string[];
+      binding_target_types: string[];
+    }>(
+      `SELECT action_id, introduced_section, condition_groups, binding_target_types
          FROM policy_action_registry
         WHERE action_id IN ('runtime.http.request', 'payment.x402.authorize', 'tool.call')
         ORDER BY action_id ASC`,
     );
     expect(actions.rows).toEqual([
-      { action_id: 'payment.x402.authorize', introduced_section: 4 },
-      { action_id: 'runtime.http.request', introduced_section: 4 },
-      { action_id: 'tool.call', introduced_section: 4 },
+      {
+        action_id: 'payment.x402.authorize',
+        binding_target_types: ['org', 'team', 'agent'],
+        condition_groups: ['resource', 'payment'],
+        introduced_section: 4,
+      },
+      {
+        action_id: 'runtime.http.request',
+        binding_target_types: ['org', 'team', 'agent'],
+        condition_groups: ['resource'],
+        introduced_section: 4,
+      },
+      {
+        action_id: 'tool.call',
+        binding_target_types: ['org', 'team', 'agent'],
+        condition_groups: ['tool'],
+        introduced_section: 4,
+      },
+    ]);
+
+    const chainCapabilities = await pool.query<{
+      chain: string;
+      exact_settlement_verified: boolean;
+      gateway_settlement_verified: boolean;
+    }>(
+      `SELECT chain, exact_settlement_verified, gateway_settlement_verified
+         FROM circle_chain_capabilities
+        WHERE mode = 'test'
+          AND chain IN ('arbitrum', 'base')
+        ORDER BY chain ASC`,
+    );
+    expect(chainCapabilities.rows).toEqual([
+      {
+        chain: 'arbitrum',
+        exact_settlement_verified: true,
+        gateway_settlement_verified: false,
+      },
+      {
+        chain: 'base',
+        exact_settlement_verified: true,
+        gateway_settlement_verified: true,
+      },
     ]);
   });
 });

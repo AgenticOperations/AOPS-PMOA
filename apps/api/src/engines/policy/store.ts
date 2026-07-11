@@ -7,15 +7,21 @@ import { evaluatePolicyDecision } from './decision-engine.js';
 import type {
   AgentPolicyAssignment,
   AgentPolicyBindingScope,
+  CreatePolicyVersionInput,
   CreatePolicyDraftInput,
   EffectivePolicy,
+  PolicyActionRecord,
   PolicyBindingRecord,
+  PolicyConditionGroup,
   PolicyDecisionRequest,
   PolicyDecisionResult,
   PolicyDraftRecord,
+  PolicySimulationRecord,
   PolicyStatement,
+  PolicyTargetType,
   PolicyValidationResult,
   PolicyVersionRecord,
+  UpdatePolicyDraftInput,
 } from './types.js';
 import { validatePolicyStatements } from './validator.js';
 
@@ -64,6 +70,27 @@ type PolicyBindingRow = {
   readonly target_type: PolicyBindingRecord['target_type'];
   readonly target_id: string;
   readonly status: PolicyBindingRecord['status'];
+  readonly created_by: string;
+  readonly created_at: Date;
+};
+
+type PolicyActionRow = {
+  readonly action_id: string;
+  readonly category: string;
+  readonly label: string;
+  readonly description: string;
+  readonly enforceability: PolicyActionRecord['enforceability'];
+  readonly introduced_section: number;
+  readonly condition_groups: unknown;
+  readonly binding_target_types: unknown;
+};
+
+type PolicySimulationRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly draft_id: string | null;
+  readonly request: unknown;
+  readonly result: unknown;
   readonly created_by: string;
   readonly created_at: Date;
 };
@@ -120,7 +147,10 @@ function draftFromRow(row: PolicyDraftRow): PolicyDraftRecord {
   };
 }
 
-function versionFromRow(row: PolicyVersionRow): PolicyVersionRecord {
+function versionFromRow(
+  row: PolicyVersionRow,
+  actionsById: ReadonlyMap<string, PolicyActionRecord>,
+): PolicyVersionRecord {
   const statements = statementsFromJson(row.statements);
   return {
     id: row.policy_id,
@@ -136,7 +166,7 @@ function versionFromRow(row: PolicyVersionRow): PolicyVersionRecord {
     change_reason: row.change_reason,
     created_by: row.created_by,
     created_at: row.created_at.toISOString(),
-    binding_target_types: bindingTargetTypesForStatements(statements),
+    binding_target_types: bindingTargetTypesForStatements(statements, actionsById),
     bindings: [],
     bindings_count: Number(row.bindings_count ?? 0),
   };
@@ -157,19 +187,81 @@ function bindingFromRow(row: PolicyBindingRow): PolicyBindingRecord {
 }
 
 const targetTypeOrder: PolicyBindingRecord['target_type'][] = ['org', 'team', 'agent', 'connection'];
+const conditionGroupOrder: PolicyConditionGroup[] = ['resource', 'payment', 'tool'];
 
-function bindingTargetTypesForAction(action: string): PolicyBindingRecord['target_type'][] {
-  if (action === '*') return targetTypeOrder;
-  if (action === 'management.connection.rotate' || action === 'management.connection.revoke') return ['connection'];
-  if (action === 'management.agent.create') return ['org', 'team'];
-  return ['org', 'team', 'agent'];
+function stringArrayFromJson(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-function bindingTargetTypesForStatements(statements: readonly PolicyStatement[]): PolicyBindingRecord['target_type'][] {
+function conditionGroupsFromJson(value: unknown): PolicyConditionGroup[] {
+  const values = new Set(stringArrayFromJson(value));
+  return conditionGroupOrder.filter((group) => values.has(group));
+}
+
+function targetTypesFromJson(value: unknown): PolicyTargetType[] {
+  const values = new Set(stringArrayFromJson(value));
+  return targetTypeOrder.filter((targetType) => values.has(targetType));
+}
+
+function policyActionFromRow(row: PolicyActionRow): PolicyActionRecord {
+  return {
+    action_id: row.action_id,
+    category: row.category,
+    label: row.label,
+    description: row.description,
+    enforceability: row.enforceability,
+    introduced_section: row.introduced_section,
+    condition_groups: conditionGroupsFromJson(row.condition_groups),
+    binding_target_types: targetTypesFromJson(row.binding_target_types),
+  };
+}
+
+function simulationFromRow(row: PolicySimulationRow): PolicySimulationRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    draft_id: row.draft_id,
+    request: jsonObject(row.request) as unknown as PolicyDecisionRequest,
+    result: jsonObject(row.result) as unknown as PolicyDecisionResult,
+    created_by: row.created_by,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+function actionsById(actions: readonly PolicyActionRecord[]): ReadonlyMap<string, PolicyActionRecord> {
+  return new Map(actions.map((action) => [action.action_id, action]));
+}
+
+function actionConditionGroups(actions: readonly PolicyActionRecord[]): ReadonlyMap<string, readonly PolicyConditionGroup[]> {
+  return new Map(actions.map((action) => [action.action_id, action.condition_groups]));
+}
+
+async function policyActionCatalog(db: Db): Promise<PolicyActionRecord[]> {
+  const result = await db.query<PolicyActionRow>(
+    `SELECT action_id, category, label, description, enforceability, introduced_section,
+            condition_groups, binding_target_types
+       FROM policy_action_registry
+      ORDER BY introduced_section ASC, category ASC, action_id ASC`,
+  );
+  return result.rows.map(policyActionFromRow);
+}
+
+function bindingTargetTypesForAction(
+  action: string,
+  actions: ReadonlyMap<string, PolicyActionRecord>,
+): PolicyBindingRecord['target_type'][] {
+  if (action === '*') return targetTypeOrder;
+  return actions.get(action)?.binding_target_types ?? [];
+}
+
+function bindingTargetTypesForStatements(
+  statements: readonly PolicyStatement[],
+  actions: ReadonlyMap<string, PolicyActionRecord>,
+): PolicyBindingRecord['target_type'][] {
   const allowed = new Set<PolicyBindingRecord['target_type']>();
   for (const statement of statements) {
     for (const action of statement.actions) {
-      for (const targetType of bindingTargetTypesForAction(action)) {
+      for (const targetType of bindingTargetTypesForAction(action, actions)) {
         allowed.add(targetType);
       }
     }
@@ -180,8 +272,9 @@ function bindingTargetTypesForStatements(statements: readonly PolicyStatement[])
 function assertBindingTargetTypeAllowed(
   statements: readonly PolicyStatement[],
   input: { readonly target_type: PolicyBindingRecord['target_type'] },
+  actions: ReadonlyMap<string, PolicyActionRecord>,
 ): void {
-  const allowedTypes = bindingTargetTypesForStatements(statements);
+  const allowedTypes = bindingTargetTypesForStatements(statements, actions);
   if (!allowedTypes.includes(input.target_type)) {
     throw badRequest(
       'invalid_policy_binding_target',
@@ -208,14 +301,11 @@ async function withTransaction<T>(
   }
 }
 
-async function knownActions(db: Db): Promise<Set<string>> {
-  const result = await db.query<{ action_id: string }>('SELECT action_id FROM policy_action_registry');
-  return new Set(result.rows.map((row) => row.action_id));
-}
-
 async function validateStatements(db: Db, statements: readonly PolicyStatement[]): Promise<PolicyValidationResult> {
+  const actions = await policyActionCatalog(db);
   return validatePolicyStatements({
-    knownActions: await knownActions(db),
+    actionConditionGroups: actionConditionGroups(actions),
+    knownActions: new Set(actions.map((action) => action.action_id)),
     statements,
   });
 }
@@ -320,6 +410,122 @@ export async function createPolicyDraft(
   });
 }
 
+function lockedDraft(status: PolicyDraftRecord['status']): boolean {
+  return status === 'activated' || status === 'discarded';
+}
+
+export async function updatePolicyDraft(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  draftId: string,
+  input: UpdatePolicyDraftInput,
+): Promise<PolicyDraftRecord> {
+  return withTransaction(pool, async (client) => {
+    const current = await client.query<PolicyDraftRow>(
+      `SELECT *
+         FROM policy_drafts
+        WHERE org_id = $1 AND id = $2
+        FOR UPDATE`,
+      [orgId, draftId],
+    );
+    const existing = current.rows[0];
+    if (existing === undefined) throw notFound('Policy draft was not found.');
+    if (lockedDraft(existing.status)) {
+      throw badRequest('policy_draft_locked', 'Policy draft can no longer be changed.');
+    }
+
+    const validation = {
+      valid: false,
+      errors: [],
+      warnings: ['Draft has changed and must be validated again.'],
+    } satisfies PolicyValidationResult;
+    const updated = await client.query<PolicyDraftRow>(
+      `UPDATE policy_drafts
+          SET name = $3,
+              description = $4,
+              category = $5,
+              statements = $6::jsonb,
+              status = 'draft',
+              validation = $7::jsonb,
+              updated_by = $8,
+              updated_at = now()
+        WHERE org_id = $1 AND id = $2
+        RETURNING *`,
+      [
+        orgId,
+        draftId,
+        input.name ?? existing.name,
+        input.description ?? existing.description,
+        input.category ?? existing.category,
+        JSON.stringify(input.statements ?? statementsFromJson(existing.statements)),
+        JSON.stringify(validation),
+        operator.actorId,
+      ],
+    );
+
+    await recordPolicyEvent(client, {
+      orgId,
+      operator,
+      action: 'policy.draft.updated',
+      resource: { type: 'policy_draft', id: draftId },
+      payload: {
+        name: input.name ?? existing.name,
+        category: input.category ?? existing.category,
+        statements_count: (input.statements ?? statementsFromJson(existing.statements)).length,
+      },
+    });
+
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('policy_draft_update_failed');
+    return draftFromRow(row);
+  });
+}
+
+export async function discardPolicyDraft(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  draftId: string,
+): Promise<PolicyDraftRecord> {
+  return withTransaction(pool, async (client) => {
+    const current = await client.query<PolicyDraftRow>(
+      `SELECT *
+         FROM policy_drafts
+        WHERE org_id = $1 AND id = $2
+        FOR UPDATE`,
+      [orgId, draftId],
+    );
+    const existing = current.rows[0];
+    if (existing === undefined) throw notFound('Policy draft was not found.');
+    if (existing.status === 'activated') {
+      throw badRequest('policy_draft_locked', 'Activated drafts cannot be discarded.');
+    }
+
+    const updated = await client.query<PolicyDraftRow>(
+      `UPDATE policy_drafts
+          SET status = 'discarded',
+              updated_by = $3,
+              updated_at = now()
+        WHERE org_id = $1 AND id = $2
+        RETURNING *`,
+      [orgId, draftId, operator.actorId],
+    );
+
+    await recordPolicyEvent(client, {
+      orgId,
+      operator,
+      action: 'policy.draft.discarded',
+      resource: { type: 'policy_draft', id: draftId },
+      payload: { previous_status: existing.status },
+    });
+
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('policy_draft_discard_failed');
+    return draftFromRow(row);
+  });
+}
+
 export async function validatePolicyDraft(
   pool: pg.Pool,
   operator: OperatorContext,
@@ -336,7 +542,7 @@ export async function validatePolicyDraft(
     );
     const row = current.rows[0];
     if (row === undefined) throw notFound('Policy draft was not found.');
-    if (row.status === 'activated' || row.status === 'discarded') {
+    if (lockedDraft(row.status)) {
       throw badRequest('policy_draft_locked', 'Policy draft can no longer be changed.');
     }
 
@@ -393,6 +599,7 @@ export async function activatePolicyDraft(
 
     const policyId = prefixedId('pol');
     const version = 1;
+    const actionMap = actionsById(await policyActionCatalog(client));
     const inserted = await client.query<PolicyVersionRow>(
       `INSERT INTO policy_versions (
          policy_id, version, org_id, draft_id, name, description, category, status,
@@ -438,7 +645,7 @@ export async function activatePolicyDraft(
 
     const row = inserted.rows[0];
     if (row === undefined) throw new Error('policy_activation_failed');
-    return versionFromRow(row);
+    return versionFromRow(row, actionMap);
   });
 }
 
@@ -454,6 +661,7 @@ export async function bindPolicy(
   },
 ): Promise<PolicyBindingRecord> {
   return withTransaction(pool, async (client) => {
+    const actionMap = actionsById(await policyActionCatalog(client));
     const policy = await client.query<{ readonly statements: unknown }>(
       `SELECT statements
          FROM policy_versions
@@ -465,7 +673,7 @@ export async function bindPolicy(
     );
     const policyRow = policy.rows[0];
     if (policyRow === undefined) throw notFound('Active policy version was not found.');
-    assertBindingTargetTypeAllowed(statementsFromJson(policyRow.statements), input);
+    assertBindingTargetTypeAllowed(statementsFromJson(policyRow.statements), input, actionMap);
     await assertBindingTargetExists(client, orgId, input);
 
     const bindingId = prefixedId('pbind');
@@ -497,10 +705,191 @@ export async function bindPolicy(
   });
 }
 
+export async function removePolicyBinding(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  policyId: string,
+  bindingId: string,
+): Promise<PolicyBindingRecord> {
+  return withTransaction(pool, async (client) => {
+    const current = await client.query<PolicyBindingRow>(
+      `SELECT *
+         FROM policy_bindings
+        WHERE org_id = $1
+          AND policy_id = $2
+          AND id = $3
+        FOR UPDATE`,
+      [orgId, policyId, bindingId],
+    );
+    const existing = current.rows[0];
+    if (existing === undefined) throw notFound('Policy binding was not found.');
+
+    const updated = await client.query<PolicyBindingRow>(
+      `UPDATE policy_bindings
+          SET status = 'removed'
+        WHERE org_id = $1
+          AND policy_id = $2
+          AND id = $3
+        RETURNING *`,
+      [orgId, policyId, bindingId],
+    );
+
+    await recordPolicyEvent(client, {
+      orgId,
+      operator,
+      action: 'policy.binding.removed',
+      resource: { type: 'policy_binding', id: bindingId },
+      policyId,
+      payload: {
+        previous_status: existing.status,
+        policy_version: existing.policy_version,
+        target_type: existing.target_type,
+        target_id: existing.target_id,
+      },
+    });
+
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('policy_binding_remove_failed');
+    return bindingFromRow(row);
+  });
+}
+
+export async function archivePolicy(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  policyId: string,
+  input: { readonly change_reason?: string | undefined },
+): Promise<PolicyVersionRecord> {
+  return withTransaction(pool, async (client) => {
+    const actionMap = actionsById(await policyActionCatalog(client));
+    const current = await client.query<PolicyVersionRow>(
+      `SELECT *, '0'::text AS bindings_count
+         FROM policy_versions
+        WHERE org_id = $1
+          AND policy_id = $2
+          AND status = 'active'
+        ORDER BY version DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [orgId, policyId],
+    );
+    const existing = current.rows[0];
+    if (existing === undefined) throw notFound('Active policy was not found.');
+
+    const archived = await client.query<PolicyVersionRow>(
+      `UPDATE policy_versions
+          SET status = 'archived',
+              change_reason = CASE
+                WHEN $3 = '' THEN change_reason
+                ELSE $3
+              END
+        WHERE org_id = $1
+          AND policy_id = $2
+          AND status = 'active'
+        RETURNING *, '0'::text AS bindings_count`,
+      [orgId, policyId, input.change_reason ?? ''],
+    );
+    await client.query(
+      `UPDATE policy_bindings
+          SET status = 'removed'
+        WHERE org_id = $1
+          AND policy_id = $2
+          AND status = 'active'`,
+      [orgId, policyId],
+    );
+
+    await recordPolicyEvent(client, {
+      orgId,
+      operator,
+      action: 'policy.archived',
+      resource: { type: 'policy', id: policyId },
+      policyId,
+      payload: {
+        change_reason: input.change_reason ?? '',
+        archived_versions: archived.rowCount,
+      },
+    });
+
+    const row = archived.rows.sort((a, b) => b.version - a.version)[0];
+    if (row === undefined) throw new Error('policy_archive_failed');
+    return versionFromRow(row, actionMap);
+  });
+}
+
+export async function createPolicyVersion(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  policyId: string,
+  input: CreatePolicyVersionInput,
+): Promise<PolicyVersionRecord> {
+  return withTransaction(pool, async (client) => {
+    const latest = await client.query<PolicyVersionRow>(
+      `SELECT *, '0'::text AS bindings_count
+         FROM policy_versions
+        WHERE org_id = $1
+          AND policy_id = $2
+        ORDER BY version DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [orgId, policyId],
+    );
+    const latestRow = latest.rows[0];
+    if (latestRow === undefined) throw notFound('Policy was not found.');
+
+    const statements = input.statements ?? statementsFromJson(latestRow.statements);
+    const validation = await validateStatements(client, statements);
+    if (!validation.valid) {
+      throw badRequest('policy_validation_failed', 'Policy version must validate before activation.');
+    }
+
+    const actionMap = actionsById(await policyActionCatalog(client));
+    const inserted = await client.query<PolicyVersionRow>(
+      `INSERT INTO policy_versions (
+         policy_id, version, org_id, draft_id, name, description, category, status,
+         statements, validation, change_reason, created_by
+       )
+       VALUES ($1, $2, $3, NULL, $4, $5, $6, 'active', $7::jsonb, $8::jsonb, $9, $10)
+       RETURNING *, '0'::text AS bindings_count`,
+      [
+        policyId,
+        latestRow.version + 1,
+        orgId,
+        input.name ?? latestRow.name,
+        input.description ?? latestRow.description,
+        input.category ?? latestRow.category,
+        JSON.stringify(statements),
+        JSON.stringify(validation),
+        input.change_reason ?? '',
+        operator.actorId,
+      ],
+    );
+
+    await recordPolicyEvent(client, {
+      orgId,
+      operator,
+      action: 'policy.version.created',
+      resource: { type: 'policy', id: policyId },
+      policyId,
+      payload: {
+        previous_version: latestRow.version,
+        change_reason: input.change_reason ?? '',
+      },
+    });
+
+    const row = inserted.rows[0];
+    if (row === undefined) throw new Error('policy_version_create_failed');
+    return versionFromRow(row, actionMap);
+  });
+}
+
 export async function listPolicyLibrary(pool: pg.Pool, orgId: string): Promise<{
   readonly drafts: PolicyDraftRecord[];
   readonly policies: PolicyVersionRecord[];
 }> {
+  const actionMap = actionsById(await policyActionCatalog(pool));
   const drafts = await pool.query<PolicyDraftRow>(
     `SELECT *
        FROM policy_drafts
@@ -542,7 +931,7 @@ export async function listPolicyLibrary(pool: pg.Pool, orgId: string): Promise<{
   return {
     drafts: drafts.rows.map(draftFromRow),
     policies: policies.rows.map((row) => {
-      const policy = versionFromRow(row);
+      const policy = versionFromRow(row, actionMap);
       const activeBindings = bindingsByPolicyVersion.get(`${policy.id}:${policy.version}`) ?? [];
       return {
         ...policy,
@@ -551,6 +940,72 @@ export async function listPolicyLibrary(pool: pg.Pool, orgId: string): Promise<{
       };
     }),
   };
+}
+
+export async function listPolicyActions(pool: pg.Pool): Promise<{ readonly actions: PolicyActionRecord[] }> {
+  return { actions: await policyActionCatalog(pool) };
+}
+
+export async function listPolicySimulations(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<{ readonly simulations: PolicySimulationRecord[] }> {
+  const result = await pool.query<PolicySimulationRow>(
+    `SELECT *
+       FROM policy_simulations
+      WHERE org_id = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT 50`,
+    [orgId],
+  );
+  return { simulations: result.rows.map(simulationFromRow) };
+}
+
+export async function simulatePolicyDraft(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  draftId: string,
+  request: PolicyDecisionRequest,
+): Promise<PolicySimulationRecord> {
+  return withTransaction(pool, async (client) => {
+    const actions = await policyActionCatalog(client);
+    if (!actions.some((action) => action.action_id === request.action)) {
+      throw badRequest('unknown_policy_action', 'Policy action is not registered.');
+    }
+
+    const draftResult = await client.query<PolicyDraftRow>(
+      `SELECT *
+         FROM policy_drafts
+        WHERE org_id = $1 AND id = $2`,
+      [orgId, draftId],
+    );
+    const draft = draftResult.rows[0];
+    if (draft === undefined) throw notFound('Policy draft was not found.');
+    if (draft.status === 'discarded') throw badRequest('policy_draft_discarded', 'Discarded drafts cannot be simulated.');
+
+    const result = evaluatePolicyDecision({
+      request,
+      policies: [
+        {
+          policyId: draft.id,
+          version: 0,
+          name: draft.name,
+          statements: statementsFromJson(draft.statements),
+        },
+      ],
+    });
+    const simulationId = prefixedId('psim');
+    const inserted = await client.query<PolicySimulationRow>(
+      `INSERT INTO policy_simulations (id, org_id, draft_id, request, result, created_by)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+       RETURNING *`,
+      [simulationId, orgId, draftId, JSON.stringify(request), JSON.stringify(result), operator.actorId],
+    );
+    const row = inserted.rows[0];
+    if (row === undefined) throw new Error('policy_simulation_create_failed');
+    return simulationFromRow(row);
+  });
 }
 
 async function targetBindingCandidates(

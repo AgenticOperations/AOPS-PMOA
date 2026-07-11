@@ -1,7 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import type { PolicyDraft, PolicyStatement, PolicyVersion } from '@/lib/policy-types';
+import type {
+  PolicyActionRecord,
+  PolicyDraft,
+  PolicySimulationRecord,
+  PolicyStatement,
+  PolicyVersion,
+} from '@/lib/policy-types';
 import { PolicyDraftBuilder } from './PolicyDraftBuilder';
 
 type BindTargetType = 'agent' | 'connection' | 'org' | 'team';
@@ -17,11 +23,19 @@ type ControlsLibraryProps = {
   readonly orgSlug: string;
   readonly drafts: PolicyDraft[];
   readonly policies: PolicyVersion[];
+  readonly policyActions?: readonly PolicyActionRecord[] | undefined;
+  readonly simulations?: readonly PolicySimulationRecord[] | undefined;
   readonly bindTargets?: readonly BindTarget[] | undefined;
   readonly createAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly validateAction?: ((draftId: string) => Promise<void>) | undefined;
   readonly activateAction?: ((draftId: string) => Promise<void>) | undefined;
   readonly bindAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly updateDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly discardDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly simulateDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly removeBindingAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly archivePolicyAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly createVersionAction?: ((formData: FormData) => Promise<void>) | undefined;
 };
 
 type DrawerState =
@@ -31,7 +45,7 @@ type DrawerState =
 
 type TableView = 'active' | 'drafts';
 
-const actionLabels: Record<string, string> = {
+const fallbackActionLabels: Record<string, string> = {
   'runtime.http.request': 'HTTP/API request',
   'payment.x402.authorize': 'x402 authorization',
   'tool.call': 'Tool call',
@@ -82,10 +96,14 @@ function primaryStatement(policy: PolicyVersion): PolicyStatement | undefined {
   return policy.statements?.[0];
 }
 
-function statementAction(statement: PolicyStatement | undefined): string {
+function actionLabel(actionId: string, policyActions: readonly PolicyActionRecord[]): string {
+  return policyActions.find((action) => action.action_id === actionId)?.label ?? fallbackActionLabels[actionId] ?? actionId;
+}
+
+function statementAction(statement: PolicyStatement | undefined, policyActions: readonly PolicyActionRecord[]): string {
   const action = statement?.actions?.[0];
   if (action === undefined) return 'Policy rule';
-  return actionLabels[action] ?? action;
+  return actionLabel(action, policyActions);
 }
 
 function bindingLabel(
@@ -138,14 +156,14 @@ function firstConditionSummary(statement: PolicyStatement | undefined): string {
   return pieces.length > 0 ? pieces.join(' · ') : 'No extra condition fields';
 }
 
-function policySummary(policy: PolicyVersion): string {
+function policySummary(policy: PolicyVersion, policyActions: readonly PolicyActionRecord[]): string {
   const statement = primaryStatement(policy);
   const decision = statement?.decision;
   const action = statement?.actions?.[0];
   const condition = firstConditionSummary(statement);
 
   if (decision !== undefined && action !== undefined) {
-    return `${formatDecision(decision)} for ${statementAction(statement)} where ${condition}.`;
+    return `${formatDecision(decision)} for ${statementAction(statement, policyActions)} where ${condition}.`;
   }
 
   return policy.description || `${formatCategory(policy.category)} policy.`;
@@ -158,13 +176,18 @@ function statusClass(status: string): string {
   return `status-${status}`;
 }
 
-function matchesPolicySearch(policy: PolicyVersion, query: string, bindTargets: readonly BindTarget[]): boolean {
+function matchesPolicySearch(
+  policy: PolicyVersion,
+  query: string,
+  bindTargets: readonly BindTarget[],
+  policyActions: readonly PolicyActionRecord[],
+): boolean {
   if (query.length === 0) return true;
   const searchable = [
     policy.name,
     policy.description,
     policy.category,
-    policySummary(policy),
+    policySummary(policy, policyActions),
     ...policy.bindings.map((binding) => bindingLabel(binding, bindTargets)),
   ]
     .join(' ')
@@ -182,11 +205,19 @@ export function ControlsLibrary({
   orgSlug: _orgSlug,
   drafts,
   policies,
+  policyActions = [],
+  simulations = [],
   bindTargets = [],
   createAction,
   validateAction,
   activateAction,
   bindAction,
+  updateDraftAction,
+  discardDraftAction,
+  simulateDraftAction,
+  removeBindingAction,
+  archivePolicyAction,
+  createVersionAction,
 }: ControlsLibraryProps) {
   const [drawer, setDrawer] = useState<DrawerState>({ kind: 'closed' });
   const [tableView, setTableView] = useState<TableView>('active');
@@ -198,7 +229,7 @@ export function ControlsLibrary({
     () =>
       policies.filter((policy) => {
         const categoryMatch = categoryFilter === 'all' || policy.category === categoryFilter;
-        const searchMatch = matchesPolicySearch(policy, query.trim(), bindTargets);
+        const searchMatch = matchesPolicySearch(policy, query.trim(), bindTargets, policyActions);
         const targetMatch =
           targetFilter === 'all' ||
           (targetFilter === 'unbound'
@@ -206,7 +237,7 @@ export function ControlsLibrary({
             : policy.bindings.some((binding) => binding.target_type === targetFilter));
         return categoryMatch && searchMatch && targetMatch;
       }),
-    [bindTargets, categoryFilter, policies, query, targetFilter],
+    [bindTargets, categoryFilter, policies, policyActions, query, targetFilter],
   );
   const openDrafts = useMemo(
     () =>
@@ -337,13 +368,13 @@ export function ControlsLibrary({
                           >
                             <span className="controls-policy-name">
                               <span className="controls-policy-title">{policy.name}</span>
-                              <span>{policy.description || policySummary(policy)}</span>
+                              <span>{policy.description || policySummary(policy, policyActions)}</span>
                             </span>
                             <span className={`controls-decision-badge decision-${statement?.decision ?? 'policy'}`}>
                               {formatDecision(statement?.decision)}
                             </span>
                             <span className="controls-neutral-badge">
-                              {statement === undefined ? formatCategory(policy.category) : statementAction(statement)}
+                              {statement === undefined ? formatCategory(policy.category) : statementAction(statement, policyActions)}
                             </span>
                             <span className="controls-neutral-badge">
                               {policy.bindings_count} binding{policy.bindings_count === 1 ? '' : 's'}
@@ -364,6 +395,21 @@ export function ControlsLibrary({
                           <span className="controls-neutral-badge">{formatCategory(draft.category)}</span>
                           <span className="controls-neutral-badge">Not enforcing</span>
                           <span className="controls-row-actions">
+                            {draft.status !== 'activated' && updateDraftAction !== undefined ? (
+                              <form action={updateDraftAction} className="controls-inline-edit-form">
+                                <input name="draftId" type="hidden" value={draft.id} />
+                                <input aria-label={`Name for ${draft.name}`} defaultValue={draft.name} name="name" required />
+                                <input aria-label={`Description for ${draft.name}`} defaultValue={draft.description} name="description" />
+                                <select aria-label={`Category for ${draft.name}`} defaultValue={draft.category} name="category">
+                                  <option value="operational">Operational</option>
+                                  <option value="management">Management</option>
+                                  <option value="capability">Capability</option>
+                                </select>
+                                <button className="button-secondary" disabled={draft.status === 'discarded'} type="submit">
+                                  Save
+                                </button>
+                              </form>
+                            ) : null}
                             {draft.status === 'draft' && validateAction !== undefined ? (
                               <form action={validateAction.bind(null, draft.id)}>
                                 <button aria-label={`Validate ${draft.name}`} className="button-secondary" type="submit">
@@ -378,6 +424,14 @@ export function ControlsLibrary({
                                 </button>
                               </form>
                             ) : null}
+                            {draft.status !== 'discarded' && discardDraftAction !== undefined ? (
+                              <form action={discardDraftAction}>
+                                <input name="draftId" type="hidden" value={draft.id} />
+                                <button aria-label={`Discard ${draft.name}`} className="button-secondary" type="submit">
+                                  Discard
+                                </button>
+                              </form>
+                            ) : null}
                           </span>
                         </div>
                       </div>
@@ -385,6 +439,90 @@ export function ControlsLibrary({
               </div>
             )}
           </div>
+
+          <aside className="controls-simulation-panel" aria-labelledby="policy-simulations-title">
+            <div className="controls-form-heading">
+              <h2 id="policy-simulations-title">Recent dry runs</h2>
+              <p>Policy simulations do not write enforcement decisions.</p>
+            </div>
+            <form action={simulateDraftAction} className="controls-bind-form">
+              <label>
+                <span>Draft</span>
+                <select name="draftId" required defaultValue="">
+                  <option value="" disabled>Select draft</option>
+                  {visibleDrafts.map((draft) => (
+                    <option key={draft.id} value={draft.id}>{draft.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Action</span>
+                <select name="action" required defaultValue={policyActions[0]?.action_id ?? 'runtime.http.request'}>
+                  {policyActions.map((action) => (
+                    <option key={action.action_id} value={action.action_id}>{action.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Target</span>
+                <select name="targetKey" required defaultValue="">
+                  <option value="" disabled>Select target</option>
+                  {groupedTargets(bindTargets).map((group) => (
+                    <optgroup key={group.type} label={formatTargetType(group.type)}>
+                      {group.targets.map((target) => (
+                        <option key={`${target.type}:${target.id}`} value={`${target.type}:${target.id}`}>
+                          {target.label} · {formatTargetType(target.type)}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Resource category</span>
+                <input name="resourceCategory" placeholder="weather" />
+              </label>
+              <label>
+                <span>Resource domain</span>
+                <input name="resourceDomain" placeholder="api.example.com" />
+              </label>
+              <label>
+                <span>Payment amount</span>
+                <input name="paymentAmount" placeholder="1.00" />
+              </label>
+              <label>
+                <span>Payment asset</span>
+                <input name="paymentAsset" placeholder="USDC" />
+              </label>
+              <label>
+                <span>Tool name</span>
+                <input name="toolName" placeholder="browser.search" />
+              </label>
+              <button className="button-secondary" disabled={simulateDraftAction === undefined || visibleDrafts.length === 0} type="submit">
+                Run dry run
+              </button>
+            </form>
+            {simulations.length === 0 ? (
+              <div className="controls-side-empty flush">
+                <h3>No dry runs yet</h3>
+                <p>Use the form above to test a draft against an HTTP, x402, or tool request before activation.</p>
+              </div>
+            ) : (
+              <ol className="controls-bound-list">
+                {simulations.slice(0, 5).map((simulation) => (
+                  <li className="controls-bound-row" key={simulation.id}>
+                    <div>
+                      <strong>{formatDecision(simulation.result.decision)}</strong>
+                      <span>{actionLabel(simulation.request.action, policyActions)}</span>
+                    </div>
+                    <span className={`controls-decision-badge decision-${simulation.result.decision}`}>
+                      {simulation.result.reasonCode}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </aside>
         </section>
       </div>
 
@@ -411,7 +549,7 @@ export function ControlsLibrary({
                 <h2>Policy draft</h2>
                 <p>Choose one action surface. The form only shows fields that match that action.</p>
               </div>
-              <PolicyDraftBuilder createAction={createAction} />
+              <PolicyDraftBuilder actions={policyActions} createAction={createAction} />
             </section>
           </main>
         </div>
@@ -429,7 +567,7 @@ export function ControlsLibrary({
             <header className="controls-drawer-header">
               <div>
                 <h1 id="policy-detail-title">{detailPolicy.name}</h1>
-                <p>{detailPolicy.description || policySummary(detailPolicy)}</p>
+                <p>{detailPolicy.description || policySummary(detailPolicy, policyActions)}</p>
               </div>
               <button className="button-secondary" onClick={() => setDrawer({ kind: 'closed' })} type="button">
                 Close
@@ -443,7 +581,7 @@ export function ControlsLibrary({
                       <h2>Effect</h2>
                       <p>Readable policy behavior for operators.</p>
                     </div>
-                    <div className="controls-effect-box">{policySummary(detailPolicy)}</div>
+                    <div className="controls-effect-box">{policySummary(detailPolicy, policyActions)}</div>
                     <dl className="controls-definition-grid">
                       <div>
                         <dt>Decision</dt>
@@ -451,7 +589,7 @@ export function ControlsLibrary({
                       </div>
                       <div>
                         <dt>Surface</dt>
-                        <dd>{detailStatement === undefined ? formatCategory(detailPolicy.category) : statementAction(detailStatement)}</dd>
+                        <dd>{detailStatement === undefined ? formatCategory(detailPolicy.category) : statementAction(detailStatement, policyActions)}</dd>
                       </div>
                       <div>
                         <dt>Conditions</dt>
@@ -482,7 +620,16 @@ export function ControlsLibrary({
                               <strong>{bindingLabel(binding, bindTargets)}</strong>
                               <span>{formatDate(binding.created_at)}</span>
                             </div>
-                            <span className="controls-neutral-badge">{formatTargetType(binding.target_type)}</span>
+                            <div className="controls-row-actions">
+                              <span className="controls-neutral-badge">{formatTargetType(binding.target_type)}</span>
+                              {removeBindingAction === undefined ? null : (
+                                <form action={removeBindingAction}>
+                                  <input name="policyId" type="hidden" value={detailPolicy.id} />
+                                  <input name="bindingId" type="hidden" value={binding.id} />
+                                  <button className="button-secondary" type="submit">Remove</button>
+                                </form>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -510,6 +657,43 @@ export function ControlsLibrary({
                       </label>
                       <button className="button-primary" disabled={bindAction === undefined || selectedTargets.length === 0} type="submit">
                         Bind target
+                      </button>
+                    </form>
+                  </section>
+
+                  <section className="controls-form-surface" aria-label={`${detailPolicy.name} lifecycle`}>
+                    <div className="controls-form-heading">
+                      <h2>Lifecycle</h2>
+                      <p>Archive policies that should stop enforcing, or create a replacement version from this policy.</p>
+                    </div>
+                    <form action={createVersionAction} className="controls-bind-form">
+                      <input name="policyId" type="hidden" value={detailPolicy.id} />
+                      <label>
+                        <span>Version name</span>
+                        <input defaultValue={detailPolicy.name} name="name" />
+                      </label>
+                      <label>
+                        <span>Description</span>
+                        <input defaultValue={detailPolicy.description} name="description" />
+                      </label>
+                      <label>
+                        <span>Category</span>
+                        <select defaultValue={detailPolicy.category} name="category">
+                          <option value="operational">Operational</option>
+                          <option value="management">Management</option>
+                          <option value="capability">Capability</option>
+                        </select>
+                      </label>
+                      <input name="changeReason" type="hidden" value="New version from Controls." />
+                      <button className="button-secondary" disabled={createVersionAction === undefined} type="submit">
+                        Create version
+                      </button>
+                    </form>
+                    <form action={archivePolicyAction} className="controls-bind-form">
+                      <input name="policyId" type="hidden" value={detailPolicy.id} />
+                      <input name="changeReason" type="hidden" value="Archived from Controls." />
+                      <button className="button-secondary" disabled={archivePolicyAction === undefined} type="submit">
+                        Archive policy
                       </button>
                     </form>
                   </section>

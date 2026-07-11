@@ -21,6 +21,33 @@ type TeamListResponse = {
   }>;
 };
 
+type MemberListResponse = {
+  readonly members: Array<{
+    readonly id: string;
+    readonly email: string;
+    readonly name: string;
+    readonly role: string;
+    readonly status: string;
+  }>;
+};
+
+type MemberResponse = {
+  readonly member: {
+    readonly id: string;
+    readonly email: string;
+    readonly role: string;
+    readonly status: string;
+  };
+};
+
+type OnboardingStatesResponse = {
+  readonly states: Array<{
+    readonly flow_key: string;
+    readonly status: string;
+    readonly payload: Record<string, unknown>;
+  }>;
+};
+
 type AgentResponse = {
   readonly agent: {
     readonly id: string;
@@ -44,6 +71,8 @@ type AgentListResponse = {
     readonly team: { readonly id: string; readonly name: string };
     readonly connection_health: string;
     readonly wallet_refs_count: number;
+    readonly policy_coverage: number;
+    readonly last_activity_at: string | null;
   }>;
 };
 
@@ -98,17 +127,39 @@ describe('Section 1 core product spine', () => {
   }, 90_000);
 
   afterAll(async () => {
-    await app.close();
-    await store.stop();
+    await app?.close();
+    await store?.stop();
     vi.unstubAllEnvs();
   });
 
   it('creates an org with one default team and canonical audit events', async () => {
-    const { org } = await createOrg(app, 'Acme Research');
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/orgs',
+      payload: {
+        name: 'Acme Research',
+        domain: 'research.example',
+        primary_use_case: 'agent-payments',
+        owner: {
+          email: 'acme.research@example.test',
+          name: 'Acme Research Owner',
+        },
+      },
+    });
+    expect(response.statusCode, response.body).toBe(201);
+    const { org } = response.json<CreateOrgResponse>();
 
     expect(org.id).toMatch(/^org_/);
     expect(org.slug).toBe('acme-research');
     expect(org.default_team_id).toMatch(/^team_/);
+
+    const storedOrg = await store.pool.query<{ settings: Record<string, unknown> }>('SELECT settings FROM orgs WHERE id = $1', [
+      org.id,
+    ]);
+    expect(storedOrg.rows[0]?.settings).toMatchObject({
+      domain: 'research.example',
+      primary_use_case: 'agent-payments',
+    });
 
     const teams = await app.inject({
       method: 'GET',
@@ -136,7 +187,98 @@ describe('Section 1 core product spine', () => {
         resource_type: 'team',
         resource_id: org.default_team_id,
       }),
+      expect.objectContaining({ action: 'onboarding.completed', resource_type: 'org', resource_id: org.id }),
     ]);
+  });
+
+  it('manages workspace members with role safety', async () => {
+    const { org } = await createOrg(app, 'Member Org');
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${org.id}/members`,
+      payload: {
+        email: 'operator@example.test',
+        name: 'Operator User',
+        role: 'operator',
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const member = created.json<MemberResponse>().member;
+    expect(member).toMatchObject({
+      email: 'operator@example.test',
+      role: 'operator',
+      status: 'active',
+    });
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${org.id}/members`,
+    });
+    expect(list.statusCode, list.body).toBe(200);
+    expect(list.json<MemberListResponse>().members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'owner', status: 'active' }),
+        expect.objectContaining({ email: 'operator@example.test', role: 'operator', status: 'active' }),
+      ]),
+    );
+
+    const updated = await app.inject({
+      method: 'PATCH',
+      url: `/v1/orgs/${org.id}/members/${member.id}`,
+      payload: { role: 'admin' },
+    });
+    expect(updated.statusCode, updated.body).toBe(200);
+    expect(updated.json<MemberResponse>().member.role).toBe('admin');
+
+    const removed = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${org.id}/members/${member.id}/remove`,
+    });
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(removed.json<MemberResponse>().member.status).toBe('removed');
+
+    const owner = list.json<MemberListResponse>().members.find((candidate) => candidate.role === 'owner');
+    expect(owner).toBeDefined();
+    const removeLastOwner = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${org.id}/members/${owner?.id}/remove`,
+    });
+    expect(removeLastOwner.statusCode).toBe(409);
+    expect(removeLastOwner.json()).toMatchObject({ error: 'last_owner_required' });
+  });
+
+  it('updates post-create onboarding flow state for an organization', async () => {
+    const { org } = await createOrg(app, 'Onboarding State Org');
+
+    const update = await app.inject({
+      method: 'PUT',
+      url: `/v1/orgs/${org.id}/onboarding-states/section_2_controls`,
+      payload: {
+        status: 'in_progress',
+        payload: {
+          current_step: 'policy_draft',
+          selected_action: 'runtime.http.request',
+        },
+      },
+    });
+    expect(update.statusCode, update.body).toBe(200);
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${org.id}/onboarding-states`,
+    });
+    expect(list.statusCode, list.body).toBe(200);
+    const states = list.json<OnboardingStatesResponse>().states;
+    expect(states.some((state) => state.flow_key === 'section_1_foundation' && state.status === 'completed')).toBe(true);
+    expect(
+      states.some(
+        (state) =>
+          state.flow_key === 'section_2_controls' &&
+          state.status === 'in_progress' &&
+          state.payload.current_step === 'policy_draft',
+      ),
+    ).toBe(true);
   });
 
   it('registers generic agents without type authority and exposes the roster read model', async () => {
@@ -164,17 +306,19 @@ describe('Section 1 core product spine', () => {
     });
 
     expect(list.statusCode).toBe(200);
-    expect(list.json<AgentListResponse>().agents).toEqual([
-      expect.objectContaining({
-        id: agent.agent.id,
-        name: 'Research agent',
-        status: 'active',
-        labels: ['research', 'safe-browser'],
-        team: { id: org.default_team_id, name: 'Default' },
-        connection_health: 'not_connected',
-        wallet_refs_count: 0,
-      }),
-    ]);
+    const [rosterAgent] = list.json<AgentListResponse>().agents;
+    expect(rosterAgent).toBeDefined();
+    expect(rosterAgent).toMatchObject({
+      id: agent.agent.id,
+      name: 'Research agent',
+      status: 'active',
+      labels: ['research', 'safe-browser'],
+      team: { id: org.default_team_id, name: 'Default' },
+      connection_health: 'not_connected',
+      wallet_refs_count: 0,
+      policy_coverage: 0,
+    });
+    expect(rosterAgent?.last_activity_at).toEqual(expect.any(String));
   });
 
   it('blocks cross-org team and parent assignment and rejects parent cycles', async () => {

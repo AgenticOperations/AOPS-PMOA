@@ -11,8 +11,12 @@ import type {
   CircleWalletSetRecord,
   OrgPaymentModeRecord,
   PaymentChain,
+  PaymentEventRecord,
   PaymentMode,
   PaymentRail,
+  PaymentRailReadinessRecord,
+  PaymentReservationRecord,
+  PaymentRouteObservationRecord,
   PaymentSourceRecord,
   RebalanceRecommendationRecord,
   TreasuryOverviewRecord,
@@ -81,15 +85,41 @@ export async function listPaymentSources(orgId: string): Promise<PaymentSourceRe
   return body.sources;
 }
 
+export async function listPaymentEvents(orgId: string, limit = 50): Promise<PaymentEventRecord[]> {
+  const body = await apiFetch<{ readonly events: PaymentEventRecord[] }>(
+    `/v1/orgs/${orgId}/payments/events?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return body.events;
+}
+
+export async function listPaymentRouteObservations(orgId: string, limit = 50): Promise<PaymentRouteObservationRecord[]> {
+  const body = await apiFetch<{ readonly observations: PaymentRouteObservationRecord[] }>(
+    `/v1/orgs/${orgId}/payments/route-observations?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return body.observations;
+}
+
+export async function listPaymentReservations(orgId: string, limit = 50): Promise<PaymentReservationRecord[]> {
+  const body = await apiFetch<{ readonly reservations: PaymentReservationRecord[] }>(
+    `/v1/orgs/${orgId}/payments/reservations?limit=${encodeURIComponent(String(limit))}`,
+  );
+  return body.reservations;
+}
+
 export async function createPaymentSource(
   orgId: string,
   input: {
     readonly chain: PaymentChain;
     readonly label: string;
-    readonly provider: 'circle_gateway' | 'simulation';
+    readonly provider: 'circle_gateway' | 'circle_wallets' | 'manual' | 'simulation';
     readonly rail: PaymentRail;
-    readonly simulated_balance_usdc: string;
-    readonly source_type: 'gateway';
+    readonly source_type: 'gateway' | 'direct_exact' | 'dedicated_wallet';
+    readonly account_type?: 'eoa' | 'sca' | 'virtual' | 'unknown' | undefined;
+    readonly address?: string | null | undefined;
+    readonly external_wallet_id?: string | null | undefined;
+    readonly metadata?: Record<string, unknown> | undefined;
+    readonly simulated_balance_usdc?: string | undefined;
+    readonly treasury_id?: string | null | undefined;
   },
 ): Promise<PaymentSourceRecord> {
   const body = await apiFetch<{ readonly source: PaymentSourceRecord }>(`/v1/orgs/${orgId}/payments/sources`, {
@@ -126,6 +156,45 @@ export async function listPaymentCapabilities(orgId: string): Promise<CircleChai
     `/v1/orgs/${orgId}/payments/capabilities`,
   );
   return body.capabilities;
+}
+
+export async function listPaymentRailReadiness(orgId: string): Promise<PaymentRailReadinessRecord[]> {
+  const body = await apiFetch<{ readonly rails: PaymentRailReadinessRecord[] }>(
+    `/v1/orgs/${orgId}/payments/rail-readiness`,
+  );
+  return body.rails;
+}
+
+export async function verifyPaymentRail(orgId: string, rail: PaymentRail): Promise<CircleProviderJobRecord> {
+  const response = await fetch(`${apiBaseUrl()}/v1/orgs/${orgId}/payments/rail-readiness/${encodeURIComponent(rail)}/verify`, {
+    cache: 'no-store',
+    headers: {
+      ...(await sessionHeaders()),
+      'content-type': 'application/json',
+    },
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  const body = (await response.json()) as { readonly error?: string; readonly job?: CircleProviderJobRecord; readonly message?: string };
+  if (!response.ok && body.job === undefined) {
+    throw new Error(body.message ?? body.error ?? `API request failed with ${response.status}`);
+  }
+  if (body.job === undefined) throw new Error('Rail verification response did not include a provider job.');
+  return body.job;
+}
+
+export async function verifyPaymentRails(
+  orgId: string,
+  input: { readonly only_unverified?: boolean | undefined; readonly rails?: readonly PaymentRail[] | undefined } = {},
+): Promise<CircleProviderJobRecord[]> {
+  const body = await apiFetch<{ readonly failed: number; readonly jobs: CircleProviderJobRecord[] }>(
+    `/v1/orgs/${orgId}/payments/rail-readiness/verify`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+  return body.jobs;
 }
 
 export async function createCircleTreasury(
@@ -270,6 +339,7 @@ export async function setAgentPaymentAccess(
   agentId: string,
   input: {
     readonly allowed_rails: readonly PaymentRail[];
+    readonly approval_threshold_usdc?: string | null | undefined;
     readonly budget_usdc: string;
     readonly dedicated_wallet_required: false;
     readonly per_request_cap_usdc: string;

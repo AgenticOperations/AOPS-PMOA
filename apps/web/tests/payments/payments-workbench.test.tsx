@@ -10,6 +10,8 @@ const agent = {
   team: { id: 'team_default', name: 'Default' },
   connection_health: 'healthy' as const,
   wallet_refs_count: 0,
+  policy_coverage: 0,
+  last_activity_at: null,
 };
 
 describe('PaymentsWorkbench', () => {
@@ -128,12 +130,103 @@ describe('PaymentsWorkbench', () => {
             updated_at: '2026-07-08T10:00:00.000Z',
           },
         ]}
+        paymentEvents={[
+          {
+            id: 'payevt_1',
+            org_id: 'org_1',
+            agent_id: agent.id,
+            connection_id: 'conn_1',
+            source_id: 'paysrc_1',
+            reservation_id: 'payres_1',
+            decision: 'submitted',
+            provider_mode: 'test',
+            rail: 'gateway_base',
+            chain: 'base',
+            amount_usdc: '1.25',
+            asset: 'USDC',
+            recipient: '0x000000000000000000000000000000000000dEaD',
+            network: 'eip155:84532',
+            resource_url: 'https://seller.example.test/weather',
+            resource_category: 'weather',
+            quote: {},
+            result: {},
+            activity_id: 'act_1',
+            created_at: '2026-07-08T11:00:00.000Z',
+          },
+        ]}
+        paymentReservations={[
+          {
+            id: 'payres_1',
+            org_id: 'org_1',
+            agent_id: agent.id,
+            connection_id: 'conn_1',
+            source_id: 'paysrc_1',
+            amount_usdc: '1.25',
+            asset: 'USDC',
+            rail: 'gateway_base',
+            status: 'settled',
+            reason_code: 'submitted',
+            quote_hash: 'abcdef1234567890',
+            quote: {},
+            expires_at: '2026-07-08T11:15:00.000Z',
+            created_at: '2026-07-08T11:00:00.000Z',
+            updated_at: '2026-07-08T11:00:00.000Z',
+          },
+        ]}
+        railReadiness={[
+          {
+            rail: 'gateway_base',
+            chain: 'base',
+            rail_type: 'gateway',
+            supported: true,
+            settlement_verified: true,
+            status: 'ready',
+            reason: 'gateway_base has a verified settlement path for test mode.',
+            last_observed_at: '2026-07-08T11:00:00.000Z',
+            last_payment_at: '2026-07-08T11:00:00.000Z',
+            last_proof_at: '2026-07-08T11:00:00.000Z',
+            last_proof_status: 'complete',
+          },
+          {
+            rail: 'gateway_arbitrum',
+            chain: 'arbitrum',
+            rail_type: 'gateway',
+            supported: true,
+            settlement_verified: false,
+            status: 'unverified',
+            reason: 'gateway_arbitrum liquidity can be prepared, but settlement still needs a successful testnet proof.',
+            last_observed_at: null,
+            last_payment_at: null,
+            last_proof_at: '2026-07-08T11:10:00.000Z',
+            last_proof_status: 'submitted',
+          },
+        ]}
+        routeObservations={[
+          {
+            id: 'payobs_1',
+            org_id: 'org_1',
+            agent_id: agent.id,
+            connection_id: 'conn_1',
+            requested_network: 'eip155:84532',
+            requested_asset: 'USDC',
+            requested_rail: 'gateway_base',
+            supported_rail: 'gateway_base',
+            amount_usdc: '1.25',
+            outcome: 'accepted',
+            reason_code: 'submitted',
+            resource_url: 'https://seller.example.test/weather',
+            resource_category: 'weather',
+            observed_at: '2026-07-08T11:00:00.000Z',
+          },
+        ]}
         circleWallets={[]}
         capabilities={[
           {
             chain: 'base',
             circle_blockchain: 'BASE-SEPOLIA',
+            exact_settlement_verified: true,
             gateway_domain: 6,
+            gateway_settlement_verified: true,
             gateway_supported: true,
             id: 'cap_base',
             mode: 'test',
@@ -230,6 +323,13 @@ describe('PaymentsWorkbench', () => {
     expect(screen.getByRole('heading', { name: 'Payment rails' })).toBeInTheDocument();
     expect(screen.getAllByText('Base Gateway treasury')[0]).toBeInTheDocument();
     expect(screen.getByText('Base Gateway source')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Rail readiness' })).toBeInTheDocument();
+    expect(screen.getAllByText('gateway_base has a verified settlement path for test mode.')[0]).toBeInTheDocument();
+    expect(screen.getByText('Submitted')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Route observations' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Payment ledger' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Reservations' })).toBeInTheDocument();
+    expect(screen.getAllByText('submitted').length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText('98.75 USDC').length).toBeGreaterThanOrEqual(4);
     expect(screen.getByRole('heading', { name: 'Provider jobs' })).toBeInTheDocument();
     expect(screen.getByText('Wallet Faucet')).toBeInTheDocument();
@@ -238,7 +338,7 @@ describe('PaymentsWorkbench', () => {
     expect(screen.getByText('0.01 USDC recent exact spend')).toBeInTheDocument();
     expect(screen.getAllByText('Trade research agent')).toHaveLength(2);
     expect(screen.getByText('5.00 USDC')).toBeInTheDocument();
-    expect(screen.getByText('1.25 USDC')).toBeInTheDocument();
+    expect(screen.getAllByText('1.25 USDC').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('button', { name: 'Save access' })).toBeInTheDocument();
     expect(screen.queryByText(/Simulation source/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Local fallback/i)).not.toBeInTheDocument();

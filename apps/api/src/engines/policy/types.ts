@@ -8,6 +8,18 @@ export type PolicyDraftStatus = 'draft' | 'validated' | 'activated' | 'discarded
 export type PolicyVersionStatus = 'active' | 'archived';
 export type PolicyTargetType = 'org' | 'team' | 'agent' | 'connection';
 export type PolicyAuditLevel = 'standard' | 'detailed';
+export type PolicyConditionGroup = 'resource' | 'payment' | 'tool';
+
+export type PolicyActionRecord = {
+  readonly action_id: string;
+  readonly category: string;
+  readonly label: string;
+  readonly description: string;
+  readonly enforceability: PolicyEnforceability;
+  readonly introduced_section: number;
+  readonly condition_groups: PolicyConditionGroup[];
+  readonly binding_target_types: PolicyTargetType[];
+};
 
 export type PolicyStatementConditions = {
   readonly resource?: {
@@ -151,10 +163,35 @@ export type PolicyValidationResult = {
   readonly warnings: readonly string[];
 };
 
+export type PolicySimulationRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly draft_id: string | null;
+  readonly request: PolicyDecisionRequest;
+  readonly result: PolicyDecisionResult;
+  readonly created_by: string;
+  readonly created_at: string;
+};
+
 export type CreatePolicyDraftInput = {
   readonly source: PolicyDraftSource;
   readonly name: string;
   readonly description?: string | undefined;
   readonly category: PolicyCategory;
   readonly statements: readonly PolicyStatement[];
+};
+
+export type UpdatePolicyDraftInput = {
+  readonly name?: string | undefined;
+  readonly description?: string | undefined;
+  readonly category?: PolicyCategory | undefined;
+  readonly statements?: readonly PolicyStatement[] | undefined;
+};
+
+export type CreatePolicyVersionInput = {
+  readonly name?: string | undefined;
+  readonly description?: string | undefined;
+  readonly category?: PolicyCategory | undefined;
+  readonly statements?: readonly PolicyStatement[] | undefined;
+  readonly change_reason?: string | undefined;
 };

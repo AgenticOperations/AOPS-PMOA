@@ -19,6 +19,34 @@ export type CurrentSession = {
   readonly orgs: Org[];
 };
 
+export type Role = 'owner' | 'admin' | 'operator' | 'auditor' | 'viewer' | 'member';
+
+export type MemberRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly user_id: string;
+  readonly email: string;
+  readonly name: string;
+  readonly avatar_url: string | null;
+  readonly role: Role;
+  readonly status: 'active' | 'invited' | 'removed';
+  readonly joined_at: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export type OnboardingStateRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly flow_key: string;
+  readonly status: 'not_started' | 'in_progress' | 'completed';
+  readonly payload: Record<string, unknown>;
+  readonly completed_at: string | null;
+  readonly created_by_user_id: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
 export type AgentStatus = 'active' | 'paused' | 'deactivated' | 'retired' | 'suspended';
 export type ConnectionHealth = 'not_connected' | 'healthy' | 'stale' | 'revoked';
 
@@ -30,14 +58,17 @@ export type AgentRosterItem = {
   readonly team: { readonly id: string; readonly name: string };
   readonly connection_health: ConnectionHealth;
   readonly wallet_refs_count: number;
+  readonly policy_coverage: number;
+  readonly last_activity_at: string | null;
 };
 
 export type TeamRecord = {
   readonly id: string;
+  readonly org_id: string;
   readonly name: string;
   readonly description: string;
   readonly is_default: boolean;
-  readonly status: 'active' | 'archived';
+  readonly archived_at: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 };

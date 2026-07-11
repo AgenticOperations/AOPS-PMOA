@@ -11,6 +11,7 @@ import { satisfiesRole } from './roles.js';
 import {
   archiveTeam,
   attachWalletRef,
+  addMember,
   authenticateConnection,
   createAgent,
   createConnection,
@@ -25,23 +26,31 @@ import {
   getOrgBySlugForUser,
   listAgents,
   listConnections,
+  listMembers,
+  listOnboardingStates,
   listOrgsForUser,
   listOrgs,
   listTeams,
   listWalletRefs,
+  removeMember,
   revokeConnection,
   rotateConnection,
   setAgentStatus,
   testConnection,
   updateAgent,
+  updateMember,
+  upsertOnboardingState,
   updateTeam,
+  type AddMemberInput,
   type AttachWalletRefInput,
   type CreateAgentInput,
   type CreateConnectionInput,
   type CreateOrgInput,
   type CreateTeamInput,
+  type UpdateMemberInput,
   type UpdateAgentInput,
   type UpdateTeamInput,
+  type UpsertOnboardingStateInput,
 } from './store.js';
 import type { OperatorContext, Role } from './types.js';
 
@@ -82,6 +91,21 @@ const createOrgSchema = z.object({
 const createTeamSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
+});
+
+const addMemberSchema = z.object({
+  email: z.string().email(),
+  name: z.string().trim().min(1).max(120).optional(),
+  role: roleSchema,
+});
+
+const updateMemberSchema = z.object({
+  role: roleSchema,
+});
+
+const onboardingStateSchema = z.object({
+  status: z.enum(['not_started', 'in_progress', 'completed']),
+  payload: z.record(z.string(), z.unknown()).default({}),
 });
 
 const updateTeamSchema = z.object({
@@ -337,6 +361,65 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
     await requireOrgOperator(request, deps, (request.params as { readonly orgId: string }).orgId, 'viewer');
     const params = request.params as { readonly orgId: string };
     return { org: await getOrg(deps.pool, params.orgId) };
+  });
+
+  app.get('/v1/orgs/:orgId/members', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return { members: await listMembers(deps.pool, params.orgId) };
+  });
+
+  app.post('/v1/orgs/:orgId/members', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const member = await addMember(
+      deps.pool,
+      operator,
+      params.orgId,
+      parseBody<AddMemberInput>(addMemberSchema, request),
+    );
+    return reply.code(201).send({ member });
+  });
+
+  app.patch('/v1/orgs/:orgId/members/:memberId', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly memberId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    return {
+      member: await updateMember(
+        deps.pool,
+        operator,
+        params.orgId,
+        params.memberId,
+        parseBody<UpdateMemberInput>(updateMemberSchema, request),
+      ),
+    };
+  });
+
+  app.post('/v1/orgs/:orgId/members/:memberId/remove', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly memberId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    return { member: await removeMember(deps.pool, operator, params.orgId, params.memberId) };
+  });
+
+  app.get('/v1/orgs/:orgId/onboarding-states', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return { states: await listOnboardingStates(deps.pool, params.orgId) };
+  });
+
+  app.put('/v1/orgs/:orgId/onboarding-states/:flowKey', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly flowKey: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const flowKey = z.string().trim().min(1).max(120).parse(params.flowKey);
+    return {
+      state: await upsertOnboardingState(
+        deps.pool,
+        operator,
+        params.orgId,
+        flowKey,
+        parseBody<UpsertOnboardingStateInput>(onboardingStateSchema, request),
+      ),
+    };
   });
 
   app.get('/v1/orgs/:orgId/teams', async (request) => {

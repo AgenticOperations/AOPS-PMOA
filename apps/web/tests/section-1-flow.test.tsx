@@ -155,7 +155,7 @@ describe('Section 1 product flow', () => {
 
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument();
     expect(screen.getByLabelText('Agent name')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Authorise a new agent')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Authorize a new agent')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Description')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Labels')).not.toBeInTheDocument();

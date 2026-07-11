@@ -2,6 +2,11 @@ import Link from 'next/link';
 import type { AgentRosterItem } from '@/lib/identity-spine-types';
 import { formatConnectionHealth, formatStatus } from './format';
 
+function formatLastActivity(value: string | null): string {
+  if (value === null) return 'No activity';
+  return new Date(value).toLocaleString();
+}
+
 export function AgentRoster({
   agents,
   orgSlug,
@@ -27,8 +32,9 @@ export function AgentRoster({
             <th scope="col">Agent</th>
             <th scope="col">Status</th>
             <th scope="col">Team</th>
-            <th scope="col">Connection</th>
-            <th scope="col">Wallet refs</th>
+            <th scope="col">Credential state</th>
+            <th scope="col">Policy coverage</th>
+            <th scope="col">Last activity</th>
           </tr>
         </thead>
         <tbody>
@@ -48,7 +54,10 @@ export function AgentRoster({
                 <span className={`health-dot health-${agent.connection_health}`} aria-hidden="true" />
                 {formatConnectionHealth(agent.connection_health)}
               </td>
-              <td data-label="Wallet refs">{agent.wallet_refs_count}</td>
+              <td data-label="Policy coverage">
+                {agent.policy_coverage === 0 ? 'No policies' : `${agent.policy_coverage} active`}
+              </td>
+              <td data-label="Last activity">{formatLastActivity(agent.last_activity_at)}</td>
             </tr>
           ))}
         </tbody>

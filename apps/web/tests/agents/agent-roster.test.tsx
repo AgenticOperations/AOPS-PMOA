@@ -15,6 +15,8 @@ describe('AgentRoster', () => {
             team: { id: 'team_default', name: 'Default' },
             connection_health: 'not_connected',
             wallet_refs_count: 0,
+            policy_coverage: 0,
+            last_activity_at: null,
           },
         ]}
         orgSlug="acme-agent-ops"
@@ -27,6 +29,8 @@ describe('AgentRoster', () => {
     );
     expect(screen.getByText('Default')).toBeInTheDocument();
     expect(screen.getByText('Not connected')).toBeInTheDocument();
+    expect(screen.getByText('No policies')).toBeInTheDocument();
+    expect(screen.getByText('No activity')).toBeInTheDocument();
     expect(screen.queryByText('Labels')).not.toBeInTheDocument();
     expect(screen.queryByText('research')).not.toBeInTheDocument();
     expect(screen.queryByText(/float/i)).not.toBeInTheDocument();

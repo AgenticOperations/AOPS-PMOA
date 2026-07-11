@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { recordAuditEvent } from '../evidence/audit-writer.js';
-import { badRequest, conflict, notFound } from './errors.js';
+import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { prefixedId, slugifyName } from './ids.js';
 import type {
   AgentRecord,
@@ -10,8 +10,11 @@ import type {
   ConnectionHealth,
   ConnectionKind,
   ConnectionRecord,
+  MemberRecord,
+  OnboardingStateRecord,
   OperatorContext,
   OrgRecord,
+  Role,
   TeamRecord,
   WalletRefRecord,
 } from './types.js';
@@ -36,6 +39,32 @@ type TeamRow = {
   readonly description: string;
   readonly is_default: boolean;
   readonly archived_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+};
+
+type MemberRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly user_id: string;
+  readonly email: string;
+  readonly name: string;
+  readonly avatar_url: string | null;
+  readonly role: Role;
+  readonly status: 'active' | 'invited' | 'removed';
+  readonly joined_at: Date | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+};
+
+type OnboardingStateRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly flow_key: string;
+  readonly status: OnboardingStateRecord['status'];
+  readonly payload: unknown;
+  readonly completed_at: Date | null;
+  readonly created_by_user_id: string | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 };
@@ -131,6 +160,21 @@ export type CreateOrgInput = {
 export type CreateTeamInput = {
   readonly name: string;
   readonly description?: string | undefined;
+};
+
+export type AddMemberInput = {
+  readonly email: string;
+  readonly name?: string | undefined;
+  readonly role: Role;
+};
+
+export type UpdateMemberInput = {
+  readonly role: Role;
+};
+
+export type UpsertOnboardingStateInput = {
+  readonly status: OnboardingStateRecord['status'];
+  readonly payload: Record<string, unknown>;
 };
 
 export type UpdateTeamInput = {
@@ -279,6 +323,42 @@ function orgFromRow(row: OrgRow): OrgRecord {
     default_team_id: row.default_team_id,
     settings: row.settings,
     status: row.status,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
+  };
+}
+
+async function existingUserIdOrNull(db: Db, operator: OperatorContext): Promise<string | null> {
+  const candidate = operator.userId ?? operator.actorId;
+  const result = await db.query<{ id: string }>('SELECT id FROM users WHERE id = $1 LIMIT 1', [candidate]);
+  return result.rows[0]?.id ?? null;
+}
+
+function memberFromRow(row: MemberRow): MemberRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    user_id: row.user_id,
+    email: row.email,
+    name: row.name,
+    avatar_url: row.avatar_url,
+    role: row.role,
+    status: row.status,
+    joined_at: row.joined_at?.toISOString() ?? null,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
+  };
+}
+
+function onboardingStateFromRow(row: OnboardingStateRow): OnboardingStateRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    flow_key: row.flow_key,
+    status: row.status,
+    payload: jsonObject(row.payload),
+    completed_at: row.completed_at?.toISOString() ?? null,
+    created_by_user_id: row.created_by_user_id,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
@@ -800,9 +880,17 @@ export async function createOrg(
 
     const inserted = await client.query<OrgRow>(
       `INSERT INTO orgs (id, display_name, slug, status, settings)
-       VALUES ($1, $2, $3, 'active', '{}'::jsonb)
+       VALUES ($1, $2, $3, 'active', $4::jsonb)
        RETURNING id, display_name, slug, default_team_id, settings, status, created_at, updated_at`,
-      [orgId, input.name, slug],
+      [
+        orgId,
+        input.name,
+        slug,
+        JSON.stringify({
+          domain: input.domain ?? null,
+          primary_use_case: input.primary_use_case ?? null,
+        }),
+      ],
     );
 
     await client.query(
@@ -840,6 +928,28 @@ export async function createOrg(
       [orgId, defaultTeamId],
     );
 
+    await client.query(
+      `INSERT INTO org_onboarding_states (
+         id,
+         org_id,
+         flow_key,
+         status,
+         payload,
+         completed_at,
+         created_by_user_id
+       )
+       VALUES ($1, $2, 'section_1_foundation', 'completed', $3::jsonb, now(), $4)`,
+      [
+        prefixedId('onb'),
+        orgId,
+        JSON.stringify({
+          domain: input.domain ?? null,
+          primary_use_case: input.primary_use_case ?? null,
+        }),
+        resolvedUserId,
+      ],
+    );
+
     await recordIdentityEvent(client, orgId, operator, 'org.created', { type: 'org', id: orgId }, {
       name: input.name,
       slug,
@@ -852,6 +962,9 @@ export async function createOrg(
       { type: 'team', id: defaultTeamId },
       { name: 'Default', is_default: true },
     );
+    await recordIdentityEvent(client, orgId, operator, 'onboarding.completed', { type: 'org', id: orgId }, {
+      flow_key: 'section_1_foundation',
+    });
 
     const row = updated.rows[0] ?? inserted.rows[0];
     if (row === undefined) throw new Error('org_create_failed');
@@ -869,6 +982,313 @@ export async function getOrg(pool: pg.Pool, orgId: string): Promise<OrgRecord> {
   const row = result.rows[0];
   if (row === undefined) throw notFound('Org was not found.');
   return orgFromRow(row);
+}
+
+export async function listMembers(pool: pg.Pool, orgId: string): Promise<MemberRecord[]> {
+  const result = await pool.query<MemberRow>(
+    `SELECT m.id,
+            m.org_id,
+            m.user_id,
+            u.email,
+            u.name,
+            u.avatar_url,
+            m.role,
+            m.status,
+            m.joined_at,
+            m.created_at,
+            m.updated_at
+       FROM memberships m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.org_id = $1
+      ORDER BY
+        CASE m.status WHEN 'active' THEN 1 WHEN 'invited' THEN 2 ELSE 3 END,
+        CASE m.role
+          WHEN 'owner' THEN 1
+          WHEN 'admin' THEN 2
+          WHEN 'operator' THEN 3
+          WHEN 'auditor' THEN 4
+          WHEN 'viewer' THEN 5
+          ELSE 6
+        END,
+        lower(u.email) ASC`,
+    [orgId],
+  );
+  return result.rows.map(memberFromRow);
+}
+
+async function getMemberRow(db: Db, orgId: string, memberId: string): Promise<MemberRow> {
+  const result = await db.query<MemberRow>(
+    `SELECT m.id,
+            m.org_id,
+            m.user_id,
+            u.email,
+            u.name,
+            u.avatar_url,
+            m.role,
+            m.status,
+            m.joined_at,
+            m.created_at,
+            m.updated_at
+       FROM memberships m
+       JOIN users u ON u.id = m.user_id
+      WHERE m.org_id = $1
+        AND m.id = $2`,
+    [orgId, memberId],
+  );
+  const row = result.rows[0];
+  if (row === undefined) throw notFound('Workspace member was not found.');
+  return row;
+}
+
+async function activeOwnerCount(db: Db, orgId: string): Promise<number> {
+  const result = await db.query<{ count: string }>(
+    `SELECT count(*)::text AS count
+       FROM memberships
+      WHERE org_id = $1
+        AND role = 'owner'
+        AND status = 'active'`,
+    [orgId],
+  );
+  return Number(result.rows[0]?.count ?? 0);
+}
+
+function assertCanManageOwnerRole(operator: OperatorContext, role: Role): void {
+  if (role === 'owner' && operator.role !== 'owner') {
+    throw forbidden('Only workspace owners can manage owner memberships.');
+  }
+}
+
+export async function addMember(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  input: AddMemberInput,
+): Promise<MemberRecord> {
+  return withTransaction(pool, async (client) => {
+    await getOrg(pool, orgId);
+    assertCanManageOwnerRole(operator, input.role);
+
+    const email = input.email.trim().toLowerCase();
+    const fallbackName = email.split('@')[0] ?? email;
+    const name = input.name?.trim() || fallbackName;
+    const userId = prefixedId('usr');
+    await client.query(
+      `INSERT INTO users (id, email, name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO UPDATE
+         SET name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE users.name END,
+             updated_at = now()`,
+      [userId, email, name],
+    );
+    const resolvedUser = await client.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email]);
+    const resolvedUserId = resolvedUser.rows[0]?.id;
+    if (resolvedUserId === undefined) throw new Error('member_user_resolve_failed');
+
+    const existing = await client.query<{ id: string }>(
+      'SELECT id FROM memberships WHERE org_id = $1 AND user_id = $2',
+      [orgId, resolvedUserId],
+    );
+    const memberId = existing.rows[0]?.id ?? prefixedId('mem');
+    const result = await client.query<MemberRow>(
+      `INSERT INTO memberships (id, org_id, user_id, role, status, joined_at)
+       VALUES ($1, $2, $3, $4, 'active', now())
+       ON CONFLICT (org_id, user_id) DO UPDATE
+          SET role = EXCLUDED.role,
+              status = 'active',
+              joined_at = COALESCE(memberships.joined_at, now()),
+              updated_at = now()
+       RETURNING id,
+                 org_id,
+                 user_id,
+                 (SELECT email FROM users WHERE id = memberships.user_id) AS email,
+                 (SELECT name FROM users WHERE id = memberships.user_id) AS name,
+                 (SELECT avatar_url FROM users WHERE id = memberships.user_id) AS avatar_url,
+                 role,
+                 status,
+                 joined_at,
+                 created_at,
+                 updated_at`,
+      [memberId, orgId, resolvedUserId, input.role],
+    );
+
+    await recordIdentityEvent(client, orgId, operator, 'member.added', { type: 'member', id: memberId }, {
+      email,
+      role: input.role,
+    });
+
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('member_create_failed');
+    return memberFromRow(row);
+  });
+}
+
+export async function updateMember(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  memberId: string,
+  input: UpdateMemberInput,
+): Promise<MemberRecord> {
+  return withTransaction(pool, async (client) => {
+    const current = await getMemberRow(client, orgId, memberId);
+    assertCanManageOwnerRole(operator, current.role);
+    assertCanManageOwnerRole(operator, input.role);
+    if (current.role === 'owner' && input.role !== 'owner' && current.status === 'active') {
+      const owners = await activeOwnerCount(client, orgId);
+      if (owners <= 1) throw conflict('last_owner_required', 'A workspace must keep at least one active owner.');
+    }
+
+    const result = await client.query<MemberRow>(
+      `UPDATE memberships
+          SET role = $3,
+              updated_at = now()
+        WHERE org_id = $1
+          AND id = $2
+        RETURNING id,
+                  org_id,
+                  user_id,
+                  (SELECT email FROM users WHERE id = memberships.user_id) AS email,
+                  (SELECT name FROM users WHERE id = memberships.user_id) AS name,
+                  (SELECT avatar_url FROM users WHERE id = memberships.user_id) AS avatar_url,
+                  role,
+                  status,
+                  joined_at,
+                  created_at,
+                  updated_at`,
+      [orgId, memberId, input.role],
+    );
+
+    await recordIdentityEvent(client, orgId, operator, 'member.role_updated', { type: 'member', id: memberId }, {
+      previous_role: current.role,
+      role: input.role,
+    });
+
+    const row = result.rows[0];
+    if (row === undefined) throw notFound('Workspace member was not found.');
+    return memberFromRow(row);
+  });
+}
+
+export async function removeMember(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  memberId: string,
+): Promise<MemberRecord> {
+  return withTransaction(pool, async (client) => {
+    const current = await getMemberRow(client, orgId, memberId);
+    assertCanManageOwnerRole(operator, current.role);
+    if (current.role === 'owner' && current.status === 'active') {
+      const owners = await activeOwnerCount(client, orgId);
+      if (owners <= 1) throw conflict('last_owner_required', 'A workspace must keep at least one active owner.');
+    }
+
+    const result = await client.query<MemberRow>(
+      `UPDATE memberships
+          SET status = 'removed',
+              updated_at = now()
+        WHERE org_id = $1
+          AND id = $2
+        RETURNING id,
+                  org_id,
+                  user_id,
+                  (SELECT email FROM users WHERE id = memberships.user_id) AS email,
+                  (SELECT name FROM users WHERE id = memberships.user_id) AS name,
+                  (SELECT avatar_url FROM users WHERE id = memberships.user_id) AS avatar_url,
+                  role,
+                  status,
+                  joined_at,
+                  created_at,
+                  updated_at`,
+      [orgId, memberId],
+    );
+
+    await recordIdentityEvent(client, orgId, operator, 'member.removed', { type: 'member', id: memberId }, {
+      email: current.email,
+      role: current.role,
+    });
+
+    const row = result.rows[0];
+    if (row === undefined) throw notFound('Workspace member was not found.');
+    return memberFromRow(row);
+  });
+}
+
+export async function listOnboardingStates(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<OnboardingStateRecord[]> {
+  const result = await pool.query<OnboardingStateRow>(
+    `SELECT *
+       FROM org_onboarding_states
+      WHERE org_id = $1
+      ORDER BY
+        CASE flow_key
+          WHEN 'section_1_foundation' THEN 1
+          WHEN 'section_2_controls' THEN 2
+          WHEN 'section_3_runtime' THEN 3
+          WHEN 'section_4_mcp' THEN 4
+          WHEN 'section_5_operations' THEN 5
+          WHEN 'section_6_payments' THEN 6
+          WHEN 'section_7_treasury' THEN 7
+          WHEN 'section_8_wallets' THEN 8
+          WHEN 'section_9_live_payments' THEN 9
+          ELSE 100
+        END,
+        updated_at DESC`,
+    [orgId],
+  );
+  return result.rows.map(onboardingStateFromRow);
+}
+
+export async function upsertOnboardingState(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  flowKey: string,
+  input: UpsertOnboardingStateInput,
+): Promise<OnboardingStateRecord> {
+  return withTransaction(pool, async (client) => {
+    await getOrg(pool, orgId);
+    const createdBy = await existingUserIdOrNull(client, operator);
+    const result = await client.query<OnboardingStateRow>(
+      `INSERT INTO org_onboarding_states (
+         id,
+         org_id,
+         flow_key,
+         status,
+         payload,
+         completed_at,
+         created_by_user_id
+       )
+       VALUES (
+         $1,
+         $2,
+         $3,
+         $4,
+         $5::jsonb,
+         CASE WHEN $4 = 'completed' THEN now() ELSE NULL END,
+         $6
+       )
+       ON CONFLICT (org_id, flow_key) DO UPDATE
+          SET status = EXCLUDED.status,
+              payload = EXCLUDED.payload,
+              completed_at = CASE WHEN EXCLUDED.status = 'completed' THEN COALESCE(org_onboarding_states.completed_at, now()) ELSE NULL END,
+              created_by_user_id = COALESCE(org_onboarding_states.created_by_user_id, EXCLUDED.created_by_user_id),
+              updated_at = now()
+       RETURNING *`,
+      [prefixedId('onb'), orgId, flowKey, input.status, JSON.stringify(input.payload), createdBy],
+    );
+
+    await recordIdentityEvent(client, orgId, operator, 'onboarding.state_updated', { type: 'org', id: orgId }, {
+      flow_key: flowKey,
+      status: input.status,
+    });
+
+    const row = result.rows[0];
+    if (row === undefined) throw new Error('onboarding_state_upsert_failed');
+    return onboardingStateFromRow(row);
+  });
 }
 
 export async function listTeams(pool: pg.Pool, orgId: string): Promise<TeamRecord[]> {
@@ -1112,12 +1532,16 @@ export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRos
       readonly team_name: string;
       readonly connection_health: ConnectionHealth;
       readonly wallet_refs_count: string;
+      readonly policy_coverage: string;
+      readonly last_activity_at: Date | null;
     }
   >(
     `SELECT
        a.*,
        t.name AS team_name,
        COALESCE(w.active_wallet_refs, 0)::text AS wallet_refs_count,
+       COALESCE(p.policy_coverage, 0)::text AS policy_coverage,
+       la.last_activity_at,
        CASE
          WHEN c.total_connections IS NULL THEN 'not_connected'
          WHEN COALESCE(c.active_recent, 0) > 0 THEN 'healthy'
@@ -1138,10 +1562,56 @@ export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRos
      ) c ON c.agent_id = a.id
      LEFT JOIN (
        SELECT agent_id, count(*) AS active_wallet_refs
-       FROM wallet_refs
-       WHERE org_id = $1 AND status = 'attached'
-       GROUP BY agent_id
+      FROM wallet_refs
+      WHERE org_id = $1 AND status = 'attached'
+      GROUP BY agent_id
      ) w ON w.agent_id = a.id
+     LEFT JOIN LATERAL (
+       SELECT count(DISTINCT (pv.policy_id, pv.version)) AS policy_coverage
+       FROM policy_versions pv
+       JOIN policy_bindings pb
+         ON pb.org_id = pv.org_id
+        AND pb.policy_id = pv.policy_id
+        AND pb.policy_version = pv.version
+       WHERE pv.org_id = a.org_id
+         AND pv.status = 'active'
+         AND pb.status = 'active'
+         AND (
+           (pb.target_type = 'org' AND pb.target_id = a.org_id)
+           OR (pb.target_type = 'team' AND pb.target_id = a.team_id)
+           OR (pb.target_type = 'agent' AND pb.target_id = a.id)
+           OR (
+             pb.target_type = 'connection'
+             AND pb.target_id IN (
+               SELECT id FROM connections WHERE org_id = a.org_id AND agent_id = a.id AND status = 'active'
+             )
+           )
+         )
+     ) p ON true
+     LEFT JOIN LATERAL (
+       SELECT max(occurred_at) AS last_activity_at
+       FROM (
+         SELECT created_at AS occurred_at
+           FROM activity_items
+          WHERE org_id = a.org_id AND agent_id = a.id
+         UNION ALL
+         SELECT recorded_at AS occurred_at
+           FROM audit_events
+          WHERE org_id = a.org_id
+            AND (
+              related_agent_id = a.id
+              OR (resource_type = 'agent' AND resource_id = a.id)
+              OR (
+                resource_type = 'connection'
+                AND resource_id IN (SELECT id FROM connections WHERE org_id = a.org_id AND agent_id = a.id)
+              )
+              OR (
+                resource_type = 'wallet_ref'
+                AND resource_id IN (SELECT id FROM wallet_refs WHERE org_id = a.org_id AND agent_id = a.id)
+              )
+            )
+       ) activity
+     ) la ON true
      WHERE a.org_id = $1
      ORDER BY a.created_at ASC, a.id ASC`,
     [orgId],
@@ -1157,6 +1627,8 @@ export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRos
     team: { id: row.team_id, name: row.team_name },
     connection_health: row.connection_health,
     wallet_refs_count: Number(row.wallet_refs_count),
+    policy_coverage: Number(row.policy_coverage),
+    last_activity_at: row.last_activity_at?.toISOString() ?? null,
   }));
 }
 

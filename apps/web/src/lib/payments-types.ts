@@ -32,12 +32,14 @@ export type CircleChainCapabilityRecord = {
   readonly circle_blockchain: string;
   readonly gateway_domain: number;
   readonly gateway_supported: boolean;
+  readonly gateway_settlement_verified: boolean;
   readonly id: string;
   readonly mode: PaymentMode;
   readonly nanopayments_supported: boolean;
   readonly network_label: string | null;
   readonly status: PaymentStatus;
   readonly wallet_account_type: 'eoa' | 'sca';
+  readonly exact_settlement_verified: boolean;
   readonly wallet_supported: boolean;
 };
 
@@ -132,6 +134,78 @@ export type TreasuryOverviewRecord = {
       readonly created_at: string;
     } | null;
   };
+};
+
+export type PaymentEventRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string | null;
+  readonly source_id: string | null;
+  readonly reservation_id: string | null;
+  readonly decision: 'submitted' | 'settled' | 'failed' | 'simulated';
+  readonly provider_mode: 'simulation' | 'test' | 'live';
+  readonly rail: PaymentRail;
+  readonly chain: PaymentChain;
+  readonly amount_usdc: string;
+  readonly asset: string;
+  readonly recipient: string;
+  readonly network: string;
+  readonly resource_url: string | null;
+  readonly resource_category: string | null;
+  readonly quote: Record<string, unknown>;
+  readonly result: Record<string, unknown>;
+  readonly activity_id: string | null;
+  readonly created_at: string;
+};
+
+export type PaymentRouteObservationRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string | null;
+  readonly requested_network: string | null;
+  readonly requested_asset: string | null;
+  readonly requested_rail: string | null;
+  readonly supported_rail: PaymentRail | null;
+  readonly amount_usdc: string | null;
+  readonly outcome: 'accepted' | 'rejected';
+  readonly reason_code: string;
+  readonly resource_url: string | null;
+  readonly resource_category: string | null;
+  readonly observed_at: string;
+};
+
+export type PaymentReservationRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string | null;
+  readonly source_id: string;
+  readonly amount_usdc: string;
+  readonly asset: string;
+  readonly rail: PaymentRail;
+  readonly status: 'reserved' | 'settled' | 'released' | 'failed';
+  readonly reason_code: string;
+  readonly quote_hash: string;
+  readonly quote: Record<string, unknown>;
+  readonly expires_at: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export type PaymentRailReadinessRecord = {
+  readonly rail: PaymentRail;
+  readonly chain: PaymentChain;
+  readonly rail_type: 'gateway' | 'exact';
+  readonly supported: boolean;
+  readonly settlement_verified: boolean;
+  readonly status: 'ready' | 'unverified' | 'unsupported';
+  readonly reason: string;
+  readonly last_observed_at: string | null;
+  readonly last_payment_at: string | null;
+  readonly last_proof_at: string | null;
+  readonly last_proof_status: CircleProviderJobRecord['status'] | null;
 };
 
 export type RebalanceRecommendationRecord = {

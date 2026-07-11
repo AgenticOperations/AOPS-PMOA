@@ -1,19 +1,15 @@
-import type { PolicyStatement, PolicyValidationResult } from './types.js';
+import type { PolicyConditionGroup, PolicyStatement, PolicyValidationResult } from './types.js';
 
 const allowedDecisions = new Set(['allow', 'deny', 'approval_required', 'observe']);
 const allowedAuditLevels = new Set(['standard', 'detailed']);
-const conditionGroups = ['resource', 'payment', 'tool'] as const;
+const conditionGroups: readonly PolicyConditionGroup[] = ['resource', 'payment', 'tool'];
 
-const actionConditionSupport: Record<string, ReadonlySet<(typeof conditionGroups)[number]>> = {
-  'payment.x402.authorize': new Set(['resource', 'payment']),
-  'runtime.http.request': new Set(['resource']),
-  'tool.call': new Set(['tool']),
-};
-
-function supportedConditionGroups(action: string): ReadonlySet<(typeof conditionGroups)[number]> {
+function supportedConditionGroups(
+  action: string,
+  actionConditionGroups: ReadonlyMap<string, readonly PolicyConditionGroup[]>,
+): ReadonlySet<PolicyConditionGroup> {
   if (action === '*') return new Set(conditionGroups);
-  if (action.startsWith('management.')) return new Set();
-  return actionConditionSupport[action] ?? new Set(conditionGroups);
+  return new Set(actionConditionGroups.get(action) ?? []);
 }
 
 function hasValues(value: readonly unknown[] | undefined): boolean {
@@ -42,7 +38,7 @@ function hasToolCondition(statement: PolicyStatement): boolean {
   return tool !== undefined && (hasValues(tool.names) || hasValues(tool.riskLevels));
 }
 
-function usedConditionGroups(statement: PolicyStatement): Array<(typeof conditionGroups)[number]> {
+function usedConditionGroups(statement: PolicyStatement): PolicyConditionGroup[] {
   return [
     ...(hasResourceCondition(statement) ? (['resource'] as const) : []),
     ...(hasPaymentCondition(statement) ? (['payment'] as const) : []),
@@ -52,6 +48,7 @@ function usedConditionGroups(statement: PolicyStatement): Array<(typeof conditio
 
 export function validatePolicyStatements(input: {
   readonly knownActions: ReadonlySet<string>;
+  readonly actionConditionGroups: ReadonlyMap<string, readonly PolicyConditionGroup[]>;
   readonly statements: readonly PolicyStatement[];
 }): PolicyValidationResult {
   const errors: string[] = [];
@@ -87,7 +84,7 @@ export function validatePolicyStatements(input: {
     const usedGroups = usedConditionGroups(statement);
     for (const group of usedGroups) {
       for (const action of statement.actions) {
-        if (!supportedConditionGroups(action).has(group)) {
+        if (!supportedConditionGroups(action, input.actionConditionGroups).has(group)) {
           errors.push(`Statement "${statement.id}" action "${action}" does not support ${group} conditions.`);
         }
       }

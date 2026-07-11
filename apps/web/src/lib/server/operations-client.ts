@@ -5,6 +5,7 @@ import type {
   AgentAllowedActionRecord,
   BlockedOperationRecord,
   OperationalAction,
+  RateLimitUtilizationRecord,
   ToolCatalogRecord,
   ToolRiskLevel,
 } from '../operations-types';
@@ -72,6 +73,30 @@ export async function importTools(
   return body.tools;
 }
 
+export async function updateTool(
+  orgId: string,
+  toolId: string,
+  input: {
+    readonly display_name?: string | undefined;
+    readonly category?: string | undefined;
+    readonly risk_level?: ToolRiskLevel | undefined;
+    readonly description?: string | undefined;
+  },
+): Promise<ToolCatalogRecord> {
+  const body = await apiFetch<{ readonly tool: ToolCatalogRecord }>(`/v1/orgs/${orgId}/tools/${toolId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return body.tool;
+}
+
+export async function archiveTool(orgId: string, toolId: string): Promise<ToolCatalogRecord> {
+  const body = await apiFetch<{ readonly tool: ToolCatalogRecord }>(`/v1/orgs/${orgId}/tools/${toolId}/archive`, {
+    method: 'POST',
+  });
+  return body.tool;
+}
+
 export async function listBlockedOperations(
   orgId: string,
   input: { readonly agentId?: string | undefined; readonly limit?: number | undefined } = {},
@@ -99,6 +124,41 @@ export async function createRateLimit(
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export async function listRateLimits(orgId: string): Promise<RateLimitUtilizationRecord[]> {
+  const body = await apiFetch<{ readonly rate_limits: RateLimitUtilizationRecord[] }>(
+    `/v1/orgs/${orgId}/operations/rate-limits`,
+  );
+  return body.rate_limits;
+}
+
+export async function updateRateLimit(
+  orgId: string,
+  rateLimitId: string,
+  input: {
+    readonly bucket?: string | undefined;
+    readonly limit?: number | undefined;
+    readonly window_seconds?: number | undefined;
+    readonly status?: 'active' | 'disabled' | undefined;
+  },
+): Promise<RateLimitUtilizationRecord> {
+  const body = await apiFetch<{ readonly rate_limit: RateLimitUtilizationRecord }>(
+    `/v1/orgs/${orgId}/operations/rate-limits/${rateLimitId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  );
+  return body.rate_limit;
+}
+
+export async function disableRateLimit(orgId: string, rateLimitId: string): Promise<RateLimitUtilizationRecord> {
+  const body = await apiFetch<{ readonly rate_limit: RateLimitUtilizationRecord }>(
+    `/v1/orgs/${orgId}/operations/rate-limits/${rateLimitId}/disable`,
+    { method: 'POST' },
+  );
+  return body.rate_limit;
 }
 
 export async function listAgentAllowedActions(

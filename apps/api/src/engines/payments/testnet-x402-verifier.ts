@@ -3,7 +3,7 @@ import { BatchFacilitatorClient } from '@circle-fin/x402-batching/server';
 import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from '@x402/core/http';
 import type { PaymentRequirements } from '@x402/core/types';
 import { createPublicClient, getAddress, http, parseEventLogs } from 'viem';
-import { arbitrumSepolia, baseSepolia } from 'viem/chains';
+import { arbitrumSepolia, avalancheFuji, baseSepolia, optimismSepolia, polygonAmoy } from 'viem/chains';
 
 const TESTNET_GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9';
 const TESTNET_X402_PAY_TO = '0x000000000000000000000000000000000000dEaD';
@@ -24,17 +24,27 @@ const TRANSFER_EVENT_ABI = [
 
 type GatewayPaymentPayload = Parameters<BatchFacilitatorClient['verify']>[0];
 type GatewayPaymentRequirements = Parameters<BatchFacilitatorClient['verify']>[1];
-type TestnetVerifierChain = 'base' | 'arbitrum';
+type TestnetVerifierChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche';
 
 type ChainConfig = {
-  readonly chain: typeof baseSepolia | typeof arbitrumSepolia;
+  readonly chain:
+    | typeof baseSepolia
+    | typeof arbitrumSepolia
+    | typeof polygonAmoy
+    | typeof optimismSepolia
+    | typeof avalancheFuji;
   readonly exactDescription: string;
   readonly exactForecast: string;
   readonly fallbackRpcUrl: string;
   readonly gatewayDescription: string;
   readonly gatewayForecast: string;
-  readonly network: 'eip155:84532' | 'eip155:421614';
-  readonly rpcEnv: 'BASE_SEPOLIA_RPC_URL' | 'ARBITRUM_SEPOLIA_RPC_URL';
+  readonly network: 'eip155:84532' | 'eip155:421614' | 'eip155:80002' | 'eip155:11155420' | 'eip155:43113';
+  readonly rpcEnv:
+    | 'BASE_SEPOLIA_RPC_URL'
+    | 'ARBITRUM_SEPOLIA_RPC_URL'
+    | 'POLYGON_AMOY_RPC_URL'
+    | 'OPTIMISM_SEPOLIA_RPC_URL'
+    | 'AVALANCHE_FUJI_RPC_URL';
   readonly usdc: string;
 };
 
@@ -60,6 +70,39 @@ const CHAIN_CONFIGS: Record<TestnetVerifierChain, ChainConfig> = {
     network: 'eip155:84532',
     rpcEnv: 'BASE_SEPOLIA_RPC_URL',
     usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  },
+  polygon: {
+    chain: polygonAmoy,
+    exactDescription: 'Exact Polygon Amoy weather verifier',
+    exactForecast: 'Polygon Amoy test weather feed delivered after verified USDC payment.',
+    fallbackRpcUrl: 'https://rpc-amoy.polygon.technology',
+    gatewayDescription: 'Gateway-backed Polygon Amoy weather verifier',
+    gatewayForecast: 'Gateway-backed Polygon Amoy test weather feed delivered after x402 payment settlement.',
+    network: 'eip155:80002',
+    rpcEnv: 'POLYGON_AMOY_RPC_URL',
+    usdc: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
+  },
+  optimism: {
+    chain: optimismSepolia,
+    exactDescription: 'Exact OP Sepolia weather verifier',
+    exactForecast: 'OP Sepolia test weather feed delivered after verified USDC payment.',
+    fallbackRpcUrl: 'https://sepolia.optimism.io',
+    gatewayDescription: 'Gateway-backed OP Sepolia weather verifier',
+    gatewayForecast: 'Gateway-backed OP Sepolia test weather feed delivered after x402 payment settlement.',
+    network: 'eip155:11155420',
+    rpcEnv: 'OPTIMISM_SEPOLIA_RPC_URL',
+    usdc: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
+  },
+  avalanche: {
+    chain: avalancheFuji,
+    exactDescription: 'Exact Avalanche Fuji weather verifier',
+    exactForecast: 'Avalanche Fuji test weather feed delivered after verified USDC payment.',
+    fallbackRpcUrl: 'https://api.avax-test.network/ext/bc/C/rpc',
+    gatewayDescription: 'Gateway-backed Avalanche Fuji weather verifier',
+    gatewayForecast: 'Gateway-backed Avalanche Fuji test weather feed delivered after x402 payment settlement.',
+    network: 'eip155:43113',
+    rpcEnv: 'AVALANCHE_FUJI_RPC_URL',
+    usdc: '0x5425890298aed601595a70AB815c96711a31Bc65',
   },
 };
 
@@ -209,7 +252,9 @@ async function verifyTransfer(input: {
 
 function chainFromParam(value: string | undefined): TestnetVerifierChain | null {
   if (value === undefined) return 'base';
-  return value === 'base' || value === 'arbitrum' ? value : null;
+  return value === 'base' || value === 'arbitrum' || value === 'polygon' || value === 'optimism' || value === 'avalanche'
+    ? value
+    : null;
 }
 
 async function gatewayHandler(

@@ -1,14 +1,31 @@
+import Link from 'next/link';
 import type {
   ActivityItem,
   AgentActivityFeed,
   AgentDetail,
   ConnectionRecord,
+  TeamRecord,
+  WalletRefRecord,
 } from '@/lib/identity-spine-types';
 import type { AgentAllowedActionRecord, BlockedOperationRecord } from '@/lib/operations-types';
 import type { AgentPolicyAssignment } from '@/lib/policy-types';
 import { formatConnectionHealth, formatStatus } from './format';
 import { ConnectionPanel } from './ConnectionPanel';
 import { AgentLiveActivity } from './AgentLiveActivity';
+import { WalletRefsPanel } from './WalletRefsPanel';
+
+export type AgentDetailTab = 'overview' | 'access' | 'credentials' | 'activity';
+
+const agentDetailTabs: ReadonlyArray<{
+  readonly id: AgentDetailTab;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { id: 'overview', label: 'Overview', description: 'Identity, status, and editable metadata.' },
+  { id: 'access', label: 'Policies & access', description: 'Effective policy bindings and runtime operation controls.' },
+  { id: 'credentials', label: 'Credentials & wallets', description: 'Agent credentials and external wallet references.' },
+  { id: 'activity', label: 'Activity history', description: 'Live runtime events and configuration audit history.' },
+];
 
 function formatAuditLabel(value: string): string {
   return value
@@ -45,10 +62,13 @@ export function AgentDetailShell({
   orgId,
   orgSlug,
   agent,
+  activeTab = 'overview',
   connections,
+  walletRefs = [],
   activity,
   activityFeed,
   activityPollUrl,
+  teams,
   policies = [],
   allowedActions = [],
   blockedOperations = [],
@@ -57,10 +77,13 @@ export function AgentDetailShell({
   readonly orgId: string;
   readonly orgSlug: string;
   readonly agent: AgentDetail;
+  readonly activeTab?: AgentDetailTab | undefined;
   readonly connections: ConnectionRecord[];
+  readonly walletRefs?: WalletRefRecord[] | undefined;
   readonly activity: ActivityItem[];
   readonly activityFeed?: AgentActivityFeed | undefined;
   readonly activityPollUrl?: string | undefined;
+  readonly teams?: readonly TeamRecord[] | undefined;
   readonly policies?: AgentPolicyAssignment[] | undefined;
   readonly allowedActions?: AgentAllowedActionRecord[] | undefined;
   readonly blockedOperations?: BlockedOperationRecord[] | undefined;
@@ -72,8 +95,13 @@ export function AgentDetailShell({
     readonly rotateConnection?: Parameters<typeof ConnectionPanel>[0]['rotateAction'] | undefined;
     readonly testConnection?: Parameters<typeof ConnectionPanel>[0]['testAction'] | undefined;
     readonly revokeConnection?: Parameters<typeof ConnectionPanel>[0]['revokeAction'] | undefined;
+    readonly attachWalletRef?: Parameters<typeof WalletRefsPanel>[0]['attachAction'] | undefined;
+    readonly detachWalletRef?: Parameters<typeof WalletRefsPanel>[0]['detachAction'] | undefined;
+    readonly updateAgent?: ((formData: FormData) => Promise<void>) | undefined;
   } | undefined;
 }) {
+  const detailPath = `/app/${orgSlug}/agents/${agent.id}`;
+  const activeTabMeta = agentDetailTabs.find((tab) => tab.id === activeTab) ?? agentDetailTabs[0]!;
   const feed =
     activityFeed ??
     ({
@@ -115,190 +143,301 @@ export function AgentDetailShell({
         </div>
       </section>
 
-      <section className="section-block" aria-labelledby="overview-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Controls</p>
-            <h2 id="overview-title">Identity details</h2>
-          </div>
-          <div className="button-row">
-            {agent.status === 'active' && actions?.pause !== undefined ? (
-              <form action={actions.pause}>
-                <button className="button-secondary" type="submit">
-                  Pause
-                </button>
-              </form>
-            ) : null}
-            {agent.status === 'paused' && actions?.activate !== undefined ? (
-              <form action={actions.activate}>
-                <button className="button-primary" type="submit">
-                  Activate
-                </button>
-              </form>
-            ) : null}
-            {agent.status !== 'deactivated' && actions?.deactivate !== undefined ? (
-              <form action={actions.deactivate}>
-                <button className="button-danger" type="submit">
-                  Deactivate
-                </button>
-              </form>
-            ) : null}
-          </div>
-        </div>
+      <nav className="agent-detail-tabs" aria-label="Agent detail sections">
+        {agentDetailTabs.map((tab) => {
+          const href = tab.id === 'overview' ? detailPath : `${detailPath}?tab=${tab.id}`;
+          const isActive = tab.id === activeTab;
+          return (
+            <Link aria-current={isActive ? 'page' : undefined} className={isActive ? 'is-active' : ''} href={href} key={tab.id}>
+              <span>{tab.label}</span>
+              <small>{tab.description}</small>
+            </Link>
+          );
+        })}
+      </nav>
 
-        <div className="identity-grid">
-          <div>
-            <span>Agent ID</span>
-            <code>{agent.id}</code>
-          </div>
-          <div>
-            <span>Team</span>
-            <strong>{agent.team.name}</strong>
-          </div>
-        </div>
+      <section className="agent-detail-tab-summary" aria-label="Current agent section">
+        <span>{activeTabMeta.label}</span>
+        <p>{activeTabMeta.description}</p>
       </section>
 
-      <section className="section-block policy-assignment-panel" aria-labelledby="agent-policies-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Effective controls</p>
-            <h2 id="agent-policies-title">Policies</h2>
-          </div>
-          <p>Active policies applied through the workspace, team, agent, or its credentials.</p>
-        </div>
-        {policies.length === 0 ? (
-          <div className="soft-row">
-            <strong>No policies attached.</strong>
-            <span>Bind active policies from Controls to govern this agent.</span>
-          </div>
-        ) : (
-          <ol className="policy-assignment-list">
-            {policies.map((policy) => (
-              <li key={`${policy.id}:${policy.version}:${policy.binding.id}`}>
-                <div className="activity-event-main">
-                  <strong>{policy.name}</strong>
-                  <span>{policy.description || 'Active policy'}</span>
-                </div>
-                <div className="activity-event-meta">
-                  <strong>{formatPolicyScope(policy.binding.scope)}</strong>
-                  <span>{policy.binding.target_label}</span>
-                  <span>v{policy.version}</span>
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+      {activeTab === 'overview' ? (
+        <div className="agent-detail-panel-grid">
+          <section className="section-block" aria-labelledby="overview-title">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Controls</p>
+                <h2 id="overview-title">Identity details</h2>
+              </div>
+              <div className="button-row">
+                {agent.status === 'active' && actions?.pause !== undefined ? (
+                  <form action={actions.pause}>
+                    <button className="button-secondary" type="submit">
+                      Pause
+                    </button>
+                  </form>
+                ) : null}
+                {agent.status === 'paused' && actions?.activate !== undefined ? (
+                  <form action={actions.activate}>
+                    <button className="button-primary" type="submit">
+                      Activate
+                    </button>
+                  </form>
+                ) : null}
+                {agent.status !== 'deactivated' && actions?.deactivate !== undefined ? (
+                  <form action={actions.deactivate}>
+                    <button className="button-danger" type="submit">
+                      Deactivate
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            </div>
 
-      <section className="section-block operational-access-panel" aria-labelledby="operational-access-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Runtime operations</p>
-            <h2 id="operational-access-title">Operational access</h2>
-          </div>
-          <p>Effective operation rules and recent blocks for this agent.</p>
+            <div className="identity-grid">
+              <div>
+                <span>Agent ID</span>
+                <code>{agent.id}</code>
+              </div>
+              <div>
+                <span>Team</span>
+                <strong>{agent.team.name}</strong>
+              </div>
+              <div>
+                <span>Parent</span>
+                <strong>{agent.parent?.name ?? 'None'}</strong>
+              </div>
+              <div>
+                <span>Child agents</span>
+                <strong>{agent.children.length === 0 ? 'None' : String(agent.children.length)}</strong>
+              </div>
+              <div>
+                <span>Description</span>
+                <strong>{agent.description.length > 0 ? agent.description : 'Not set'}</strong>
+              </div>
+              <div>
+                <span>Labels</span>
+                <strong>{agent.labels.length === 0 ? 'None' : agent.labels.join(', ')}</strong>
+              </div>
+              <div>
+                <span>Environment</span>
+                <strong>{agent.default_environment ?? 'Not set'}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="section-block" aria-labelledby="edit-agent-title">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Profile</p>
+                <h2 id="edit-agent-title">Agent settings</h2>
+              </div>
+              <p>Update identity metadata used by policy targeting and operator views.</p>
+            </div>
+            <form action={actions?.updateAgent} className="inline-form wallet-form agent-settings-form">
+              <label>
+                <span>Name</span>
+                <input defaultValue={agent.name} name="name" required />
+              </label>
+              <label>
+                <span>Team</span>
+                <select defaultValue={agent.team.id} name="teamId">
+                  {(teams ?? [agent.team]).map((team) => (
+                    <option key={team.id} value={team.id}>{team.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Description</span>
+                <input defaultValue={agent.description} name="description" />
+              </label>
+              <label>
+                <span>Labels</span>
+                <input defaultValue={agent.labels.join(', ')} name="labels" />
+              </label>
+              <label>
+                <span>Environment</span>
+                <input defaultValue={agent.default_environment ?? ''} name="defaultEnvironment" />
+              </label>
+              <button className="button-secondary" disabled={actions?.updateAgent === undefined} type="submit">
+                Save agent
+              </button>
+            </form>
+          </section>
         </div>
-        <div className="operational-access-grid">
-          <div>
-            <h3>Allowed actions</h3>
-            {allowedActions.length === 0 ? (
+      ) : null}
+
+      {activeTab === 'access' ? (
+        <div className="agent-detail-panel-grid">
+          <section className="section-block policy-assignment-panel" aria-labelledby="agent-policies-title">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Effective controls</p>
+                <h2 id="agent-policies-title">Policies</h2>
+              </div>
+              <p>Active policies applied through the workspace, team, agent, or its credentials.</p>
+            </div>
+            {policies.length === 0 ? (
               <div className="soft-row">
-                <strong>No operational policies.</strong>
-                <span>Bind an active operational policy from Controls to show action-level access here.</span>
+                <strong>No policies attached.</strong>
+                <span>Bind active policies from Controls to govern this agent.</span>
               </div>
             ) : (
-              <ol className="operational-access-list">
-                {allowedActions.map((action) => (
-                  <li key={`${action.action}:${action.label}:${action.policyName}`}>
-                    <div>
-                      <strong>{action.label}</strong>
-                      <span>{formatOperationalAction(action.action)}</span>
+              <ol className="policy-assignment-list">
+                {policies.map((policy) => (
+                  <li key={`${policy.id}:${policy.version}:${policy.binding.id}`}>
+                    <div className="activity-event-main">
+                      <strong>{policy.name}</strong>
+                      <span>{policy.description || 'Active policy'}</span>
                     </div>
-                    <div>
-                      <span className={`ops-state-pill ops-state-${action.decision}`}>
-                        {formatOperationalDecision(action.decision)}
-                      </span>
-                      <span>{action.policyName}</span>
+                    <div className="activity-event-meta">
+                      <strong>{formatPolicyScope(policy.binding.scope)}</strong>
+                      <span>{policy.binding.target_label}</span>
+                      <span>v{policy.version}</span>
                     </div>
                   </li>
                 ))}
               </ol>
             )}
-          </div>
-          <div>
-            <h3>Recent blocks</h3>
-            {blockedOperations.length === 0 ? (
+          </section>
+
+          <section className="section-block operational-access-panel" aria-labelledby="operational-access-title">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Runtime operations</p>
+                <h2 id="operational-access-title">Operational access</h2>
+              </div>
+              <p>Effective operation rules and recent blocks for this agent.</p>
+            </div>
+            <div className="agent-access-crosslink">
+              <div>
+                <strong>Payment access lives in Treasury</strong>
+                <span>Budgets, allowed rails, and approval thresholds are managed from the Agent Access treasury view.</span>
+              </div>
+              <Link className="button-secondary" href={`/app/${orgSlug}/payments/agent-access`}>
+                Open Treasury
+              </Link>
+            </div>
+            <div className="operational-access-grid">
+              <div>
+                <h3>Allowed actions</h3>
+                {allowedActions.length === 0 ? (
+                  <div className="soft-row">
+                    <strong>No operational policies.</strong>
+                    <span>Bind an active operational policy from Controls to show action-level access here.</span>
+                  </div>
+                ) : (
+                  <ol className="operational-access-list">
+                    {allowedActions.map((action) => (
+                      <li key={`${action.action}:${action.label}:${action.policyName}`}>
+                        <div>
+                          <strong>{action.label}</strong>
+                          <span>{formatOperationalAction(action.action)}</span>
+                        </div>
+                        <div>
+                          <span className={`ops-state-pill ops-state-${action.decision}`}>
+                            {formatOperationalDecision(action.decision)}
+                          </span>
+                          <span>{action.policyName}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+              <div>
+                <h3>Recent blocks</h3>
+                {blockedOperations.length === 0 ? (
+                  <div className="soft-row">
+                    <strong>No blocked operations.</strong>
+                    <span>Denied runtime checks will appear here after the agent calls agentOps.</span>
+                  </div>
+                ) : (
+                  <ol className="operational-access-list">
+                    {blockedOperations.map((operation) => (
+                      <li key={operation.id}>
+                        <div>
+                          <strong>{blockedOperationLabel(operation)}</strong>
+                          <span>{formatOperationalAction(operation.action)}</span>
+                        </div>
+                        <div>
+                          <span className={`ops-state-pill ops-state-${operation.decision}`}>
+                            {formatOperationalDecision(operation.decision)}
+                          </span>
+                          <span>{operation.reasonCode}</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {activeTab === 'credentials' ? (
+        <div className="agent-detail-panel-grid">
+          <ConnectionPanel
+            agentId={agent.id}
+            connections={connections}
+            createAction={actions?.createConnection}
+            orgId={orgId}
+            orgSlug={orgSlug}
+            revokeAction={actions?.revokeConnection}
+            rotateAction={actions?.rotateConnection}
+            testAction={actions?.testConnection}
+          />
+
+          <WalletRefsPanel
+            agentId={agent.id}
+            attachAction={actions?.attachWalletRef}
+            detachAction={actions?.detachWalletRef}
+            orgId={orgId}
+            orgSlug={orgSlug}
+            walletRefs={walletRefs}
+          />
+        </div>
+      ) : null}
+
+      {activeTab === 'activity' ? (
+        <div className="agent-detail-panel-grid">
+          <AgentLiveActivity initialFeed={feed} pollUrl={activityPollUrl} />
+
+          <section className="section-block" aria-labelledby="activity-title">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Audit ledger</p>
+                <h2 id="activity-title">Configuration history</h2>
+              </div>
+              <p>Agent setup and credential changes from the canonical audit event stream.</p>
+            </div>
+            {activity.length === 0 ? (
               <div className="soft-row">
-                <strong>No blocked operations.</strong>
-                <span>Denied runtime checks will appear here after the agent calls agentOps.</span>
+                <strong>No configuration events yet.</strong>
+                <span>New identity and credential changes will appear here.</span>
               </div>
             ) : (
-              <ol className="operational-access-list">
-                {blockedOperations.map((operation) => (
-                  <li key={operation.id}>
-                    <div>
-                      <strong>{blockedOperationLabel(operation)}</strong>
-                      <span>{formatOperationalAction(operation.action)}</span>
+              <ol className="activity-list">
+                {activity.map((item) => (
+                  <li key={item.id}>
+                    <div className="activity-event-main">
+                      <strong>{item.summary}</strong>
+                      {item.subject !== null ? <span className="activity-event-subject">{item.subject}</span> : null}
+                      <span>{item.description ?? 'Recorded configuration change'}</span>
                     </div>
-                    <div>
-                      <span className={`ops-state-pill ops-state-${operation.decision}`}>
-                        {formatOperationalDecision(operation.decision)}
-                      </span>
-                      <span>{operation.reasonCode}</span>
+                    <div className="activity-event-meta">
+                      <span>{formatAuditLabel(item.eventDomain)}</span>
+                      <strong>{formatStatus(item.outcome)}</strong>
+                      <time dateTime={item.recordedAt}>{new Date(item.recordedAt).toLocaleString()}</time>
                     </div>
                   </li>
                 ))}
               </ol>
             )}
-          </div>
+          </section>
         </div>
-      </section>
-
-      <ConnectionPanel
-        agentId={agent.id}
-        connections={connections}
-        createAction={actions?.createConnection}
-        orgId={orgId}
-        orgSlug={orgSlug}
-        revokeAction={actions?.revokeConnection}
-        rotateAction={actions?.rotateConnection}
-        testAction={actions?.testConnection}
-      />
-
-      <AgentLiveActivity initialFeed={feed} pollUrl={activityPollUrl} />
-
-      <section className="section-block" aria-labelledby="activity-title">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Audit ledger</p>
-            <h2 id="activity-title">Configuration history</h2>
-          </div>
-          <p>Agent setup and credential changes from the canonical audit event stream.</p>
-        </div>
-        {activity.length === 0 ? (
-          <div className="soft-row">
-            <strong>No configuration events yet.</strong>
-            <span>New identity and credential changes will appear here.</span>
-          </div>
-        ) : (
-          <ol className="activity-list">
-            {activity.map((item) => (
-              <li key={item.id}>
-                <div className="activity-event-main">
-                  <strong>{item.summary}</strong>
-                  {item.subject !== null ? <span className="activity-event-subject">{item.subject}</span> : null}
-                  <span>{item.description ?? 'Recorded configuration change'}</span>
-                </div>
-                <div className="activity-event-meta">
-                  <span>{formatAuditLabel(item.eventDomain)}</span>
-                  <strong>{formatStatus(item.outcome)}</strong>
-                  <time dateTime={item.recordedAt}>{new Date(item.recordedAt).toLocaleString()}</time>
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+      ) : null}
     </div>
   );
 }

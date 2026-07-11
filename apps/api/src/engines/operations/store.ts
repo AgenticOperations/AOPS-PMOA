@@ -19,10 +19,13 @@ import type {
   OperationRecordInput,
   OperationRecordResult,
   RateLimitRecord,
+  RateLimitUtilizationRecord,
   RuntimeOperationCheckInput,
   RuntimeOperationRecordInput,
   ToolCatalogRecord,
   ToolRiskLevel,
+  UpdateRateLimitInput,
+  UpdateToolInput,
 } from './types.js';
 
 type Db = pg.Pool | pg.PoolClient;
@@ -79,6 +82,12 @@ type RateLimitRow = {
   readonly window_seconds: number;
   readonly status: RateLimitRecord['status'];
   readonly created_at: Date;
+};
+
+type RateLimitUtilizationRow = RateLimitRow & {
+  readonly current_bucket: string | null;
+  readonly current_count: number | null;
+  readonly current_window_start: Date | null;
 };
 
 type AgentPolicyRow = {
@@ -253,6 +262,17 @@ function rateLimitFromRow(row: RateLimitRow): RateLimitRecord {
     window_seconds: row.window_seconds,
     status: row.status,
     created_at: row.created_at.toISOString(),
+  };
+}
+
+function rateLimitWithUtilizationFromRow(row: RateLimitUtilizationRow): RateLimitUtilizationRecord {
+  return {
+    ...rateLimitFromRow(row),
+    utilization: {
+      current_bucket: row.current_bucket,
+      current_count: row.current_count ?? 0,
+      current_window_start: row.current_window_start === null ? null : row.current_window_start.toISOString(),
+    },
   };
 }
 
@@ -547,6 +567,65 @@ export async function listTools(pool: pg.Pool, orgId: string): Promise<ToolCatal
   return result.rows.map(toolFromRow);
 }
 
+export async function updateTool(
+  pool: pg.Pool,
+  _operator: OperatorContext,
+  orgId: string,
+  toolId: string,
+  input: UpdateToolInput,
+): Promise<ToolCatalogRecord> {
+  const current = await pool.query<ToolCatalogRow>('SELECT * FROM tool_catalog WHERE org_id = $1 AND id = $2', [
+    orgId,
+    toolId,
+  ]);
+  const existing = current.rows[0];
+  if (existing === undefined) throw notFound('Tool was not found.');
+  if (existing.status === 'archived') throw badRequest('tool_archived', 'Archived tools cannot be changed.');
+
+  const updated = await pool.query<ToolCatalogRow>(
+    `UPDATE tool_catalog
+        SET display_name = $3,
+            category = $4,
+            risk_level = $5,
+            description = $6,
+            metadata = $7::jsonb,
+            updated_at = now()
+      WHERE org_id = $1 AND id = $2
+      RETURNING *`,
+    [
+      orgId,
+      toolId,
+      input.display_name?.trim() || existing.display_name,
+      input.category?.trim() || existing.category,
+      input.risk_level ?? existing.risk_level,
+      input.description?.trim() ?? existing.description,
+      JSON.stringify(input.metadata ?? jsonObject(existing.metadata)),
+    ],
+  );
+  const row = updated.rows[0];
+  if (row === undefined) throw new Error('tool_update_failed');
+  return toolFromRow(row);
+}
+
+export async function archiveTool(
+  pool: pg.Pool,
+  _operator: OperatorContext,
+  orgId: string,
+  toolId: string,
+): Promise<ToolCatalogRecord> {
+  const updated = await pool.query<ToolCatalogRow>(
+    `UPDATE tool_catalog
+        SET status = 'archived',
+            updated_at = now()
+      WHERE org_id = $1 AND id = $2
+      RETURNING *`,
+    [orgId, toolId],
+  );
+  const row = updated.rows[0];
+  if (row === undefined) throw notFound('Tool was not found.');
+  return toolFromRow(row);
+}
+
 export async function createRateLimit(
   pool: pg.Pool,
   operator: OperatorContext,
@@ -579,6 +658,74 @@ export async function createRateLimit(
   const row = inserted.rows[0];
   if (row === undefined) throw new Error('operational_rate_limit_create_failed');
   return rateLimitFromRow(row);
+}
+
+export async function listRateLimits(pool: pg.Pool, orgId: string): Promise<RateLimitUtilizationRecord[]> {
+  const result = await pool.query<RateLimitUtilizationRow>(
+    `SELECT rl.*,
+            latest.bucket AS current_bucket,
+            latest.count AS current_count,
+            latest.window_start AS current_window_start
+       FROM operational_rate_limits rl
+       LEFT JOIN LATERAL (
+         SELECT bucket, count, window_start
+           FROM operational_rate_counters
+          WHERE org_id = rl.org_id
+            AND rate_limit_id = rl.id
+          ORDER BY window_start DESC, updated_at DESC
+          LIMIT 1
+       ) latest ON true
+      WHERE rl.org_id = $1
+      ORDER BY rl.status ASC, rl.created_at DESC, rl.id DESC`,
+    [orgId],
+  );
+  return result.rows.map(rateLimitWithUtilizationFromRow);
+}
+
+export async function updateRateLimit(
+  pool: pg.Pool,
+  _operator: OperatorContext,
+  orgId: string,
+  rateLimitId: string,
+  input: UpdateRateLimitInput,
+): Promise<RateLimitRecord> {
+  const current = await pool.query<RateLimitRow>('SELECT * FROM operational_rate_limits WHERE org_id = $1 AND id = $2', [
+    orgId,
+    rateLimitId,
+  ]);
+  const existing = current.rows[0];
+  if (existing === undefined) throw notFound('Rate limit was not found.');
+
+  const updated = await pool.query<RateLimitRow>(
+    `UPDATE operational_rate_limits
+        SET bucket = $3,
+            limit_count = $4,
+            window_seconds = $5,
+            status = $6,
+            updated_at = now()
+      WHERE org_id = $1 AND id = $2
+      RETURNING *`,
+    [
+      orgId,
+      rateLimitId,
+      input.bucket ?? existing.bucket,
+      input.limit ?? existing.limit_count,
+      input.window_seconds ?? existing.window_seconds,
+      input.status ?? existing.status,
+    ],
+  );
+  const row = updated.rows[0];
+  if (row === undefined) throw new Error('operational_rate_limit_update_failed');
+  return rateLimitFromRow(row);
+}
+
+export async function disableRateLimit(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  rateLimitId: string,
+): Promise<RateLimitRecord> {
+  return updateRateLimit(pool, operator, orgId, rateLimitId, { status: 'disabled' });
 }
 
 async function assertTargetExists(

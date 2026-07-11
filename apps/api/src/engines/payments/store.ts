@@ -19,8 +19,12 @@ import type {
   CreateTreasuryInput,
   OrgPaymentModeRecord,
   PaymentChain,
+  PaymentEventRecord,
   PaymentMode,
   PaymentRail,
+  PaymentRailReadinessRecord,
+  PaymentReservationRecord,
+  PaymentRouteObservationRecord,
   PaymentSourceRecord,
   RebalanceRecommendationRecord,
   RuntimeX402Accept,
@@ -44,7 +48,22 @@ type Db = pg.Pool | pg.PoolClient;
 const CIRCLE_GATEWAY_MIN_DEPOSIT_MICROS = 500_000n;
 const EXACT_WALLET_REBALANCE_MIN_MICROS = 50_000n;
 const EXACT_WALLET_REBALANCE_FEE_BUFFER_MICROS = 10_000n;
+const RAIL_VERIFY_EXACT_AMOUNT_MICROS = 10_000n;
+const RAIL_VERIFY_GATEWAY_AMOUNT_MICROS = 1_000n;
+const TESTNET_X402_PROOF_PAY_TO = '0x000000000000000000000000000000000000dEaD';
 const DEFAULT_CIRCLE_PROVIDER_JOB_TIMEOUT_MS = 240_000;
+const PAYMENT_RAILS: readonly PaymentRail[] = [
+  'gateway_base',
+  'gateway_arbitrum',
+  'gateway_polygon',
+  'gateway_optimism',
+  'gateway_avalanche',
+  'exact_base',
+  'exact_arbitrum',
+  'exact_polygon',
+  'exact_optimism',
+  'exact_avalanche',
+];
 
 function circleProviderJobTimeoutMs(): number {
   const configured = Number(process.env.CIRCLE_PROVIDER_JOB_TIMEOUT_MS ?? process.env.CIRCLE_CLI_TIMEOUT_MS ?? '');
@@ -137,6 +156,7 @@ type AgentPaymentAccountRow = {
 
 type PaymentEventRow = {
   readonly id: string;
+  readonly org_id: string;
   readonly decision: 'submitted' | 'settled' | 'failed' | 'simulated';
   readonly provider_mode: 'simulation' | 'test' | 'live';
   readonly rail: PaymentRail;
@@ -144,15 +164,52 @@ type PaymentEventRow = {
   readonly amount_usdc: string;
   readonly asset: string;
   readonly agent_id: string;
-  readonly connection_id: string;
-  readonly source_id: string;
-  readonly reservation_id: string;
+  readonly connection_id: string | null;
+  readonly source_id: string | null;
+  readonly reservation_id: string | null;
   readonly recipient: string;
   readonly network: string;
   readonly resource_url: string | null;
   readonly resource_category: string | null;
+  readonly quote: unknown;
   readonly result: unknown;
+  readonly activity_id: string | null;
   readonly created_at: Date;
+};
+
+type PaymentRouteObservationRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string | null;
+  readonly requested_network: string | null;
+  readonly requested_asset: string | null;
+  readonly requested_rail: string | null;
+  readonly supported_rail: PaymentRail | null;
+  readonly amount_usdc: string | null;
+  readonly outcome: 'accepted' | 'rejected';
+  readonly reason_code: string;
+  readonly resource_url: string | null;
+  readonly resource_category: string | null;
+  readonly observed_at: Date;
+};
+
+type PaymentReservationRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly connection_id: string | null;
+  readonly source_id: string;
+  readonly amount_usdc: string;
+  readonly asset: string;
+  readonly rail: PaymentRail;
+  readonly status: 'reserved' | 'settled' | 'released' | 'failed';
+  readonly reason_code: string;
+  readonly quote_hash: string;
+  readonly quote: unknown;
+  readonly expires_at: Date;
+  readonly created_at: Date;
+  readonly updated_at: Date;
 };
 
 type OrgPaymentModeRow = {
@@ -165,7 +222,9 @@ type OrgPaymentModeRow = {
 type CircleChainCapabilityRow = {
   readonly chain: PaymentChain;
   readonly circle_blockchain: string;
+  readonly exact_settlement_verified: boolean;
   readonly gateway_domain: number;
+  readonly gateway_settlement_verified: boolean;
   readonly gateway_supported: boolean;
   readonly id: string;
   readonly metadata: unknown;
@@ -394,7 +453,9 @@ function capabilityFromRow(row: CircleChainCapabilityRow): CircleChainCapability
   return {
     chain: row.chain,
     circle_blockchain: row.circle_blockchain,
+    exact_settlement_verified: row.exact_settlement_verified,
     gateway_domain: row.gateway_domain,
+    gateway_settlement_verified: row.gateway_settlement_verified,
     gateway_supported: row.gateway_supported,
     id: row.id,
     mode: row.mode,
@@ -703,6 +764,23 @@ function exactRailForChain(chain: PaymentChain): PaymentRail {
   return normalizeRail(`exact_${chain}`);
 }
 
+function chainFromRail(rail: PaymentRail): PaymentChain {
+  return normalizeChain(rail.replace(/^gateway_/, '').replace(/^exact_/, ''));
+}
+
+function publicApiBaseUrl(): string {
+  return process.env.PUBLIC_API_BASE_URL?.replace(/\/+$/, '') ?? 'http://localhost:8080';
+}
+
+function testnetX402ResourcePath(chain: PaymentChain, kind: 'direct_exact' | 'gateway'): string {
+  if (chain === 'base') return `/v1/testnet/x402/${kind === 'gateway' ? 'gateway-weather' : 'weather'}`;
+  return `/v1/testnet/x402/${chain}/${kind === 'gateway' ? 'gateway-weather' : 'weather'}`;
+}
+
+function testnetX402ResourceUrl(chain: PaymentChain, kind: 'direct_exact' | 'gateway'): string {
+  return `${publicApiBaseUrl()}${testnetX402ResourcePath(chain, kind)}`;
+}
+
 function x402AtomicNetwork(network: string): boolean {
   const normalized = network.trim().toLowerCase();
   return normalized.startsWith('eip155:') || normalized.includes('-sepolia') || normalized.includes('-amoy') || normalized.includes('-fuji');
@@ -915,6 +993,9 @@ async function enforceX402Policy(
 function paymentEventFromRow(row: PaymentEventRow, activity: RuntimeX402PaymentRecord['activity']): RuntimeX402PaymentRecord {
   if (row.decision !== 'submitted') throw new Error('unexpected_payment_event_decision');
   if (row.asset !== 'USDC') throw new Error('unexpected_payment_asset');
+  if (row.connection_id === null || row.source_id === null || row.reservation_id === null) {
+    throw new Error('unexpected_payment_event_missing_runtime_refs');
+  }
   const fulfillment = fulfillmentFromResult(row.result);
   return {
     id: row.id,
@@ -935,6 +1016,70 @@ function paymentEventFromRow(row: PaymentEventRow, activity: RuntimeX402PaymentR
     ...(fulfillment === undefined ? {} : { fulfillment }),
     activity,
     created_at: row.created_at.toISOString(),
+  };
+}
+
+function paymentEventRecordFromRow(row: PaymentEventRow): PaymentEventRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    agent_id: row.agent_id,
+    connection_id: row.connection_id,
+    source_id: row.source_id,
+    reservation_id: row.reservation_id,
+    decision: row.decision,
+    provider_mode: row.provider_mode,
+    rail: row.rail,
+    chain: row.chain,
+    amount_usdc: formatDbUsdc(row.amount_usdc),
+    asset: row.asset,
+    recipient: row.recipient,
+    network: row.network,
+    resource_url: row.resource_url,
+    resource_category: row.resource_category,
+    quote: objectFromJson(row.quote),
+    result: objectFromJson(row.result),
+    activity_id: row.activity_id,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+function paymentRouteObservationFromRow(row: PaymentRouteObservationRow): PaymentRouteObservationRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    agent_id: row.agent_id,
+    connection_id: row.connection_id,
+    requested_network: row.requested_network,
+    requested_asset: row.requested_asset,
+    requested_rail: row.requested_rail,
+    supported_rail: row.supported_rail,
+    amount_usdc: row.amount_usdc === null ? null : formatDbUsdc(row.amount_usdc),
+    outcome: row.outcome,
+    reason_code: row.reason_code,
+    resource_url: row.resource_url,
+    resource_category: row.resource_category,
+    observed_at: row.observed_at.toISOString(),
+  };
+}
+
+function paymentReservationFromRow(row: PaymentReservationRow): PaymentReservationRecord {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    agent_id: row.agent_id,
+    connection_id: row.connection_id,
+    source_id: row.source_id,
+    amount_usdc: formatDbUsdc(row.amount_usdc),
+    asset: row.asset,
+    rail: row.rail,
+    status: row.status,
+    reason_code: row.reason_code,
+    quote_hash: row.quote_hash,
+    quote: objectFromJson(row.quote),
+    expires_at: row.expires_at.toISOString(),
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
   };
 }
 
@@ -1041,6 +1186,9 @@ export async function createPaymentSource(
 ): Promise<PaymentSourceRecord> {
   const chain = normalizeChain(input.chain);
   const rail = normalizeRail(input.rail);
+  if (chainFromRail(rail) !== chain) {
+    throw badRequest('invalid_payment_source', 'Payment source rail must match its chain.');
+  }
   if (railKind(rail) === 'gateway' && input.source_type !== 'gateway') {
     throw badRequest('invalid_payment_source', 'Gateway rail requires a Gateway source.');
   }
@@ -1206,6 +1354,917 @@ export async function listPaymentSources(pool: pg.Pool, orgId: string): Promise<
   return sources.rows.map(sourceFromRow);
 }
 
+export async function listPaymentEvents(pool: pg.Pool, orgId: string, limit = 100): Promise<PaymentEventRecord[]> {
+  const boundedLimit = Math.max(1, Math.min(limit, 250));
+  const result = await pool.query<PaymentEventRow>(
+    `SELECT *
+       FROM payment_events
+      WHERE org_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [orgId, boundedLimit],
+  );
+  return result.rows.map(paymentEventRecordFromRow);
+}
+
+export async function listPaymentRouteObservations(
+  pool: pg.Pool,
+  orgId: string,
+  limit = 100,
+): Promise<PaymentRouteObservationRecord[]> {
+  const boundedLimit = Math.max(1, Math.min(limit, 250));
+  const result = await pool.query<PaymentRouteObservationRow>(
+    `SELECT *
+       FROM payment_route_observations
+      WHERE org_id = $1
+      ORDER BY observed_at DESC
+      LIMIT $2`,
+    [orgId, boundedLimit],
+  );
+  return result.rows.map(paymentRouteObservationFromRow);
+}
+
+export async function listPaymentReservations(
+  pool: pg.Pool,
+  orgId: string,
+  limit = 100,
+): Promise<PaymentReservationRecord[]> {
+  const boundedLimit = Math.max(1, Math.min(limit, 250));
+  const result = await pool.query<PaymentReservationRow>(
+    `SELECT *
+       FROM payment_reservations
+      WHERE org_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [orgId, boundedLimit],
+  );
+  return result.rows.map(paymentReservationFromRow);
+}
+
+export async function listPaymentRailReadiness(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<PaymentRailReadinessRecord[]> {
+  const mode = (await getOrgPaymentMode(pool, orgId)).mode;
+  const capabilities = await listCircleChainCapabilities(pool, mode);
+  const capabilityByChain = new Map(capabilities.map((capability) => [capability.chain, capability]));
+
+  const observations = await pool.query<{ readonly rail: PaymentRail; readonly observed_at: Date }>(
+    `SELECT DISTINCT ON (supported_rail) supported_rail AS rail, observed_at
+       FROM payment_route_observations
+      WHERE org_id = $1
+        AND supported_rail IS NOT NULL
+      ORDER BY supported_rail, observed_at DESC`,
+    [orgId],
+  );
+  const lastObservedByRail = new Map(observations.rows.map((row) => [row.rail, row.observed_at.toISOString()]));
+
+  const payments = await pool.query<{ readonly rail: PaymentRail; readonly created_at: Date }>(
+    `SELECT DISTINCT ON (rail) rail, created_at
+       FROM payment_events
+      WHERE org_id = $1
+      ORDER BY rail, created_at DESC`,
+    [orgId],
+  );
+  const lastPaymentByRail = new Map(payments.rows.map((row) => [row.rail, row.created_at.toISOString()]));
+
+  const proofJobs = await pool.query<{
+    readonly rail: PaymentRail;
+    readonly status: CircleProviderJobRecord['status'];
+    readonly updated_at: Date;
+  }>(
+    `SELECT DISTINCT ON (metadata ->> 'rail')
+            metadata ->> 'rail' AS rail,
+            status,
+            updated_at
+       FROM circle_provider_jobs
+      WHERE org_id = $1
+        AND mode = $2
+        AND job_type = 'rail.verify'
+        AND metadata ->> 'rail' IS NOT NULL
+      ORDER BY metadata ->> 'rail', updated_at DESC`,
+    [orgId, mode],
+  );
+  const lastProofByRail = new Map(proofJobs.rows.map((row) => [
+    row.rail,
+    {
+      status: row.status,
+      updated_at: row.updated_at.toISOString(),
+    },
+  ]));
+
+  return PAYMENT_RAILS.map((rail) => {
+    const chain = chainFromRail(rail);
+    const capability = capabilityByChain.get(chain);
+    const isGateway = rail.startsWith('gateway_');
+    const supported = capability === undefined
+      ? false
+      : isGateway
+        ? capability.gateway_supported && capability.nanopayments_supported
+        : capability.wallet_supported;
+    const settlementVerified = capability === undefined
+      ? false
+      : isGateway
+        ? capability.gateway_settlement_verified
+        : capability.exact_settlement_verified;
+    const status: PaymentRailReadinessRecord['status'] = !supported ? 'unsupported' : settlementVerified ? 'ready' : 'unverified';
+    const reason = !supported
+      ? `${rail} is not supported by the configured Circle capability set.`
+      : settlementVerified
+        ? `${rail} has a verified settlement path for ${mode} mode.`
+        : `${rail} liquidity can be prepared, but settlement still needs a successful testnet proof.`;
+
+    return {
+      rail,
+      chain,
+      rail_type: isGateway ? 'gateway' : 'exact',
+      supported,
+      settlement_verified: settlementVerified,
+      status,
+      reason,
+      last_observed_at: lastObservedByRail.get(rail) ?? null,
+      last_payment_at: lastPaymentByRail.get(rail) ?? null,
+      last_proof_at: lastProofByRail.get(rail)?.updated_at ?? null,
+      last_proof_status: lastProofByRail.get(rail)?.status ?? null,
+    };
+  });
+}
+
+async function createRailVerificationGatewayLiquidityJob(
+  db: Db,
+  input: {
+    readonly amountMicros: bigint;
+    readonly chain: PaymentChain;
+    readonly mode: PaymentMode;
+    readonly operator: OperatorContext;
+    readonly orgId: string;
+    readonly provider: CircleTreasuryProvider;
+    readonly rail: PaymentRail;
+    readonly resourceUrl: string;
+  },
+): Promise<CircleProviderJobRecord> {
+  if (input.mode === 'live' && process.env.CIRCLE_LIVE_REBALANCE_ENABLED !== 'true') {
+    throw conflict('unsupported_gasless_payment_route', 'Live liquidity preparation is disabled until explicitly enabled.');
+  }
+
+  const prepMicros = maxMicros(input.amountMicros, CIRCLE_GATEWAY_MIN_DEPOSIT_MICROS);
+  const balances = await listCircleBalances(db, input.orgId, input.provider);
+  const destinationBalance = balances.find((balance) => balance.chain === input.chain);
+  const destinationWalletMicros = destinationBalance === undefined ? 0n : walletUsdcMicros(destinationBalance);
+  const sourceChain =
+    destinationWalletMicros >= prepMicros
+      ? input.chain
+      : sourceChainForRebalance(balances, input.chain, prepMicros);
+
+  if (sourceChain === null) {
+    throw conflict(
+      'unsupported_gasless_payment_route',
+      `No gasless treasury route has enough USDC to prepare ${input.chain} Gateway liquidity.`,
+    );
+  }
+
+  const strategy =
+    sourceChain === input.chain
+      ? 'wallet_to_gateway'
+      : 'wallet_rebalance_then_gateway_deposit';
+  const jobId = prefixedId('cjob');
+  const inserted = await db.query<CircleProviderJobRow>(
+    `INSERT INTO circle_provider_jobs (
+       id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by
+     )
+     VALUES ($1, $2, $3, 'liquidity.prepare', $4, 'queued', $5::numeric, $6::jsonb, $7)
+     RETURNING *`,
+    [
+      jobId,
+      input.orgId,
+      input.mode,
+      input.chain,
+      formatUsdc(prepMicros),
+      JSON.stringify({
+        destination_bucket: `gateway:${input.chain}`,
+        destination_chain: input.chain,
+        gasless_verified: true,
+        payment_amount_usdc: formatUsdc(input.amountMicros),
+        rail: input.rail,
+        reason_code: 'rail_verify_gateway_bucket_below_request',
+        resource_category: 'rail-verification',
+        resource_url: input.resourceUrl,
+        retry_after_seconds: LIQUIDITY_PREP_RETRY_AFTER_SECONDS,
+        bridge_idempotency_key: jobUuid(jobId),
+        source_bucket: `wallet:${sourceChain}`,
+        source_chain: sourceChain,
+        strategy,
+        trigger: 'rail.verify',
+      }),
+      input.operator.actorId,
+    ],
+  );
+  const row = inserted.rows[0];
+  if (row === undefined) throw new Error('rail_verify_liquidity_job_insert_failed');
+
+  await recordActivity(db, {
+    orgId: input.orgId,
+    category: 'treasury',
+    action: 'liquidity.prepare.queued',
+    outcome: 'pending',
+    summary: `Preparing ${formatUsdc(prepMicros)} USDC for ${input.rail} proof`,
+    payload: {
+      amount_usdc: formatUsdc(prepMicros),
+      chain: input.chain,
+      destination_bucket: `gateway:${input.chain}`,
+      job_id: jobId,
+      rail: input.rail,
+      source_bucket: `wallet:${sourceChain}`,
+      strategy,
+      trigger: 'rail.verify',
+    },
+  });
+
+  return providerJobFromRow(row);
+}
+
+async function createRailVerificationExactLiquidityJob(
+  db: Db,
+  input: {
+    readonly amountMicros: bigint;
+    readonly chain: PaymentChain;
+    readonly mode: PaymentMode;
+    readonly operator: OperatorContext;
+    readonly orgId: string;
+    readonly provider: CircleTreasuryProvider;
+    readonly rail: PaymentRail;
+    readonly resourceUrl: string;
+  },
+): Promise<CircleProviderJobRecord> {
+  if (input.mode === 'live' && process.env.CIRCLE_LIVE_REBALANCE_ENABLED !== 'true') {
+    throw conflict('unsupported_gasless_payment_route', 'Live exact-wallet liquidity preparation is disabled until explicitly enabled.');
+  }
+
+  const health = input.provider.health(input.mode);
+  if (!health.configured) {
+    throw conflict(
+      'circle_provider_not_configured',
+      `Circle ${input.mode} provider is missing ${health.missing.join(', ')}.`,
+    );
+  }
+
+  const prepMicros = maxMicros(input.amountMicros, EXACT_WALLET_REBALANCE_MIN_MICROS);
+  const balances = await listCircleBalances(db, input.orgId, input.provider);
+  const sourceChain = sourceChainForRebalance(balances, input.chain, prepMicros);
+  if (sourceChain === null) {
+    throw conflict(
+      'unsupported_gasless_payment_route',
+      `No gasless treasury route has enough USDC to prepare ${input.chain} exact-wallet liquidity.`,
+    );
+  }
+
+  const jobId = prefixedId('cjob');
+  const inserted = await db.query<CircleProviderJobRow>(
+    `INSERT INTO circle_provider_jobs (
+       id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by
+     )
+     VALUES ($1, $2, $3, 'liquidity.prepare', $4, 'queued', $5::numeric, $6::jsonb, $7)
+     RETURNING *`,
+    [
+      jobId,
+      input.orgId,
+      input.mode,
+      input.chain,
+      formatUsdc(prepMicros),
+      JSON.stringify({
+        destination_bucket: `wallet:${input.chain}`,
+        destination_chain: input.chain,
+        gasless_verified: true,
+        payment_amount_usdc: formatUsdc(input.amountMicros),
+        rail: input.rail,
+        reason_code: 'rail_verify_exact_wallet_below_request',
+        resource_category: 'rail-verification',
+        resource_url: input.resourceUrl,
+        retry_after_seconds: LIQUIDITY_PREP_RETRY_AFTER_SECONDS,
+        bridge_idempotency_key: jobUuid(jobId),
+        source_bucket: `wallet:${sourceChain}`,
+        source_chain: sourceChain,
+        strategy: 'wallet_rebalance',
+        trigger: 'rail.verify',
+      }),
+      input.operator.actorId,
+    ],
+  );
+  const row = inserted.rows[0];
+  if (row === undefined) throw new Error('rail_verify_exact_liquidity_job_insert_failed');
+
+  await recordActivity(db, {
+    orgId: input.orgId,
+    category: 'treasury',
+    action: 'liquidity.prepare.queued',
+    outcome: 'pending',
+    summary: `Preparing ${formatUsdc(prepMicros)} USDC for ${input.rail} proof`,
+    payload: {
+      amount_usdc: formatUsdc(prepMicros),
+      chain: input.chain,
+      destination_bucket: `wallet:${input.chain}`,
+      job_id: jobId,
+      rail: input.rail,
+      source_bucket: `wallet:${sourceChain}`,
+      strategy: 'wallet_rebalance',
+      trigger: 'rail.verify',
+    },
+  });
+
+  return providerJobFromRow(row);
+}
+
+async function ensureGatewayRailVerificationLiquidity(
+  pool: pg.Pool,
+  input: {
+    readonly amountMicros: bigint;
+    readonly chain: PaymentChain;
+    readonly mode: PaymentMode;
+    readonly operator: OperatorContext;
+    readonly orgId: string;
+    readonly provider: CircleTreasuryProvider;
+    readonly rail: PaymentRail;
+    readonly resourceUrl: string;
+    readonly source: PaymentSourceRecord;
+  },
+): Promise<Record<string, unknown>> {
+  let observedGatewayUsdc: string | null = null;
+  try {
+    const gatewayBalance = await input.provider.getGatewayBalance({
+      address: input.source.address as string,
+      chain: input.chain,
+      mode: input.mode,
+    });
+    const gatewayMicros = parseUsdcMicros(gatewayBalance.available);
+    observedGatewayUsdc = formatUsdc(gatewayMicros);
+    if (gatewayMicros >= input.amountMicros) {
+      return {
+        liquidity_preparation_status: 'already_sufficient_gateway_balance',
+        observed_gateway_usdc: observedGatewayUsdc,
+      };
+    }
+  } catch {
+    observedGatewayUsdc = null;
+  }
+
+  const liquidityJob = await createRailVerificationGatewayLiquidityJob(pool, {
+    amountMicros: input.amountMicros,
+    chain: input.chain,
+    mode: input.mode,
+    operator: input.operator,
+    orgId: input.orgId,
+    provider: input.provider,
+    rail: input.rail,
+    resourceUrl: input.resourceUrl,
+  });
+  const prepared = await retryLiquidityJob(pool, input.operator, input.orgId, liquidityJob.id, input.provider);
+  if (prepared.status === 'submitted') {
+    return {
+      liquidity_preparation_job_id: prepared.id,
+      liquidity_preparation_provider_ref: prepared.provider_ref,
+      liquidity_preparation_status: 'submitted',
+      observed_gateway_usdc: stringValue(prepared.metadata.observed_gateway_usdc) ?? observedGatewayUsdc,
+    };
+  }
+  if (prepared.status !== 'complete') {
+    const metadata = objectFromJson(prepared.metadata);
+    throw new Error(
+      stringValue(metadata.error_message) ??
+        prepared.error_code ??
+        `Gateway liquidity preparation failed for ${input.rail}.`,
+    );
+  }
+
+  return {
+    liquidity_preparation_job_id: prepared.id,
+    liquidity_preparation_provider_ref: prepared.provider_ref,
+    liquidity_preparation_status: 'complete',
+    observed_gateway_usdc: stringValue(prepared.metadata.observed_gateway_usdc) ?? observedGatewayUsdc,
+  };
+}
+
+async function ensureExactRailVerificationLiquidity(
+  pool: pg.Pool,
+  input: {
+    readonly amountMicros: bigint;
+    readonly chain: PaymentChain;
+    readonly mode: PaymentMode;
+    readonly operator: OperatorContext;
+    readonly orgId: string;
+    readonly provider: CircleTreasuryProvider;
+    readonly rail: PaymentRail;
+    readonly resourceUrl: string;
+  },
+): Promise<Record<string, unknown>> {
+  const balances = await listCircleBalances(pool, input.orgId, input.provider);
+  const destinationBalance = balances.find((balance) => balance.chain === input.chain);
+  const destinationWalletMicros = destinationBalance === undefined ? 0n : walletUsdcMicros(destinationBalance);
+  if (destinationWalletMicros >= input.amountMicros) {
+    return {
+      liquidity_preparation_status: 'already_sufficient_wallet_balance',
+      observed_wallet_usdc: formatUsdc(destinationWalletMicros),
+    };
+  }
+
+  const liquidityJob = await createRailVerificationExactLiquidityJob(pool, {
+    amountMicros: input.amountMicros,
+    chain: input.chain,
+    mode: input.mode,
+    operator: input.operator,
+    orgId: input.orgId,
+    provider: input.provider,
+    rail: input.rail,
+    resourceUrl: input.resourceUrl,
+  });
+  const prepared = await retryLiquidityJob(pool, input.operator, input.orgId, liquidityJob.id, input.provider);
+  if (prepared.status === 'submitted') {
+    return {
+      liquidity_preparation_job_id: prepared.id,
+      liquidity_preparation_provider_ref: prepared.provider_ref,
+      liquidity_preparation_status: 'submitted',
+      observed_wallet_usdc: stringValue(prepared.metadata.observed_wallet_usdc),
+    };
+  }
+  if (prepared.status !== 'complete') {
+    const metadata = objectFromJson(prepared.metadata);
+    throw new Error(
+      stringValue(metadata.error_message) ??
+        prepared.error_code ??
+        `Exact wallet liquidity preparation failed for ${input.rail}.`,
+    );
+  }
+
+  const refreshedBalances = await listCircleBalances(pool, input.orgId, input.provider);
+  const refreshedDestinationBalance = refreshedBalances.find((balance) => balance.chain === input.chain);
+  const refreshedDestinationWalletMicros =
+    refreshedDestinationBalance === undefined ? 0n : walletUsdcMicros(refreshedDestinationBalance);
+  if (refreshedDestinationWalletMicros < input.amountMicros) {
+    return {
+      liquidity_preparation_job_id: prepared.id,
+      liquidity_preparation_provider_ref: prepared.provider_ref,
+      liquidity_preparation_status: 'submitted',
+      observed_wallet_usdc: formatUsdc(refreshedDestinationWalletMicros),
+    };
+  }
+
+  return {
+    liquidity_preparation_job_id: prepared.id,
+    liquidity_preparation_provider_ref: prepared.provider_ref,
+    liquidity_preparation_status: 'complete',
+    observed_wallet_usdc: formatUsdc(refreshedDestinationWalletMicros),
+  };
+}
+
+export async function verifyPaymentRail(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  railInput: string,
+  provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+): Promise<CircleProviderJobRecord> {
+  const rail = normalizeRail(railInput);
+  const chain = chainFromRail(rail);
+  const kind = railKind(rail);
+  const mode = (await getOrgPaymentMode(pool, orgId)).mode;
+  if (mode === 'live' && process.env.CIRCLE_LIVE_RAIL_VERIFICATION_ENABLED !== 'true') {
+    throw conflict('live_rail_verification_disabled', 'Live rail verification is disabled until explicitly enabled.');
+  }
+
+  const health = provider.health(mode);
+  if (!health.configured) {
+    throw conflict(
+      'circle_provider_not_configured',
+      `Circle ${mode} provider is missing ${health.missing.join(', ')}.`,
+    );
+  }
+
+  const capability = await getCircleChainCapability(pool, mode, chain);
+  const availabilityFailure = railVerificationFailure(
+    capability === null
+      ? null
+      : {
+          ...capability,
+          exact_settlement_verified: true,
+          gateway_settlement_verified: true,
+        },
+    {
+      amount: '0.00',
+      amountMicros: 0n,
+      asset: 'USDC',
+      chain,
+      rail,
+      settlementKind: kind,
+      accept: {
+        scheme: 'exact',
+        network: gatewayNetworkForMode(chain, mode),
+      },
+      network: chain,
+      recipient: TESTNET_X402_PROOF_PAY_TO,
+      x402Amount: '0',
+      x402Network: gatewayNetworkForMode(chain, mode),
+      x402Requirements: {
+        amount: '0',
+        asset: gatewayUsdcForMode(chain, mode),
+        extra: {},
+        maxTimeoutSeconds: 604800,
+        network: gatewayNetworkForMode(chain, mode),
+        payTo: TESTNET_X402_PROOF_PAY_TO,
+        scheme: 'exact',
+      },
+    },
+  );
+  if (availabilityFailure !== null) throw conflict(availabilityFailure.code, availabilityFailure.message);
+
+  const source = await activePaymentSource(pool, orgId, rail, chain);
+  if (source.provider === 'simulation') {
+    throw conflict('rail_verification_requires_real_source', 'Rail verification requires a real Circle payment source.');
+  }
+  if (source.address === null || source.external_wallet_id === null) {
+    throw conflict('rail_verification_source_incomplete', 'Rail verification requires a payment source with a wallet address and Circle wallet id.');
+  }
+
+  const amountMicros = kind === 'gateway' ? RAIL_VERIFY_GATEWAY_AMOUNT_MICROS : RAIL_VERIFY_EXACT_AMOUNT_MICROS;
+  const amount = formatUsdc(amountMicros);
+  const resourceUrl = mode === 'test'
+    ? testnetX402ResourceUrl(chain, kind)
+    : `https://agentops.local/rail-verification/${rail}`;
+  const requirements: CircleGatewayX402Requirements = {
+    amount: amountMicros.toString(),
+    asset: gatewayUsdcForMode(chain, mode),
+    extra:
+      kind === 'gateway'
+        ? {
+            name: 'GatewayWalletBatched',
+            verifyingContract: mode === 'test'
+              ? '0x0077777d7EBA4688BDeF3E311b846F25870A19B9'
+              : '0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE',
+            version: '1',
+          }
+        : {
+            name: 'USDC',
+            version: '2',
+          },
+    maxTimeoutSeconds: 604800,
+    network: gatewayNetworkForMode(chain, mode),
+    payTo: TESTNET_X402_PROOF_PAY_TO,
+    scheme: 'exact',
+  };
+
+  const jobId = prefixedId('cjob');
+  const inserted = await pool.query<CircleProviderJobRow>(
+    `INSERT INTO circle_provider_jobs (
+       id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by
+     )
+     VALUES ($1, $2, $3, 'rail.verify', $4, 'queued', $5::numeric, $6::jsonb, $7)
+     RETURNING *`,
+    [
+      jobId,
+      orgId,
+      mode,
+      chain,
+      amount,
+      JSON.stringify({
+        amount_micros: amountMicros.toString(),
+        rail,
+        rail_type: kind === 'gateway' ? 'gateway' : 'exact',
+        resource_url: resourceUrl,
+        source_id: source.id,
+        verification_method: kind === 'gateway' ? 'circle_gateway_x402_settlement' : 'circle_wallet_usdc_transfer_with_local_verifier',
+        wallet_address: source.address,
+        wallet_id: source.external_wallet_id,
+      }),
+      operator.actorId,
+    ],
+  );
+  if (inserted.rows[0] === undefined) throw new Error('rail_verify_job_insert_failed');
+
+  try {
+    await pool.query(
+      `UPDATE circle_provider_jobs
+          SET status = 'submitted',
+              metadata = metadata || jsonb_build_object('provider_operation_started_at', now()),
+              updated_at = now()
+        WHERE id = $1`,
+      [jobId],
+    );
+
+    const liquidityMetadata = kind === 'gateway'
+      ? await ensureGatewayRailVerificationLiquidity(pool, {
+          amountMicros,
+          chain,
+          mode,
+          operator,
+          orgId,
+          provider,
+          rail,
+          resourceUrl,
+          source: sourceFromRow(source),
+        })
+      : await ensureExactRailVerificationLiquidity(pool, {
+          amountMicros,
+          chain,
+          mode,
+          operator,
+          orgId,
+          provider,
+          rail,
+          resourceUrl,
+        });
+    await pool.query(
+      `UPDATE circle_provider_jobs
+          SET metadata = metadata || $2::jsonb,
+              updated_at = now()
+        WHERE id = $1`,
+      [jobId, JSON.stringify(liquidityMetadata)],
+    );
+    if (stringValue(liquidityMetadata.liquidity_preparation_status) === 'submitted') {
+      const submitted = await pool.query<CircleProviderJobRow>(
+        `UPDATE circle_provider_jobs
+            SET status = 'submitted',
+                error_code = NULL,
+                updated_at = now()
+          WHERE id = $1
+          RETURNING *`,
+        [jobId],
+      );
+      const submittedRow = submitted.rows[0];
+      if (submittedRow === undefined) throw new Error('rail_verify_job_submitted_update_missing');
+      return providerJobFromRow(submittedRow);
+    }
+
+    const settlement = await withCircleProviderTimeout(
+      kind === 'gateway'
+        ? provider.settleGatewayX402({
+            mode,
+            requirements,
+            resource: {
+              description: `agentOps ${rail} verification`,
+              mimeType: 'application/json',
+              url: resourceUrl,
+            },
+            walletAddress: source.address,
+            walletId: source.external_wallet_id,
+          })
+        : provider.settleExactX402({
+            mode,
+            requirements,
+            resource: {
+              description: `agentOps ${rail} verification`,
+              method: 'GET',
+              mimeType: 'application/json',
+              url: resourceUrl,
+            },
+            walletAddress: source.address,
+            walletId: source.external_wallet_id,
+          }),
+      'circle_rail_verify_provider_timeout',
+    );
+
+    let fulfillment: RuntimePaymentFulfillment = { status: 'not_requested' };
+    if (settlement.success && kind === 'direct_exact' && mode === 'test') {
+      fulfillment = await fulfillPaidResource({
+        amount: amountMicros.toString(),
+        asset: requirements.asset,
+        method: 'GET',
+        mimeType: 'application/json',
+        network: requirements.network,
+        payer: 'payer' in settlement ? settlement.payer : source.address,
+        rail,
+        recipient: requirements.payTo,
+        transaction: settlement.transaction,
+        url: resourceUrl,
+      });
+    }
+
+    const success = settlement.success && (fulfillment.status === 'not_requested' || fulfillment.status === 'delivered');
+    if (!success) {
+      const message = settlement.success
+        ? fulfillment.errorReason ?? 'rail_verify_fulfillment_failed'
+        : settlement.errorReason ?? 'rail_verify_settlement_failed';
+      const status = circleProviderStatusForResult(false, message);
+      return withTransaction(pool, async (client) => {
+        const failed = await client.query<CircleProviderJobRow>(
+          `UPDATE circle_provider_jobs
+              SET status = $2,
+                  provider_ref = $3,
+                  error_code = $4,
+                  metadata = metadata || $5::jsonb,
+                  updated_at = now()
+            WHERE id = $1
+            RETURNING *`,
+          [
+            jobId,
+            status,
+            settlement.transaction ?? null,
+            circleProviderErrorCode('rail_verify_failed', message),
+            JSON.stringify({
+              error_message: message,
+              fulfillment,
+              provider_mode: settlement.providerMode,
+              settlement_network: settlement.network,
+              settlement_payer: 'payer' in settlement ? settlement.payer ?? null : null,
+              settlement_success: settlement.success,
+              settlement_transaction: settlement.transaction ?? null,
+            }),
+          ],
+        );
+        const failedRow = failed.rows[0];
+        if (failedRow === undefined) throw new Error('rail_verify_job_failed_update_missing');
+
+        await recordActivity(client, {
+          orgId,
+          category: 'treasury',
+          action: 'rail.verify.failed',
+          outcome: 'error',
+          summary: `${rail} verification failed`,
+          payload: {
+            amount_usdc: amount,
+            error_message: message,
+            job_id: jobId,
+            rail,
+            transaction: settlement.transaction ?? null,
+          },
+        });
+
+        await recordAuditEvent(client, {
+          orgId,
+          idempotencyKey: `rail.verify.failed:${jobId}`,
+          eventType: 'rail.verify.failed',
+          actor: { type: 'user', id: operator.actorId },
+          action: 'rail.verify.failed',
+          outcome: 'error',
+          resource: { type: 'circle_provider_job', id: jobId },
+          classification: {
+            domain: 'payment',
+            category: 'financial',
+            severity: 'warning',
+            tags: ['section_9', 'rail_verify', rail, chain],
+          },
+          relations: {},
+          refs: {},
+          source: { section: 'section_9', system: 'payments' },
+          retentionClass: 'payment',
+          payload: {
+            amount_usdc: amount,
+            error_message: message,
+            fulfillment,
+            rail,
+            settlement_transaction: settlement.transaction ?? null,
+          },
+        });
+
+        return providerJobFromRow(failedRow);
+      });
+    }
+
+    return withTransaction(pool, async (client) => {
+      await client.query(
+        `UPDATE circle_chain_capabilities
+            SET exact_settlement_verified = CASE WHEN $3 = 'direct_exact' THEN true ELSE exact_settlement_verified END,
+                gateway_settlement_verified = CASE WHEN $3 = 'gateway' THEN true ELSE gateway_settlement_verified END,
+                metadata = metadata || $4::jsonb
+          WHERE mode = $1
+            AND chain = $2`,
+        [
+          mode,
+          chain,
+          kind,
+          JSON.stringify({
+            [`${kind === 'gateway' ? 'gateway' : 'exact'}_verification`]: `verified by rail proof job ${jobId}`,
+            [`${kind === 'gateway' ? 'gateway' : 'exact'}_verification_at`]: new Date().toISOString(),
+            [`${kind === 'gateway' ? 'gateway' : 'exact'}_verification_job_id`]: jobId,
+            [`${kind === 'gateway' ? 'gateway' : 'exact'}_verification_rail`]: rail,
+          }),
+        ],
+      );
+
+      const completed = await client.query<CircleProviderJobRow>(
+        `UPDATE circle_provider_jobs
+            SET status = 'complete',
+                provider_ref = $2,
+                error_code = NULL,
+                metadata = metadata || $3::jsonb,
+                updated_at = now()
+          WHERE id = $1
+          RETURNING *`,
+        [
+          jobId,
+          settlement.transaction ?? null,
+          JSON.stringify({
+            fulfillment,
+            provider_mode: settlement.providerMode,
+            settlement_network: settlement.network,
+            settlement_payer: 'payer' in settlement ? settlement.payer ?? null : null,
+            settlement_success: true,
+            settlement_transaction: settlement.transaction ?? null,
+            verified_at: new Date().toISOString(),
+          }),
+        ],
+      );
+      const row = completed.rows[0];
+      if (row === undefined) throw new Error('rail_verify_job_complete_update_missing');
+
+      await recordActivity(client, {
+        orgId,
+        category: 'treasury',
+        action: 'rail.verify.complete',
+        outcome: 'success',
+        summary: `${rail} verified on ${chain}`,
+        payload: {
+          amount_usdc: amount,
+          chain,
+          fulfillment,
+          job_id: jobId,
+          rail,
+          transaction: settlement.transaction ?? null,
+        },
+      });
+
+      await recordAuditEvent(client, {
+        orgId,
+        idempotencyKey: `rail.verify.complete:${jobId}`,
+        eventType: 'rail.verify.complete',
+        actor: { type: 'user', id: operator.actorId },
+        action: 'rail.verify.complete',
+        outcome: 'success',
+        resource: { type: 'circle_provider_job', id: jobId },
+        classification: {
+          domain: 'payment',
+          category: 'financial',
+          severity: 'info',
+          tags: ['section_9', 'rail_verify', rail, chain],
+        },
+        relations: {},
+        refs: {},
+        source: { section: 'section_9', system: 'payments' },
+        retentionClass: 'payment',
+        payload: {
+          amount_usdc: amount,
+          fulfillment,
+          rail,
+          settlement_transaction: settlement.transaction ?? null,
+        },
+      });
+
+      return providerJobFromRow(row);
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'rail_verify_failed';
+    const status = circleProviderStatusForResult(false, message);
+    const failed = await pool.query<CircleProviderJobRow>(
+      `UPDATE circle_provider_jobs
+          SET status = $2,
+              error_code = $3,
+              metadata = metadata || $4::jsonb,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [
+        jobId,
+        status,
+        circleProviderErrorCode('rail_verify_failed', message),
+        JSON.stringify({ error_message: message }),
+      ],
+    );
+    const row = failed.rows[0];
+    if (row !== undefined) return providerJobFromRow(row);
+    throw error;
+  }
+}
+
+export async function verifyPaymentRails(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  input: {
+    readonly only_unverified?: boolean | undefined;
+    readonly rails?: readonly string[] | undefined;
+  } = {},
+  provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+): Promise<readonly CircleProviderJobRecord[]> {
+  const requestedRails = input.rails === undefined ? null : new Set(input.rails.map(normalizeRail));
+  const readiness = await listPaymentRailReadiness(pool, orgId);
+  const selectedRails = readiness
+    .filter((rail) => rail.supported)
+    .filter((rail) => requestedRails === null || requestedRails.has(rail.rail))
+    .filter((rail) => input.only_unverified === false || !rail.settlement_verified)
+    .map((rail) => rail.rail);
+
+  if (requestedRails !== null) {
+    const selected = new Set(selectedRails);
+    const missing = [...requestedRails].filter((rail) => !selected.has(rail));
+    if (missing.length > 0 && input.only_unverified === false) {
+      throw conflict('rail_verification_unavailable', `Cannot verify unsupported rails: ${missing.join(', ')}.`);
+    }
+  }
+
+  const jobs: CircleProviderJobRecord[] = [];
+  for (const rail of selectedRails) {
+    jobs.push(await verifyPaymentRail(pool, operator, orgId, rail, provider));
+  }
+  return jobs;
+}
+
 export async function listTreasuries(pool: pg.Pool, orgId: string): Promise<TreasuryRecord[]> {
   const treasuries = await pool.query<TreasuryRow>(
     `SELECT *
@@ -1288,7 +2347,9 @@ export async function listCircleChainCapabilities(
   return capabilitiesForMode(mode).map((capability) => ({
     chain: capability.chain,
     circle_blockchain: capability.circleBlockchain,
+    exact_settlement_verified: true,
     gateway_domain: capability.gatewayDomain,
+    gateway_settlement_verified: capability.chain === 'base',
     gateway_supported: capability.gatewaySupported,
     id: `fallback_${mode}_${capability.chain}`,
     mode,
@@ -1298,6 +2359,42 @@ export async function listCircleChainCapabilities(
     wallet_account_type: 'sca',
     wallet_supported: capability.walletSupported,
   }));
+}
+
+async function getCircleChainCapability(
+  db: Db,
+  mode: PaymentMode,
+  chain: PaymentChain,
+): Promise<CircleChainCapabilityRecord | null> {
+  const result = await db.query<CircleChainCapabilityRow>(
+    `SELECT *
+       FROM circle_chain_capabilities
+      WHERE mode = $1
+        AND chain = $2
+        AND status = 'active'
+      LIMIT 1`,
+    [mode, chain],
+  );
+  const row = result.rows[0];
+  if (row !== undefined) return capabilityFromRow(row);
+
+  const fallback = capabilitiesForMode(mode).find((capability) => capability.chain === chain);
+  if (fallback === undefined) return null;
+  return {
+    chain: fallback.chain,
+    circle_blockchain: fallback.circleBlockchain,
+    exact_settlement_verified: true,
+    gateway_domain: fallback.gatewayDomain,
+    gateway_settlement_verified: fallback.chain === 'base',
+    gateway_supported: fallback.gatewaySupported,
+    id: `fallback_${mode}_${fallback.chain}`,
+    mode,
+    nanopayments_supported: fallback.nanopaymentsSupported,
+    network_label: fallback.networkLabel,
+    status: 'active',
+    wallet_account_type: 'sca',
+    wallet_supported: fallback.walletSupported,
+  };
 }
 
 async function activeWalletSet(db: Db, orgId: string, mode: PaymentMode): Promise<CircleWalletSetRow | null> {
@@ -1684,6 +2781,75 @@ async function expireStaleCircleProviderJobs(db: Db, orgId: string): Promise<voi
         AND updated_at < now() - ($2::text || ' milliseconds')::interval`,
     [orgId, circleProviderJobTimeoutMs()],
   );
+
+  await db.query(
+    `UPDATE circle_provider_jobs
+        SET status = 'failed',
+            error_code = 'circle_provider_job_timeout',
+            metadata = metadata || jsonb_build_object(
+              'error_message', 'circle_provider_job_timeout',
+              'prep_status', 'failed',
+              'timeout_ms', $2::int
+            ),
+            updated_at = now()
+      WHERE org_id = $1
+        AND job_type = 'liquidity.prepare'
+        AND status = 'queued'
+        AND updated_at < now() - ($2::text || ' milliseconds')::interval`,
+    [orgId, circleProviderJobTimeoutMs()],
+  );
+}
+
+async function reconcileSatisfiedLiquidityJobsForBalances(
+  db: Db,
+  orgId: string,
+  balances: readonly CircleChainBalanceRecord[],
+): Promise<void> {
+  const openJobs = await db.query<CircleProviderJobRow>(
+    `SELECT *
+       FROM circle_provider_jobs
+      WHERE org_id = $1
+        AND job_type = 'liquidity.prepare'
+        AND status IN ('queued', 'submitted')
+      ORDER BY created_at ASC
+      LIMIT 50`,
+    [orgId],
+  );
+
+  for (const row of openJobs.rows) {
+    if (row.amount_usdc === null || row.chain === null) continue;
+    const metadata = objectFromJson(row.metadata);
+    const strategy = metadataString(metadata, 'strategy');
+    const destinationChain = normalizeChain(metadataString(metadata, 'destination_chain') ?? row.chain);
+    const destinationBalance = balances.find((balance) => balance.chain === destinationChain);
+    if (destinationBalance === undefined) continue;
+
+    const amountMicros = parseUsdcMicros(formatDbUsdc(row.amount_usdc));
+    const needsGatewayBalance = strategy === 'wallet_to_gateway' || strategy === 'wallet_rebalance_then_gateway_deposit';
+    const observedMicros = needsGatewayBalance
+      ? destinationBalance.gateway === null ? 0n : parseUsdcMicros(destinationBalance.gateway.available)
+      : walletUsdcMicros(destinationBalance);
+    if (observedMicros < amountMicros) continue;
+
+    await db.query(
+      `UPDATE circle_provider_jobs
+          SET status = 'complete',
+              error_code = NULL,
+              metadata = metadata || $2::jsonb,
+              updated_at = now()
+        WHERE id = $1
+          AND status IN ('queued', 'submitted')`,
+      [
+        row.id,
+        JSON.stringify({
+          prep_status: 'complete',
+          reconciled_at: new Date().toISOString(),
+          reconciled_by: 'balance_snapshot',
+          [needsGatewayBalance ? 'observed_gateway_usdc' : 'observed_wallet_usdc']: formatUsdc(observedMicros),
+        }),
+      ],
+    );
+  }
 }
 
 function walletUsdcMicros(balance: CircleChainBalanceRecord): bigint {
@@ -2392,8 +3558,12 @@ export async function listLiquidityJobs(
   pool: pg.Pool,
   orgId: string,
   limit = 20,
+  provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
 ): Promise<CircleProviderJobRecord[]> {
   const boundedLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+  await expireStaleCircleProviderJobs(pool, orgId);
+  const balances = await listCircleBalances(pool, orgId, provider);
+  await reconcileSatisfiedLiquidityJobsForBalances(pool, orgId, balances);
   const result = await pool.query<CircleProviderJobRow>(
     `SELECT *
        FROM circle_provider_jobs
@@ -2435,6 +3605,70 @@ async function failLiquidityJob(
   );
   const row = failed.rows[0];
   if (row === undefined) throw new Error('liquidity_prepare_job_failed_update_missing');
+  return providerJobFromRow(row);
+}
+
+async function submitLiquidityJobAwaitingGatewayBalance(
+  db: Db,
+  input: {
+    readonly amount: string;
+    readonly bridgeStatus: string | null;
+    readonly bridgeTransactionId: string | null;
+    readonly depositTransactionId: string | null;
+    readonly destinationChain: PaymentChain;
+    readonly jobId: string;
+    readonly observedGatewayUsdc: string | null;
+    readonly operator: OperatorContext;
+    readonly orgId: string;
+    readonly sourceChain: PaymentChain;
+    readonly strategy: string;
+  },
+): Promise<CircleProviderJobRecord> {
+  const submitted = await db.query<CircleProviderJobRow>(
+    `UPDATE circle_provider_jobs
+        SET status = 'submitted',
+            provider_ref = $2,
+            error_code = NULL,
+            metadata = metadata || $3::jsonb,
+            updated_at = now()
+      WHERE id = $1
+      RETURNING *`,
+    [
+      input.jobId,
+      input.depositTransactionId ?? input.bridgeTransactionId,
+      JSON.stringify({
+        bridge_status: input.bridgeStatus,
+        bridge_transaction_id: input.bridgeTransactionId,
+        deposit_transaction_id: input.depositTransactionId,
+        observed_gateway_usdc: input.observedGatewayUsdc,
+        prep_status: 'awaiting_gateway_balance',
+        retry_after_seconds: LIQUIDITY_PREP_RETRY_AFTER_SECONDS,
+      }),
+    ],
+  );
+  const row = submitted.rows[0];
+  if (row === undefined) throw new Error('liquidity_prepare_job_submitted_update_missing');
+
+  await recordActivity(db, {
+    orgId: input.orgId,
+    category: 'treasury',
+    action: 'liquidity.prepare.submitted',
+    outcome: 'pending',
+    summary: `${input.amount} USDC Gateway liquidity is awaiting confirmations on ${input.destinationChain}`,
+    payload: {
+      amount_usdc: input.amount,
+      bridge_status: input.bridgeStatus,
+      bridge_transaction_id: input.bridgeTransactionId,
+      deposit_transaction_id: input.depositTransactionId,
+      destination_chain: input.destinationChain,
+      job_id: input.jobId,
+      observed_gateway_usdc: input.observedGatewayUsdc,
+      source_chain: input.sourceChain,
+      strategy: input.strategy,
+      submitted_by: input.operator.actorId,
+    },
+  });
+
   return providerJobFromRow(row);
 }
 
@@ -2581,16 +3815,18 @@ export async function retryLiquidityJob(
       const gatewayMicros = parseUsdcMicros(gatewayBalance.available);
       observedGatewayUsdc = formatUsdc(gatewayMicros);
       if (gatewayMicros < amountMicros) {
-        return failLiquidityJob(pool, {
-          errorCode: 'gateway_deposit_balance_unverified',
+        return submitLiquidityJobAwaitingGatewayBalance(pool, {
+          amount,
+          bridgeStatus,
+          bridgeTransactionId,
+          depositTransactionId,
+          destinationChain,
           jobId,
-          metadata: {
-            bridge_status: bridgeStatus,
-            bridge_transaction_id: bridgeTransactionId,
-            deposit_transaction_id: depositTransactionId,
-            observed_gateway_usdc: observedGatewayUsdc,
-          },
-          message: `Gateway deposit transaction submitted, but ${destinationChain} Gateway balance is ${formatUsdc(gatewayMicros)} USDC.`,
+          observedGatewayUsdc,
+          operator,
+          orgId,
+          sourceChain,
+          strategy,
         });
       }
     }
@@ -2738,7 +3974,17 @@ async function getTreasuryOverviewForBalances(
     }
   }, 0n);
 
-  const jobs = await listLiquidityJobs(pool, orgId, 1);
+  await expireStaleCircleProviderJobs(pool, orgId);
+  await reconcileSatisfiedLiquidityJobsForBalances(pool, orgId, balances);
+  const jobs = await pool.query<CircleProviderJobRow>(
+    `SELECT *
+       FROM circle_provider_jobs
+      WHERE org_id = $1
+        AND job_type = 'liquidity.prepare'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [orgId],
+  );
   const jobCounts = await pool.query<{
     readonly failed_jobs: string;
     readonly pending_jobs: string;
@@ -2781,7 +4027,7 @@ async function getTreasuryOverviewForBalances(
   return {
     liquidity: {
       failed_jobs: Number(counts?.failed_jobs ?? '0'),
-      last_job: jobs[0] ?? null,
+      last_job: jobs.rows[0] === undefined ? null : providerJobFromRow(jobs.rows[0]),
       pending_jobs: Number(counts?.pending_jobs ?? '0'),
     },
     mode,
@@ -3176,6 +4422,48 @@ function firstAccept(input: RuntimeX402PaymentInput): RuntimeX402Accept | undefi
   return input.accepts[0];
 }
 
+function railVerificationFailure(
+  capability: CircleChainCapabilityRecord | null,
+  quote: RuntimeQuote,
+): { readonly code: string; readonly message: string } | null {
+  if (capability === null) {
+    return {
+      code: 'payment_rail_unavailable',
+      message: `No active Circle capability is configured for ${quote.chain}.`,
+    };
+  }
+
+  if (quote.settlementKind === 'gateway') {
+    if (!capability.gateway_supported || !capability.nanopayments_supported) {
+      return {
+        code: 'payment_rail_unavailable',
+        message: `Gateway nanopayments are not supported for ${quote.chain}.`,
+      };
+    }
+    if (!capability.gateway_settlement_verified) {
+      return {
+        code: 'payment_rail_unverified',
+        message: `${quote.rail} liquidity can be prepared, but x402 settlement is not verified yet.`,
+      };
+    }
+    return null;
+  }
+
+  if (!capability.wallet_supported) {
+    return {
+      code: 'payment_rail_unavailable',
+      message: `Exact wallet payments are not supported for ${quote.chain}.`,
+    };
+  }
+  if (!capability.exact_settlement_verified) {
+    return {
+      code: 'payment_rail_unverified',
+      message: `${quote.rail} settlement is not verified yet.`,
+    };
+  }
+  return null;
+}
+
 export async function payRuntimeX402(
   pool: pg.Pool,
   auth: ConnectionAuthResult,
@@ -3193,7 +4481,7 @@ export async function payRuntimeX402(
     const supportedQuotes = supportedRuntimeQuotes(input, mode);
     const quote = supportedQuotes.find((candidate) => account.allowed_rails.includes(candidate.rail)) ?? null;
     if (supportedQuotes.length === 0) {
-      await recordRouteObservation(client, {
+      await recordRouteObservation(pool, {
         orgId: auth.org_id,
         agentId: auth.agent_id,
         connectionId: auth.connection_id,
@@ -3212,7 +4500,7 @@ export async function payRuntimeX402(
 
     if (quote === null) {
       const requestedQuote = supportedQuotes[0];
-      await recordRouteObservation(client, {
+      await recordRouteObservation(pool, {
         orgId: auth.org_id,
         agentId: auth.agent_id,
         connectionId: auth.connection_id,
@@ -3231,7 +4519,7 @@ export async function payRuntimeX402(
 
     const cap = parseUsdcMicros(account.per_request_cap_usdc);
     if (cap > 0n && quote.amountMicros > cap) {
-      await recordRouteObservation(client, {
+      await recordRouteObservation(pool, {
         orgId: auth.org_id,
         agentId: auth.agent_id,
         connectionId: auth.connection_id,
@@ -3252,7 +4540,7 @@ export async function payRuntimeX402(
     const spent = parseUsdcMicros(account.spent_usdc);
     const reserved = parseUsdcMicros(account.reserved_usdc);
     if (spent + reserved + quote.amountMicros > budget) {
-      await recordRouteObservation(client, {
+      await recordRouteObservation(pool, {
         orgId: auth.org_id,
         agentId: auth.agent_id,
         connectionId: auth.connection_id,
@@ -3273,7 +4561,7 @@ export async function payRuntimeX402(
     if (source.provider === 'simulation') {
       const sourceBalance = parseUsdcMicros(source.simulated_balance_usdc);
       if (sourceBalance < quote.amountMicros) {
-        await recordRouteObservation(client, {
+        await recordRouteObservation(pool, {
           orgId: auth.org_id,
           agentId: auth.agent_id,
           connectionId: auth.connection_id,
@@ -3292,7 +4580,7 @@ export async function payRuntimeX402(
     }
 
     if ((source.provider === 'circle_gateway' || source.provider === 'circle_wallets') && (source.external_wallet_id === null || source.address === null)) {
-      await recordRouteObservation(client, {
+      await recordRouteObservation(pool, {
         orgId: auth.org_id,
         agentId: auth.agent_id,
         connectionId: auth.connection_id,
@@ -3322,6 +4610,26 @@ export async function payRuntimeX402(
 
     const policyGate = await enforceX402Policy(pool, auth, input, quote, resource);
 
+    const railCapability = await getCircleChainCapability(client, mode, quote.chain);
+    const verificationFailure = railVerificationFailure(railCapability, quote);
+    if (verificationFailure !== null && source.provider !== 'simulation') {
+      await recordRouteObservation(pool, {
+        orgId: auth.org_id,
+        agentId: auth.agent_id,
+        connectionId: auth.connection_id,
+        requestedNetwork: quote.network,
+        requestedAsset: quote.asset,
+        requestedRail: quote.rail,
+        supportedRail: quote.rail,
+        amount: quote.amount,
+        outcome: 'rejected',
+        reasonCode: verificationFailure.code,
+        resourceUrl: resource.url,
+        resourceCategory: resource.category,
+      });
+      throw conflict(verificationFailure.code, verificationFailure.message);
+    }
+
     if (quote.settlementKind === 'direct_exact' && source.provider === 'circle_wallets') {
       let availableMicros: bigint;
       try {
@@ -3329,7 +4637,7 @@ export async function payRuntimeX402(
         const chainBalanceRecord = balances.find((balance) => balance.chain === quote.chain);
         availableMicros = chainBalanceRecord === undefined ? 0n : walletUsdcMicros(chainBalanceRecord);
       } catch {
-        await recordRouteObservation(client, {
+        await recordRouteObservation(pool, {
           orgId: auth.org_id,
           agentId: auth.agent_id,
           connectionId: auth.connection_id,
@@ -3347,7 +4655,7 @@ export async function payRuntimeX402(
       }
 
       if (availableMicros < quote.amountMicros) {
-        await recordRouteObservation(client, {
+        await recordRouteObservation(pool, {
           orgId: auth.org_id,
           agentId: auth.agent_id,
           connectionId: auth.connection_id,
@@ -3369,6 +4677,20 @@ export async function payRuntimeX402(
           quote,
           resource,
         });
+        await recordRouteObservation(pool, {
+          orgId: auth.org_id,
+          agentId: auth.agent_id,
+          connectionId: auth.connection_id,
+          requestedNetwork: quote.network,
+          requestedAsset: quote.asset,
+          requestedRail: quote.rail,
+          supportedRail: quote.rail,
+          amount: quote.amount,
+          outcome: 'rejected',
+          reasonCode: 'liquidity_preparing',
+          resourceUrl: resource.url,
+          resourceCategory: resource.category,
+        });
         throw new PaymentLiquidityPreparingError(
           job.id,
           quote.rail,
@@ -3389,7 +4711,7 @@ export async function payRuntimeX402(
         });
         availableMicros = parseUsdcMicros(balance.available);
       } catch {
-        await recordRouteObservation(client, {
+        await recordRouteObservation(pool, {
           orgId: auth.org_id,
           agentId: auth.agent_id,
           connectionId: auth.connection_id,
@@ -3412,6 +4734,20 @@ export async function payRuntimeX402(
           reasonCode: 'gateway_balance_unavailable',
           resource,
         });
+        await recordRouteObservation(pool, {
+          orgId: auth.org_id,
+          agentId: auth.agent_id,
+          connectionId: auth.connection_id,
+          requestedNetwork: quote.network,
+          requestedAsset: quote.asset,
+          requestedRail: quote.rail,
+          supportedRail: quote.rail,
+          amount: quote.amount,
+          outcome: 'rejected',
+          reasonCode: 'liquidity_preparing',
+          resourceUrl: resource.url,
+          resourceCategory: resource.category,
+        });
         throw new PaymentLiquidityPreparingError(
           job.id,
           quote.rail,
@@ -3422,7 +4758,7 @@ export async function payRuntimeX402(
       }
 
       if (availableMicros < quote.amountMicros) {
-        await recordRouteObservation(client, {
+        await recordRouteObservation(pool, {
           orgId: auth.org_id,
           agentId: auth.agent_id,
           connectionId: auth.connection_id,
@@ -3444,6 +4780,20 @@ export async function payRuntimeX402(
           quote,
           reasonCode: 'gateway_bucket_below_request',
           resource,
+        });
+        await recordRouteObservation(pool, {
+          orgId: auth.org_id,
+          agentId: auth.agent_id,
+          connectionId: auth.connection_id,
+          requestedNetwork: quote.network,
+          requestedAsset: quote.asset,
+          requestedRail: quote.rail,
+          supportedRail: quote.rail,
+          amount: quote.amount,
+          outcome: 'rejected',
+          reasonCode: 'liquidity_preparing',
+          resourceUrl: resource.url,
+          resourceCategory: resource.category,
         });
         throw new PaymentLiquidityPreparingError(
           job.id,

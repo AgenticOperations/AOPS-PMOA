@@ -1,15 +1,21 @@
 import type {
   BlockedOperationRecord,
   OperationsAgentOption,
+  RateLimitUtilizationRecord,
   ToolCatalogRecord,
 } from '@/lib/operations-types';
 
 type OperationsWorkbenchProps = {
   readonly agents: readonly OperationsAgentOption[];
+  readonly archiveToolAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly blocked: readonly BlockedOperationRecord[];
+  readonly disableRateLimitAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly tools: readonly ToolCatalogRecord[];
   readonly importAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly rateLimits: readonly RateLimitUtilizationRecord[];
   readonly rateLimitAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly updateRateLimitAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly updateToolAction?: ((formData: FormData) => Promise<void>) | undefined;
 };
 
 function formatAction(value: string): string {
@@ -37,10 +43,15 @@ function operationLabel(operation: BlockedOperationRecord): string {
 
 export function OperationsWorkbench({
   agents,
+  archiveToolAction,
   blocked,
+  disableRateLimitAction,
   tools,
   importAction,
+  rateLimits,
   rateLimitAction,
+  updateRateLimitAction,
+  updateToolAction,
 }: OperationsWorkbenchProps) {
   return (
     <div className="ops-page operations-workbench">
@@ -73,10 +84,10 @@ export function OperationsWorkbench({
                   <span role="columnheader">Tool</span>
                   <span role="columnheader">Category</span>
                   <span role="columnheader">Risk</span>
-                  <span role="columnheader">Status</span>
+                  <span role="columnheader">Action</span>
                 </div>
                 {tools.map((tool) => (
-                  <article className="operations-table-row" key={tool.id} role="row">
+                  <article className="operations-table-row operations-tool-row" key={tool.id} role="row">
                     <div role="cell">
                       <strong>{tool.display_name}</strong>
                       <span>{tool.name}</span>
@@ -84,9 +95,85 @@ export function OperationsWorkbench({
                     </div>
                     <span role="cell">{tool.category}</span>
                     <span role="cell">{formatRisk(tool.risk_level)}</span>
-                    <span className={`ops-state-pill ops-state-${tool.status}`} role="cell">
-                      {tool.status}
-                    </span>
+                    <div className="payments-job-actions" role="cell">
+                      <form action={updateToolAction}>
+                        <input name="toolId" type="hidden" value={tool.id} />
+                        <input aria-label={`Display name for ${tool.name}`} defaultValue={tool.display_name} name="displayName" required />
+                        <input aria-label={`Category for ${tool.name}`} defaultValue={tool.category} name="category" />
+                        <select aria-label={`Risk for ${tool.name}`} defaultValue={tool.risk_level} name="riskLevel">
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="critical">Critical</option>
+                        </select>
+                        <input aria-label={`Description for ${tool.name}`} defaultValue={tool.description} name="description" />
+                        <button className="button-secondary" disabled={tool.status === 'archived'} type="submit">Save</button>
+                      </form>
+                      <form action={archiveToolAction}>
+                        <input name="toolId" type="hidden" value={tool.id} />
+                        <button className="button-secondary" disabled={tool.status === 'archived'} type="submit">Archive</button>
+                      </form>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="ops-surface" aria-labelledby="rate-limits-title">
+            <div className="ops-surface-heading">
+              <div>
+                <h2 id="rate-limits-title">Rate limits</h2>
+                <p>Runtime counters for repeated API/tool checks. Edit or disable limits without touching policy rules.</p>
+              </div>
+              <span className="ops-count-pill">{rateLimits.length} limit{rateLimits.length === 1 ? '' : 's'}</span>
+            </div>
+
+            {rateLimits.length === 0 ? (
+              <div className="ops-empty-state">
+                <h3>No rate limits</h3>
+                <p>Create a limit to throttle repeated agent actions.</p>
+              </div>
+            ) : (
+              <div className="operations-table" role="table" aria-label="Rate limits">
+                <div className="operations-table-head operations-rate-limit-head" role="row">
+                  <span role="columnheader">Target</span>
+                  <span role="columnheader">Action</span>
+                  <span role="columnheader">Usage</span>
+                  <span role="columnheader">Action</span>
+                </div>
+                {rateLimits.map((limit) => (
+                  <article className="operations-table-row operations-rate-limit-row" key={limit.id} role="row">
+                    <div role="cell">
+                      <strong>{agentName(agents, limit.target_id)}</strong>
+                      <span>{limit.bucket} · {limit.window_seconds}s window</span>
+                    </div>
+                    <span role="cell">{formatAction(limit.action)}</span>
+                    <span role="cell">{limit.utilization.current_count}/{limit.limit}</span>
+                    <div className="payments-job-actions" role="cell">
+                      <form action={updateRateLimitAction}>
+                        <input name="rateLimitId" type="hidden" value={limit.id} />
+                        <input aria-label={`Bucket for ${limit.id}`} defaultValue={limit.bucket} name="bucket" />
+                        <input aria-label={`Limit for ${limit.id}`} defaultValue={limit.limit} min="1" name="limit" required type="number" />
+                        <input
+                          aria-label={`Window for ${limit.id}`}
+                          defaultValue={limit.window_seconds}
+                          min="1"
+                          name="windowSeconds"
+                          required
+                          type="number"
+                        />
+                        <select aria-label={`Status for ${limit.id}`} defaultValue={limit.status} name="status">
+                          <option value="active">Active</option>
+                          <option value="disabled">Disabled</option>
+                        </select>
+                        <button className="button-secondary" type="submit">Save</button>
+                      </form>
+                      <form action={disableRateLimitAction}>
+                        <input name="rateLimitId" type="hidden" value={limit.id} />
+                        <button className="button-secondary" disabled={limit.status === 'disabled'} type="submit">Disable</button>
+                      </form>
+                    </div>
                   </article>
                 ))}
               </div>

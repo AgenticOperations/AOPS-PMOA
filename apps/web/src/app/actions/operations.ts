@@ -1,7 +1,14 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { createRateLimit, importTools } from '@/lib/server/operations-client';
+import {
+  archiveTool,
+  createRateLimit,
+  disableRateLimit,
+  importTools,
+  updateRateLimit,
+  updateTool,
+} from '@/lib/server/operations-client';
 import type { OperationalAction, ToolRiskLevel } from '@/lib/operations-types';
 
 function operationsPath(orgSlug: string): string {
@@ -65,5 +72,36 @@ export async function createOperationLimitAction(orgId: string, orgSlug: string,
     limit: numberField(formData, 'limit'),
     window_seconds: numberField(formData, 'windowSeconds'),
   });
+  revalidatePath(operationsPath(orgSlug));
+}
+
+export async function updateToolAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await updateTool(orgId, requiredStringField(formData, 'toolId'), {
+    display_name: requiredStringField(formData, 'displayName'),
+    category: optionalStringField(formData, 'category'),
+    risk_level: riskLevelField(formData),
+    description: optionalStringField(formData, 'description'),
+  });
+  revalidatePath(operationsPath(orgSlug));
+}
+
+export async function archiveToolAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await archiveTool(orgId, requiredStringField(formData, 'toolId'));
+  revalidatePath(operationsPath(orgSlug));
+}
+
+export async function updateOperationLimitAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  const status = stringField(formData, 'status') === 'disabled' ? 'disabled' : 'active';
+  await updateRateLimit(orgId, requiredStringField(formData, 'rateLimitId'), {
+    bucket: optionalStringField(formData, 'bucket'),
+    limit: numberField(formData, 'limit'),
+    window_seconds: numberField(formData, 'windowSeconds'),
+    status,
+  });
+  revalidatePath(operationsPath(orgSlug));
+}
+
+export async function disableOperationLimitAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await disableRateLimit(orgId, requiredStringField(formData, 'rateLimitId'));
   revalidatePath(operationsPath(orgSlug));
 }
