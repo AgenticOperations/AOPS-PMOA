@@ -181,4 +181,92 @@ describe('ControlsLibrary', () => {
     expect(screen.getByLabelText('Payment asset')).toBeInTheDocument();
     expect(screen.queryByLabelText('Tool name')).not.toBeInTheDocument();
   });
+
+  it('surfaces policy bindings and recorded decisions from backend data', () => {
+    render(
+      <ControlsLibrary
+        drafts={[]}
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+        bindTargets={[{ id: 'agt_research', label: 'Research Agent', type: 'agent' }]}
+        policyActions={[
+          {
+            action_id: 'runtime.http.request',
+            binding_target_types: ['org', 'team', 'agent'],
+            category: 'runtime',
+            condition_groups: ['resource'],
+            description: 'Control external API access.',
+            enforceability: 'enforceable',
+            introduced_section: 2,
+            label: 'External HTTP/API request',
+          },
+        ]}
+        policyDecisions={[
+          {
+            id: 'pdec_weather',
+            actor_id: 'agt_research',
+            actor_role: null,
+            actor_type: 'agent',
+            action_id: 'runtime.http.request',
+            audit_event_id: 'aud_weather',
+            context: { resource: { category: 'weather' } },
+            decision: 'deny',
+            enforceability: 'enforceable',
+            explanation: 'A policy denied this request.',
+            matched: [
+              {
+                decision: 'deny',
+                policyId: 'pol_weather',
+                policyName: 'Deny weather API',
+                policyVersion: 1,
+                statementId: 'stmt_weather',
+              },
+            ],
+            reason_code: 'policy_denied',
+            target_id: 'agt_research',
+            target_type: 'agent',
+            created_at: '2026-07-07T10:00:00.000Z',
+          },
+        ]}
+        policies={[
+          {
+            id: 'pol_weather',
+            version: 1,
+            name: 'Deny weather API',
+            status: 'active',
+            category: 'operational',
+            description: 'Blocks weather requests.',
+            bindings_count: 1,
+            binding_target_types: ['org', 'team', 'agent'],
+            statements: [
+              {
+                id: 'stmt_weather',
+                actions: ['runtime.http.request'],
+                decision: 'deny',
+              },
+            ],
+            bindings: [
+              {
+                id: 'pbind_weather',
+                target_id: 'agt_research',
+                target_type: 'agent',
+                status: 'active',
+                created_at: '2026-07-07T10:00:00.000Z',
+              },
+            ],
+            created_at: '2026-07-07T10:00:00.000Z',
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: /Bindings/ }));
+    expect(screen.getByRole('list', { name: 'Policy bindings' })).toBeInTheDocument();
+    expect(screen.getByText('Research Agent · Agent')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Decisions/ }));
+    expect(screen.getByRole('list', { name: 'Policy decision history' })).toBeInTheDocument();
+    expect(screen.getByText('A policy denied this request.')).toBeInTheDocument();
+    expect(screen.getByText('policy_denied')).toBeInTheDocument();
+  });
 });

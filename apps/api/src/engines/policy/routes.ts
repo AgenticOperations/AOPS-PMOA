@@ -15,6 +15,7 @@ import {
   createPolicyDraft,
   discardPolicyDraft,
   listAgentEffectivePolicies,
+  listPolicyDecisions,
   listPolicyActions,
   listPolicyLibrary,
   listPolicySimulations,
@@ -206,6 +207,12 @@ export function registerPolicyRoutes(app: FastifyInstance, deps: RegisterPolicyR
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
     return listPolicySimulations(deps.pool, params.orgId);
+  });
+
+  app.get('/v1/orgs/:orgId/policy-decisions', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return listPolicyDecisions(deps.pool, params.orgId);
   });
 
   app.get('/v1/orgs/:orgId/agents/:agentId/policies', async (request) => {

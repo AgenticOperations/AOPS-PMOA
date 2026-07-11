@@ -98,6 +98,21 @@ type DecisionResponse = {
   };
 };
 
+type PolicyDecisionListResponse = {
+  readonly decisions: Array<{
+    readonly id: string;
+    readonly actor_type: string;
+    readonly action_id: string;
+    readonly target_type: string;
+    readonly target_id: string | null;
+    readonly decision: string;
+    readonly reason_code: string;
+    readonly explanation: string;
+    readonly matched: unknown[];
+    readonly created_at: string;
+  }>;
+};
+
 type PolicyActionCatalogResponse = {
   readonly actions: Array<{
     readonly action_id: string;
@@ -266,6 +281,27 @@ describe('Section 2 policy routes', () => {
       reasonCode: 'policy_denied',
       explanation: 'A policy denied this request.',
     });
+    const decisionId = decisionResponse.json<DecisionResponse>().decision.id;
+
+    const listResponse = await ownerApp.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/policy-decisions`,
+    });
+    expect(listResponse.statusCode, listResponse.body).toBe(200);
+    expect(listResponse.json<PolicyDecisionListResponse>().decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: decisionId,
+          actor_type: 'user',
+          action_id: 'management.connection.issue',
+          target_type: 'agent',
+          target_id: agentId,
+          decision: 'deny',
+          reason_code: 'policy_denied',
+          explanation: 'A policy denied this request.',
+        }),
+      ]),
+    );
 
     const audit = await store.pool.query<{ action: string; event_domain: string; related_policy_id: string | null }>(
       `SELECT action, event_domain, related_policy_id

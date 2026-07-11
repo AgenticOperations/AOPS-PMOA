@@ -85,6 +85,24 @@ export type PolicySimulationRecord = {
   readonly created_at: string;
 };
 
+export type PolicyDecisionRecord = {
+  readonly id: string;
+  readonly actor_type: PolicyDecisionRequest['actor']['type'];
+  readonly actor_id: string | null;
+  readonly actor_role: string | null;
+  readonly action_id: string;
+  readonly target_type: PolicyDecisionRequest['target']['type'];
+  readonly target_id: string | null;
+  readonly context: Record<string, unknown>;
+  readonly decision: PolicyDecisionResult['decision'];
+  readonly enforceability: PolicyDecisionResult['enforceability'];
+  readonly reason_code: string;
+  readonly explanation: string;
+  readonly matched: PolicyDecisionResult['matched'];
+  readonly audit_event_id: string | null;
+  readonly created_at: string;
+};
+
 export type PolicyActionRecord = {
   readonly action_id: string;
   readonly category: string;

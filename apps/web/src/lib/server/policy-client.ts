@@ -5,6 +5,7 @@ import type {
   AgentPolicyLibrary,
   PolicyDraft,
   PolicyActionRecord,
+  PolicyDecisionRecord,
   PolicyDecisionRequest,
   PolicyLibrary,
   PolicyVersion,
@@ -66,6 +67,11 @@ export async function listPolicySimulations(orgId: string): Promise<PolicySimula
     `/v1/orgs/${orgId}/policy-simulations`,
   );
   return body.simulations;
+}
+
+export async function listPolicyDecisions(orgId: string): Promise<PolicyDecisionRecord[]> {
+  const body = await apiFetch<{ readonly decisions: PolicyDecisionRecord[] }>(`/v1/orgs/${orgId}/policy-decisions`);
+  return body.decisions;
 }
 
 export async function simulatePolicyDraft(

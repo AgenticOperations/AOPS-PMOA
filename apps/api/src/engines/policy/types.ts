@@ -91,6 +91,24 @@ export type PolicyDecisionResult = {
   readonly matched: readonly PolicyDecisionMatch[];
 };
 
+export type PolicyDecisionRecord = {
+  readonly id: string;
+  readonly actor_type: PolicyDecisionRequest['actor']['type'];
+  readonly actor_id: string | null;
+  readonly actor_role: OperatorContext['role'] | null;
+  readonly action_id: string;
+  readonly target_type: PolicyTargetType;
+  readonly target_id: string | null;
+  readonly context: Record<string, unknown>;
+  readonly decision: PolicyDecisionValue;
+  readonly enforceability: PolicyEnforceability;
+  readonly reason_code: string;
+  readonly explanation: string;
+  readonly matched: readonly PolicyDecisionMatch[];
+  readonly audit_event_id: string | null;
+  readonly created_at: string;
+};
+
 export type PolicyDraftRecord = {
   readonly id: string;
   readonly org_id: string;

@@ -16,7 +16,12 @@ import {
 } from '../../../actions/policy';
 import { getOrgBySlug, listAgents, listConnections, listTeams } from '@/lib/server/identity-spine-client';
 import { listAuditEvents } from '@/lib/server/audit-client';
-import { listPolicyActions, listPolicyLibrary, listPolicySimulations } from '@/lib/server/policy-client';
+import {
+  listPolicyActions,
+  listPolicyDecisions,
+  listPolicyLibrary,
+  listPolicySimulations,
+} from '@/lib/server/policy-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,10 +38,11 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
     redirect('/auth');
   }
 
-  const [library, policyActions, simulations, teams, agents, auditEvents] = await Promise.all([
+  const [library, policyActions, simulations, policyDecisions, teams, agents, auditEvents] = await Promise.all([
     listPolicyLibrary(org.id),
     listPolicyActions(org.id),
     listPolicySimulations(org.id),
+    listPolicyDecisions(org.id),
     listTeams(org.id),
     listAgents(org.id),
     listAuditEvents(org.id, 30),
@@ -71,6 +77,7 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
         discardDraftAction={discardPolicyDraftAction.bind(null, org.id, org.slug)}
         drafts={library.drafts}
         policyActions={policyActions}
+        policyDecisions={policyDecisions}
         simulations={simulations}
         bindTargets={bindTargets}
         orgId={org.id}

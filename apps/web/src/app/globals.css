@@ -3941,7 +3941,7 @@ html[data-theme="dark"] .agents-roster-row:hover {
   --controls-bezel: color-mix(in oklch, var(--bg-soft) 72%, transparent);
   --controls-hairline: color-mix(in oklch, var(--border-subtle) 74%, transparent);
   --controls-line: color-mix(in oklch, var(--border-subtle) 72%, transparent);
-  --controls-shadow: 0 16px 44px rgb(15 23 42 / 0.05);
+  --controls-shadow: none;
   --controls-radius: 8px;
   display: grid;
   gap: 18px;
@@ -3959,7 +3959,7 @@ html[data-theme="dark"] .controls-console {
   --controls-bezel: color-mix(in oklch, var(--bg-soft) 55%, black 45%);
   --controls-hairline: color-mix(in oklch, var(--border-subtle) 72%, transparent);
   --controls-line: color-mix(in oklch, var(--border-subtle) 72%, transparent);
-  --controls-shadow: 0 28px 80px rgb(0 0 0 / 0.22), 0 1px 0 rgb(255 255 255 / 0.05) inset;
+  --controls-shadow: none;
 }
 
 .controls-page {
@@ -3988,6 +3988,13 @@ html[data-theme="dark"] .controls-console {
   font-weight: 680;
   letter-spacing: 0;
   line-height: 1;
+}
+
+.controls-page-header p {
+  max-width: 62ch;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
 }
 
 .controls-drawer-header h1 {
@@ -4085,7 +4092,7 @@ html[data-theme="dark"] .controls-console {
 .controls-library-shell {
   overflow: hidden;
   border: 1px solid var(--controls-hairline);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--controls-surface);
   box-shadow: var(--controls-shadow);
 }
@@ -4097,12 +4104,92 @@ html[data-theme="dark"] .controls-library-shell {
 
 .controls-library-core {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   align-content: start;
   padding: 18px;
   border-radius: 0;
   background: var(--controls-surface);
   box-shadow: none;
+}
+
+.controls-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.controls-metric-tile {
+  display: grid;
+  gap: 8px;
+  min-height: 86px;
+  padding: 16px;
+  border: 1px solid var(--controls-hairline);
+  border-radius: 12px;
+  background: var(--controls-surface);
+}
+
+.controls-metric-tile span {
+  color: var(--text-muted);
+  font-size: 0.73rem;
+  font-weight: 660;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.controls-metric-tile strong {
+  color: var(--text-primary);
+  font-size: 1.48rem;
+  font-weight: 680;
+  line-height: 1;
+}
+
+.controls-view-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid color-mix(in oklch, var(--border-subtle) 62%, transparent);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--bg-app) 62%, transparent);
+}
+
+.controls-view-tab {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 650;
+  transition:
+    background-color 180ms var(--controls-ease),
+    color 180ms var(--controls-ease),
+    transform 180ms var(--controls-ease);
+}
+
+.controls-view-tab strong {
+  color: inherit;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.controls-view-tab:hover {
+  color: var(--text-primary);
+  transform: translate3d(0, -1px, 0);
+}
+
+.controls-view-tab.active,
+.controls-view-tab[aria-selected="true"] {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--border-subtle) 62%, transparent);
 }
 
 .controls-library-heading {
@@ -4126,6 +4213,13 @@ html[data-theme="dark"] .controls-library-shell {
   letter-spacing: 0;
 }
 
+.controls-library-heading p {
+  max-width: 78ch;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 .controls-form-heading p {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -4147,6 +4241,9 @@ html[data-theme="dark"] .controls-library-shell {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .controls-count-pill,
@@ -4261,6 +4358,11 @@ html[data-theme="dark"] .controls-toolbar select {
   align-items: center;
 }
 
+.controls-policy-table-head-drafts,
+.controls-policy-row-draft {
+  grid-template-columns: minmax(260px, 1.2fr) 112px 132px 128px minmax(220px, 0.85fr);
+}
+
 .controls-policy-table-head {
   min-height: 34px;
   padding: 0 14px;
@@ -4320,6 +4422,21 @@ html[data-theme="dark"] .controls-policy-row:hover {
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+
+.controls-policy-name-button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.controls-policy-name-button:hover .controls-policy-title {
+  color: var(--accent-blue);
 }
 
 .controls-policy-title {
@@ -4386,7 +4503,9 @@ html[data-theme="dark"] .controls-policy-title {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .controls-row-actions form {
@@ -4519,9 +4638,9 @@ html[data-theme="dark"] .controls-policy-title {
   width: min(920px, 100%);
   padding: 22px;
   border: 1px solid color-mix(in oklch, var(--border-subtle) 74%, transparent);
-  border-radius: 10px;
+  border-radius: 12px;
   background: color-mix(in oklch, var(--bg-panel) 94%, var(--bg-soft) 6%);
-  box-shadow: 0 16px 44px rgb(15 23 42 / 0.05);
+  box-shadow: none;
 }
 
 .controls-create-surface {
@@ -4826,6 +4945,16 @@ html[data-theme="dark"] .controls-policy-title {
   border: 1px solid color-mix(in oklch, var(--border-subtle) 62%, transparent);
   border-radius: 8px;
   background: color-mix(in oklch, var(--bg-panel) 88%, var(--bg-app) 12%);
+}
+
+.controls-lifecycle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.controls-lifecycle-actions form {
+  display: contents;
 }
 
 .controls-bind-form {

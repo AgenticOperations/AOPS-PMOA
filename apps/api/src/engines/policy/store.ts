@@ -15,6 +15,7 @@ import type {
   PolicyConditionGroup,
   PolicyDecisionRequest,
   PolicyDecisionResult,
+  PolicyDecisionRecord,
   PolicyDraftRecord,
   PolicySimulationRecord,
   PolicyStatement,
@@ -92,6 +93,24 @@ type PolicySimulationRow = {
   readonly request: unknown;
   readonly result: unknown;
   readonly created_by: string;
+  readonly created_at: Date;
+};
+
+type PolicyDecisionRow = {
+  readonly id: string;
+  readonly actor_type: PolicyDecisionRecord['actor_type'];
+  readonly actor_id: string | null;
+  readonly actor_role: PolicyDecisionRecord['actor_role'];
+  readonly action_id: string;
+  readonly target_type: PolicyDecisionRecord['target_type'];
+  readonly target_id: string | null;
+  readonly context: unknown;
+  readonly decision: PolicyDecisionRecord['decision'];
+  readonly enforceability: PolicyDecisionRecord['enforceability'];
+  readonly reason_code: string;
+  readonly explanation: string;
+  readonly matched: unknown;
+  readonly audit_event_id: string | null;
   readonly created_at: Date;
 };
 
@@ -224,6 +243,26 @@ function simulationFromRow(row: PolicySimulationRow): PolicySimulationRecord {
     request: jsonObject(row.request) as unknown as PolicyDecisionRequest,
     result: jsonObject(row.result) as unknown as PolicyDecisionResult,
     created_by: row.created_by,
+    created_at: row.created_at.toISOString(),
+  };
+}
+
+function decisionFromRow(row: PolicyDecisionRow): PolicyDecisionRecord {
+  return {
+    id: row.id,
+    actor_type: row.actor_type,
+    actor_id: row.actor_id,
+    actor_role: row.actor_role,
+    action_id: row.action_id,
+    target_type: row.target_type,
+    target_id: row.target_id,
+    context: jsonObject(row.context),
+    decision: row.decision,
+    enforceability: row.enforceability,
+    reason_code: row.reason_code,
+    explanation: row.explanation,
+    matched: Array.isArray(row.matched) ? (row.matched as PolicyDecisionRecord['matched']) : [],
+    audit_event_id: row.audit_event_id,
     created_at: row.created_at.toISOString(),
   };
 }
@@ -959,6 +998,23 @@ export async function listPolicySimulations(
     [orgId],
   );
   return { simulations: result.rows.map(simulationFromRow) };
+}
+
+export async function listPolicyDecisions(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<{ readonly decisions: PolicyDecisionRecord[] }> {
+  const result = await pool.query<PolicyDecisionRow>(
+    `SELECT id, actor_type, actor_id, actor_role, action_id, target_type, target_id,
+            context, decision, enforceability, reason_code, explanation, matched,
+            audit_event_id, created_at
+       FROM policy_decisions
+      WHERE org_id = $1
+      ORDER BY created_at DESC
+      LIMIT 100`,
+    [orgId],
+  );
+  return { decisions: result.rows.map(decisionFromRow) };
 }
 
 export async function simulatePolicyDraft(
