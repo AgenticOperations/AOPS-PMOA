@@ -48,6 +48,7 @@ Current product boundary:
 - Payment requests already select an exact-wallet or Gateway x402 rail.
 - A request with insufficient destination liquidity can create a `liquidity.prepare` job.
 - The existing Circle liquidity worker executes and reconciles cross-chain wallet top-ups and Gateway deposits.
+- Request-driven jobs are deficit-aware and deduplicated; retries reuse the open quote-scoped job and recheck the destination target before moving funds.
 - Operators can inspect balances, liquidity jobs, route recommendations, and initiate a manual rebalance.
 - Payment access, budgets, transaction caps, approval thresholds, policies, and supported rails remain enforced before funds move.
 
@@ -55,7 +56,7 @@ Why full automation is deferred:
 
 - The current recommendation model is exact-wallet-only and based on a 24-hour demand window.
 - Request-triggered preparation is reactive; it does not proactively maintain Gateway hot balances before a payment arrives.
-- Autonomous execution needs reservations, in-flight balance accounting, deficit-aware transfer amounts, duplicate-job prevention, cooldowns, and organization-level movement limits before it can safely run unattended.
+- Autonomous execution still needs planner-level reservations, incoming-liquidity accounting, cooldowns, and organization-level movement limits before it can safely run unattended.
 - A fixed cron over the existing recommendations would magnify overfunding and concurrent-job risks rather than create a reliable treasury controller.
 
 Future architecture:
@@ -78,7 +79,7 @@ Admin configuration surface:
 
 Safe rollout:
 
-1. Correct deficit calculations and concurrency handling.
+1. Completed: correct request-driven deficit calculations and duplicate-job handling.
 2. Run the planner in observation-only mode and compare recommendations with actual demand.
 3. Enable capped exact-wallet automation on testnet.
 4. Enable capped Gateway hot-bucket preparation on verified testnet rails.
