@@ -112,6 +112,7 @@ Source: `apps/api/src/engines/payments/store.ts`, migration `0020_liquidity_job_
 - Browser activity showed hash-backed `Runtime Onboarded` evidence for the exact tested connection.
 - Browser rotation immediately made the protected stale Claude MCP config return exactly `MCP_UNAVAILABLE`; the replacement secret authenticated and discovered all eight tools.
 - Browser revocation immediately made the previously valid replacement config return exactly `MCP_UNAVAILABLE` from a second real Claude attempt.
+- All browser-issued credentials on the QA agent were revoked after evidence capture; no live test bearer was left behind.
 - A 390 by 844 mobile emulation reported `documentWidth=390`, `bodyWidth=390`, and no page-level horizontal overflow. Screenshot: `/tmp/aops-mcp-mobile-390.png` (local QA artifact, not committed).
 - Local integration hardening changed the advertised endpoint to the exact IPv4 listener, injects the same value into the web and MCP processes, and permits a private-network preflight only after exact host and origin validation.
 
