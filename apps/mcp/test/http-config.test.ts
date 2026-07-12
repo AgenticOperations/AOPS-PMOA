@@ -7,7 +7,7 @@ describe('readHostedMcpEnv', () => {
       apiBaseUrl: 'http://localhost:8080',
       host: '127.0.0.1',
       port: 8070,
-      publicUrl: 'http://localhost:8070/mcp',
+      publicUrl: 'http://127.0.0.1:8070/mcp',
       allowedHosts: ['127.0.0.1:8070', 'localhost:8070'],
       allowedOrigins: ['http://localhost:3005'],
       timeoutMs: 10_000,

@@ -403,6 +403,13 @@ export function createHostedMcpHandler(deps: HostedMcpHandlerDeps): RequestListe
         response.statusCode = 204;
         response.setHeader('Access-Control-Allow-Headers', 'authorization, content-type');
         response.setHeader('Access-Control-Allow-Methods', 'POST');
+        const privateNetworkRequest = rawHeaderValues(
+          request,
+          'access-control-request-private-network',
+        );
+        if (privateNetworkRequest.length === 1 && privateNetworkRequest[0] === 'true') {
+          response.setHeader('Access-Control-Allow-Private-Network', 'true');
+        }
         response.setHeader('Access-Control-Max-Age', String(PREFLIGHT_MAX_AGE_SECONDS));
         response.end();
         return;

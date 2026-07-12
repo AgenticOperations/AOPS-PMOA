@@ -22,7 +22,7 @@ The current release is intentionally **testnet only**. It does not represent mai
 - **Approvals:** expiring approval requests, one-time approve/deny decisions, and one-time consumption tied to the original decision.
 - **Operations:** managed tool catalog, rate limits, runtime decisions, and auditable control changes.
 - **Treasury:** organization-scoped Circle Agent Wallet sessions, five testnet chain wallets, exact and Gateway x402 rails, payment access and budgets, provider jobs, liquidity preparation, balances, and evidence.
-- **MCP:** an independent stdio MCP server exposing the same runtime policy and approval plane used by direct API clients.
+- **MCP:** a hosted Streamable HTTP service for remote agents plus a supported local stdio adapter, both exposing the same eight-tool runtime contract.
 - **Evidence:** classified, tenant-fenced, hash-chained audit events for operator and runtime actions.
 
 ## Architecture
@@ -37,7 +37,9 @@ Next.js web :3005  --->  Fastify API :8080  --->  PostgreSQL
                     Circle worker :8090
                     (private provider boundary)
 
-Agent / MCP host  --->  standalone stdio MCP  --->  Fastify runtime API
+Remote agent  --->  hosted MCP :8070  ---+
+                                          +--->  Fastify runtime API
+Local host    --->  standalone stdio MCP -+
 ```
 
 | Workspace | Responsibility |
@@ -45,7 +47,7 @@ Agent / MCP host  --->  standalone stdio MCP  --->  Fastify runtime API
 | `apps/web` | Next.js operator console and OAuth BFF |
 | `apps/api` | Fastify API, identity, policy, approvals, operations, payments, evidence |
 | `apps/api/src/circle-worker.ts` | Private multi-tenant Circle CLI/provider worker and liquidity-job processor |
-| `apps/mcp` | Independent stdio MCP adapter for managed agents |
+| `apps/mcp` | Hosted Streamable HTTP MCP service and local stdio adapter |
 | `packages/contracts` | Shared wire contracts |
 | `packages/config` | Shared configuration helpers |
 | `packages/db` | PostgreSQL migrations and migration runner |
@@ -75,8 +77,8 @@ The setup command:
 4. Generates a base64 32-byte Circle profile encryption key and a random internal worker token when absent.
 5. Starts local PostgreSQL and Redis only when the configured local ports are not already reachable.
 6. Installs the locked npm dependency graph, verifies the pinned Circle CLI, rejects high/critical npm advisories, and builds shared packages/migrations.
-7. Starts and health-checks web `3005`, API `8080`, and Circle worker `8090`.
-8. Keeps the three application services supervised until you press `Ctrl+C`.
+7. Starts and health-checks web `3005`, hosted MCP `8070`, API `8080`, and Circle worker `8090`.
+8. Keeps all four application services supervised until you press `Ctrl+C`.
 
 Service logs are written to `.runtime/logs/`. PostgreSQL and Redis data use named Docker volumes and remain available after the application services stop.
 
@@ -88,7 +90,7 @@ Open [http://localhost:3005](http://localhost:3005), sign in with Google, create
 ./startup.sh --run-only
 ```
 
-`startup.sh` is a compatibility entrypoint to the same bootstrap implementation. `--run-only` validates existing env files, dependencies, and infrastructure and starts the three application services. It does not create env files, prompt for credentials, run `npm install`, or rebuild packages.
+`startup.sh` is a compatibility entrypoint to the same bootstrap implementation. `--run-only` validates existing env files, dependencies, and infrastructure and starts the four application services. It does not create env files, prompt for credentials, run `npm install`, or rebuild packages.
 
 The equivalent npm command is:
 
@@ -102,7 +104,7 @@ If any application port is already occupied, startup fails without killing the e
 
 Local secrets remain gitignored. The bootstrap validates these cross-service invariants:
 
-- API uses port `8080`; web uses `3005`; the private Circle worker uses `8090`.
+- API uses port `8080`; web uses `3005`; hosted MCP uses `8070`; the private Circle worker uses `8090`.
 - API and web use the same `APP_BASE_URL` and `SESSION_COOKIE_NAME`.
 - Google OAuth redirects through the web BFF callback.
 - `CIRCLE_WORKER_TOKEN` is at least 32 characters.
@@ -113,7 +115,15 @@ See [docs/env-inventory.md](docs/env-inventory.md) for the current key inventory
 
 ## MCP Server
 
-The MCP process is stdio-based and starts when an MCP host launches it. It is not a fourth HTTP daemon.
+The normal product path is the hosted Streamable HTTP endpoint:
+
+```text
+http://127.0.0.1:8070/mcp
+```
+
+Create an agent in the console, open **Credentials & wallets**, and issue a credential. The one-time reveal provides the endpoint, Claude Code configuration, Codex command, local adapter, governance instruction, and a browser verification action. Remote calls authenticate with `Authorization: Bearer <agent credential>`; plaintext credentials are never stored or shown again.
+
+The local stdio adapter remains supported for repository-local hosts:
 
 ```bash
 cp apps/mcp/.env.example apps/mcp/.env
@@ -121,7 +131,7 @@ cp apps/mcp/.env.example apps/mcp/.env
 npm run dev:mcp
 ```
 
-For Claude Desktop or another MCP host, launch the built server with an absolute path or run the workspace development command. Never write logs to stdout from the stdio server.
+For Claude Desktop or another stdio MCP host, launch the built server with an absolute path or run the workspace development command. Never write logs to stdout from the stdio server. Hosted deployment, security, client setup, and health-check details are in [docs/deployment/hosted-mcp.md](docs/deployment/hosted-mcp.md).
 
 ## Development Commands
 
@@ -130,6 +140,7 @@ npm run dev:web             # Next.js; pass -- --port 3005 when run manually
 npm run dev:api             # Fastify API
 npm run dev:circle-worker   # private Circle worker
 npm run dev:mcp             # standalone stdio MCP
+npm run dev:mcp:http        # hosted Streamable HTTP MCP on 8070
 
 npm run lint
 npm run typecheck
@@ -147,6 +158,7 @@ The current Circle CLI/Solana dependency chain reports moderate npm advisories w
 | Service | Health endpoint | Exposure |
 |---|---|---|
 | API | `http://127.0.0.1:8080/healthz` | public deployment service |
+| Hosted MCP | `http://127.0.0.1:8070/healthz` | public deployment service; `/mcp` requires an agent bearer credential |
 | Circle worker | `http://127.0.0.1:8090/healthz` | private network only |
 | Web | `http://127.0.0.1:3005/` | public deployment service |
 
@@ -158,6 +170,7 @@ All `/internal/circle/*` routes require the worker bearer token. The worker owns
 - [DESIGN.md](DESIGN.md): authenticated-console design contract.
 - [docs/env-inventory.md](docs/env-inventory.md): current environment keys and ownership.
 - [docs/deployment/testnet-circle-worker.md](docs/deployment/testnet-circle-worker.md): deployment and worker security model.
+- [docs/deployment/hosted-mcp.md](docs/deployment/hosted-mcp.md): hosted MCP deployment, security, and client contract.
 - [docs/qa/2026-07-12-testnet-release-evidence.md](docs/qa/2026-07-12-testnet-release-evidence.md): latest accepted testnet evidence.
 - [docs/features-to-discuss-later.md](docs/features-to-discuss-later.md): deliberately deferred product work.
 

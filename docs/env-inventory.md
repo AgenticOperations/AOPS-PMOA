@@ -8,7 +8,7 @@ tags: [environment, setup, security, circle, oauth]
 
 # Environment Inventory
 
-Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/deployment/testnet-circle-worker]]
+Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/deployment/testnet-circle-worker]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/deployment/hosted-mcp]]
 
 This inventory lists key names and ownership only. It must never contain credential values.
 
@@ -62,8 +62,27 @@ The shipped local flow uses organization-scoped Agent Stack sessions. These valu
 | `ARC_ENV_LABEL` | Honest environment label shown in the console |
 | `SESSION_COOKIE_NAME` | Must match the API value |
 | `APP_BASE_URL` | Must match the API value and use port `3005` locally |
+| `MCP_PUBLIC_URL` | Server-side hosted MCP endpoint shown during one-time credential setup; HTTPS is required in production |
 
-## MCP: `apps/mcp/.env`
+## MCP
+
+### Hosted HTTP service
+
+| Key | Purpose |
+|---|---|
+| `NODE_ENV` | Runtime mode; production enables fail-closed public URL requirements |
+| `AGENTOPS_API_BASE_URL` | Runtime API authority used for credential resolution and governed calls |
+| `MCP_HOST`, `MCP_PORT` | Hosted listener; local bootstrap binds `127.0.0.1:8070` |
+| `MCP_PUBLIC_URL` | Externally reachable exact `/mcp` URL; HTTPS is required in production |
+| `MCP_ALLOWED_HOSTS` | Exact accepted HTTP Host authorities |
+| `MCP_ALLOWED_ORIGINS` | Exact browser origins allowed to verify one-time credentials |
+| `MCP_MAX_BODY_BYTES` | JSON-RPC request body limit |
+| `MCP_MAX_INFLIGHT_REQUESTS` | Process-level concurrent request ceiling |
+| `AGENTOPS_MCP_TIMEOUT_MS` | Runtime API request timeout |
+
+The hosted service receives the agent credential per request in the bearer header. It must not be configured with a process-wide `AGENTOPS_MCP_CREDENTIAL`.
+
+### Local stdio adapter: `apps/mcp/.env`
 
 | Key | Purpose |
 |---|---|
@@ -71,7 +90,7 @@ The shipped local flow uses organization-scoped Agent Stack sessions. These valu
 | `AGENTOPS_MCP_CREDENTIAL` | One agent runtime credential created by an operator |
 | `AGENTOPS_MCP_TIMEOUT_MS` | Upstream request timeout |
 
-The bootstrap does not prompt for `AGENTOPS_MCP_CREDENTIAL`, because credentials are created after an organization and agent exist. The MCP process is launched by its host when needed.
+The bootstrap does not prompt for `AGENTOPS_MCP_CREDENTIAL`, because credentials are created after an organization and agent exist. The hosted service is one of the four supervised product processes; the stdio adapter is launched only by its local MCP host.
 
 ## Security Rules
 

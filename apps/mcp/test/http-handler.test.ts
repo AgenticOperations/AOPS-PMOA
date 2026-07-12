@@ -361,6 +361,7 @@ describe('createHostedMcpHandler', () => {
       headers: {
         'access-control-request-headers': 'authorization, content-type',
         'access-control-request-method': 'POST',
+        'access-control-request-private-network': 'true',
         origin: 'https://console.example.test',
       },
       method: 'OPTIONS',
@@ -371,6 +372,7 @@ describe('createHostedMcpHandler', () => {
     expect(allowed.headers.get('access-control-allow-origin')).toBe('https://console.example.test');
     expect(allowed.headers.get('access-control-allow-methods')).toBe('POST');
     expect(allowed.headers.get('access-control-allow-headers')).toBe('authorization, content-type');
+    expect(allowed.headers.get('access-control-allow-private-network')).toBe('true');
     expect(Number(allowed.headers.get('access-control-max-age'))).toBeGreaterThan(0);
     expect(Number(allowed.headers.get('access-control-max-age'))).toBeLessThanOrEqual(86_400);
 

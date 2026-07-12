@@ -1,6 +1,7 @@
 import 'server-only';
 
-const LOCAL_MCP_URL = 'http://localhost:8070/mcp';
+// Match the IPv4-only development listener. `localhost` may resolve to ::1 first in browsers.
+const LOCAL_MCP_URL = 'http://127.0.0.1:8070/mcp';
 const KNOWN_NODE_ENVS = new Set(['development', 'test', 'production']);
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 

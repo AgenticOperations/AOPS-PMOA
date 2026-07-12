@@ -30,6 +30,7 @@ describe('resolveMcpPublicUrl', () => {
 
   it.each([
     'http://localhost:8070/mcp',
+    'http://127.0.0.1:8070/mcp',
     'http://mcp.agentops.example/mcp',
     'https://mcp.agentops.example/mcp/',
     'https://mcp.agentops.example/other',
@@ -55,8 +56,8 @@ describe('resolveMcpPublicUrl', () => {
   });
 
   it.each(['development', 'test'])('defaults %s to the local hosted MCP service', (nodeEnv) => {
-    expect(resolveMcpPublicUrl(env(nodeEnv))).toBe('http://localhost:8070/mcp');
-    expect(resolveMcpPublicUrl(env(nodeEnv, ''))).toBe('http://localhost:8070/mcp');
+    expect(resolveMcpPublicUrl(env(nodeEnv))).toBe('http://127.0.0.1:8070/mcp');
+    expect(resolveMcpPublicUrl(env(nodeEnv, ''))).toBe('http://127.0.0.1:8070/mcp');
   });
 
   it.each([

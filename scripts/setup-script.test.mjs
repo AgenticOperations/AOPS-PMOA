@@ -48,10 +48,10 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
     ['api', 'npm run dev:api'],
     [
       'mcp',
-      'env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://localhost:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005 npm run dev:mcp:http',
+      'env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005 npm run dev:mcp:http',
     ],
     ['circle-worker', 'npm run dev:circle-worker'],
-    ['web', 'npm --workspace @agentops-pmoa/web run dev -- --port 3005'],
+    ['web', 'env MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp npm --workspace @agentops-pmoa/web run dev -- --port 3005'],
   ]));
 
   assert.match(source, /SERVICE_NAMES\+=\("\$name"\)/);
@@ -76,7 +76,7 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
   const firstHealth = source.indexOf('wait_for_service_health API');
   assert.ok(lastStart < firstHealth, 'all four services must start before readiness health checks');
 
-  assert.match(source, /Hosted MCP:\s+http:\/\/localhost:8070\/mcp/);
+  assert.match(source, /Hosted MCP:\s+http:\/\/127\.0\.0\.1:8070\/mcp/);
   assert.match(source, /Hosted MCP health:\s+http:\/\/127\.0\.0\.1:8070\/healthz/);
   assert.match(source, /stop all four application services/);
 });
