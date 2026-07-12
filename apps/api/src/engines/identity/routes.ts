@@ -25,6 +25,7 @@ import {
   getOrg,
   getOrgBySlugForUser,
   listAgents,
+  listAgentsPage,
   listConnections,
   listMembers,
   listOnboardingStates,
@@ -154,6 +155,14 @@ const googleAuthorizeUrlQuerySchema = z.object({
 
 const activityQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+const agentListQuerySchema = z.object({
+  search: z.string().trim().min(1).max(160).optional(),
+  team_id: z.string().trim().min(1).max(160).optional(),
+  status: z.enum(['active', 'paused', 'deactivated', 'retired', 'suspended']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
 });
 
 function extractBearerToken(request: FastifyRequest, sessionCookieName = 'agentops_session'): string | null {
@@ -462,7 +471,11 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
   app.get('/v1/orgs/:orgId/agents', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return { agents: await listAgents(deps.pool, params.orgId) };
+    const rawQuery = (request.query ?? {}) as Record<string, unknown>;
+    const paginationRequested = ['search', 'team_id', 'status', 'limit', 'offset'].some((key) => key in rawQuery);
+    if (!paginationRequested) return { agents: await listAgents(deps.pool, params.orgId) };
+    const query = agentListQuerySchema.parse(rawQuery);
+    return listAgentsPage(deps.pool, params.orgId, query);
   });
 
   app.post('/v1/orgs/:orgId/agents', async (request, reply) => {

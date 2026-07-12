@@ -74,6 +74,11 @@ type AgentListResponse = {
     readonly policy_coverage: number;
     readonly last_activity_at: string | null;
   }>;
+  readonly pagination?: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly total: number;
+  };
 };
 
 async function createOrg(app: FastifyInstance, name: string): Promise<CreateOrgResponse> {
@@ -319,6 +324,60 @@ describe('Section 1 core product spine', () => {
       policy_coverage: 0,
     });
     expect(rosterAgent?.last_activity_at).toEqual(expect.any(String));
+  });
+
+  it('paginates and filters the agent registry without changing the legacy full-list response', async () => {
+    const { org } = await createOrg(app, 'Paginated Agents');
+    const customTeamResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${org.id}/teams`,
+      payload: { name: 'Research', description: 'Research agents' },
+    });
+    expect(customTeamResponse.statusCode, customTeamResponse.body).toBe(201);
+    const customTeam = customTeamResponse.json<{ readonly team: { readonly id: string } }>().team;
+
+    await createAgent(app, org.id, { name: 'Atlas Research', team_id: customTeam.id });
+    await createAgent(app, org.id, { name: 'Atlas Operations' });
+    const paused = await createAgent(app, org.id, { name: 'Beacon Research', team_id: customTeam.id });
+    const pauseResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${org.id}/agents/${paused.agent.id}/pause`,
+    });
+    expect(pauseResponse.statusCode, pauseResponse.body).toBe(200);
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${org.id}/agents?search=atlas&team_id=${customTeam.id}&status=active&limit=1&offset=0`,
+    });
+    expect(filtered.statusCode, filtered.body).toBe(200);
+    expect(filtered.json<AgentListResponse>()).toMatchObject({
+      agents: [expect.objectContaining({ name: 'Atlas Research', status: 'active' })],
+      pagination: { limit: 1, offset: 0, total: 1 },
+    });
+
+    const firstPage = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${org.id}/agents?limit=2&offset=0`,
+    });
+    const secondPage = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${org.id}/agents?limit=2&offset=2`,
+    });
+    expect(firstPage.json<AgentListResponse>().pagination).toEqual({ limit: 2, offset: 0, total: 3 });
+    expect(secondPage.json<AgentListResponse>().pagination).toEqual({ limit: 2, offset: 2, total: 3 });
+    expect([
+      ...firstPage.json<AgentListResponse>().agents,
+      ...secondPage.json<AgentListResponse>().agents,
+    ].map((agent) => agent.id)).toHaveLength(3);
+    expect(new Set([
+      ...firstPage.json<AgentListResponse>().agents,
+      ...secondPage.json<AgentListResponse>().agents,
+    ].map((agent) => agent.id))).toHaveLength(3);
+
+    const legacy = await app.inject({ method: 'GET', url: `/v1/orgs/${org.id}/agents` });
+    expect(legacy.statusCode, legacy.body).toBe(200);
+    expect(legacy.json<AgentListResponse>().agents).toHaveLength(3);
+    expect(legacy.json<AgentListResponse>().pagination).toBeUndefined();
   });
 
   it('blocks cross-org team and parent assignment and rejects parent cycles', async () => {

@@ -88,6 +88,14 @@ type AgentRow = {
   readonly updated_at: Date;
 };
 
+type AgentRosterRow = AgentRow & {
+  readonly team_name: string;
+  readonly connection_health: ConnectionHealth;
+  readonly wallet_refs_count: string;
+  readonly policy_coverage: string;
+  readonly last_activity_at: Date | null;
+};
+
 type ConnectionRow = {
   readonly id: string;
   readonly org_id: string;
@@ -204,6 +212,23 @@ export type UpdateAgentInput = {
   readonly labels?: string[] | undefined;
   readonly default_environment?: string | null | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
+};
+
+export type AgentListPageInput = {
+  readonly search?: string | undefined;
+  readonly team_id?: string | undefined;
+  readonly status?: AgentStatus | undefined;
+  readonly limit: number;
+  readonly offset: number;
+};
+
+export type AgentListPage = {
+  readonly agents: AgentRosterItem[];
+  readonly pagination: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly total: number;
+  };
 };
 
 export type CreateConnectionInput = {
@@ -1547,17 +1572,7 @@ export async function setAgentStatus(
   });
 }
 
-export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRosterItem[]> {
-  const result = await pool.query<
-    AgentRow & {
-      readonly team_name: string;
-      readonly connection_health: ConnectionHealth;
-      readonly wallet_refs_count: string;
-      readonly policy_coverage: string;
-      readonly last_activity_at: Date | null;
-    }
-  >(
-    `SELECT
+const agentRosterSelect = `SELECT
        a.*,
        t.name AS team_name,
        COALESCE(w.active_wallet_refs, 0)::text AS wallet_refs_count,
@@ -1632,13 +1647,10 @@ export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRos
               )
             )
        ) activity
-     ) la ON true
-     WHERE a.org_id = $1
-     ORDER BY a.created_at ASC, a.id ASC`,
-    [orgId],
-  );
+     ) la ON true`;
 
-  return result.rows.map((row) => ({
+function agentRosterItemFromRow(row: AgentRosterRow): AgentRosterItem {
+  return {
     id: row.id,
     name: row.name,
     status: row.status,
@@ -1650,7 +1662,72 @@ export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRos
     wallet_refs_count: Number(row.wallet_refs_count),
     policy_coverage: Number(row.policy_coverage),
     last_activity_at: row.last_activity_at?.toISOString() ?? null,
-  }));
+  };
+}
+
+export async function listAgents(pool: pg.Pool, orgId: string): Promise<AgentRosterItem[]> {
+  const result = await pool.query<AgentRosterRow>(
+    `${agentRosterSelect}
+     WHERE a.org_id = $1
+     ORDER BY a.created_at ASC, a.id ASC`,
+    [orgId],
+  );
+  return result.rows.map(agentRosterItemFromRow);
+}
+
+export async function listAgentsPage(
+  pool: pg.Pool,
+  orgId: string,
+  input: AgentListPageInput,
+): Promise<AgentListPage> {
+  const values: unknown[] = [orgId];
+  const conditions = ['a.org_id = $1'];
+
+  if (input.search !== undefined && input.search.length > 0) {
+    values.push(input.search.toLowerCase());
+    const parameter = `$${values.length}`;
+    conditions.push(
+      `(position(${parameter} in lower(a.name)) > 0 OR position(${parameter} in lower(a.id)) > 0 OR position(${parameter} in lower(t.name)) > 0)`,
+    );
+  }
+  if (input.team_id !== undefined) {
+    values.push(input.team_id);
+    conditions.push(`a.team_id = $${values.length}`);
+  }
+  if (input.status !== undefined) {
+    values.push(input.status);
+    conditions.push(`a.status = $${values.length}`);
+  }
+
+  const whereClause = conditions.join(' AND ');
+  const countResult = await pool.query<{ readonly total: string }>(
+    `SELECT count(*)::text AS total
+       FROM agents a
+       JOIN teams t ON t.id = a.team_id AND t.org_id = a.org_id
+      WHERE ${whereClause}`,
+    values,
+  );
+
+  const pageValues = [...values, input.limit, input.offset];
+  const limitParameter = `$${pageValues.length - 1}`;
+  const offsetParameter = `$${pageValues.length}`;
+  const result = await pool.query<AgentRosterRow>(
+    `${agentRosterSelect}
+     WHERE ${whereClause}
+     ORDER BY a.created_at ASC, a.id ASC
+     LIMIT ${limitParameter}
+     OFFSET ${offsetParameter}`,
+    pageValues,
+  );
+
+  return {
+    agents: result.rows.map(agentRosterItemFromRow),
+    pagination: {
+      limit: input.limit,
+      offset: input.offset,
+      total: Number(countResult.rows[0]?.total ?? 0),
+    },
+  };
 }
 
 export async function getAgentDetail(
