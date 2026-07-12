@@ -21,7 +21,7 @@ describe('readHostedMcpEnv', () => {
     expect(
       readHostedMcpEnv({
         NODE_ENV: 'development',
-        AGENTOPS_API_BASE_URL: ' https://api.example.test/root/// ',
+        AGENTOPS_API_BASE_URL: ' https://api.example.test/ ',
         MCP_HOST: ' 0.0.0.0 ',
         MCP_PORT: '9000',
         MCP_PUBLIC_URL: 'https://mcp.example.test/mcp',
@@ -34,7 +34,7 @@ describe('readHostedMcpEnv', () => {
         MCP_SHUTDOWN_GRACE_MS: '7500',
       }),
     ).toEqual({
-      apiBaseUrl: 'https://api.example.test/root',
+      apiBaseUrl: 'https://api.example.test',
       host: '0.0.0.0',
       port: 9000,
       publicUrl: 'https://mcp.example.test/mcp',
@@ -95,6 +95,9 @@ describe('readHostedMcpEnv', () => {
     'https://mcp.example.test/mcp#debug',
     'https://user@mcp.example.test/mcp',
     'https://user:secret@mcp.example.test/mcp',
+    'https://@mcp.example.test/mcp',
+    'https://mcp.example.test/mcp?',
+    'https://mcp.example.test/mcp#',
   ])('rejects invalid MCP_PUBLIC_URL value %s', (publicUrl) => {
     expect(() => readHostedMcpEnv({ MCP_PUBLIC_URL: publicUrl })).toThrow('MCP_PUBLIC_URL');
   });
@@ -119,6 +122,9 @@ describe('readHostedMcpEnv', () => {
     'https://console.example.test/?debug=true',
     'https://console.example.test/#debug',
     'https://user@console.example.test',
+    'https://@console.example.test',
+    'https://console.example.test?',
+    'https://console.example.test#',
     'console.example.test',
     'https://console.example.test,,http://localhost:3005',
     '   ',
@@ -148,6 +154,14 @@ describe('readHostedMcpEnv', () => {
     ['AGENTOPS_API_BASE_URL', ''],
     ['AGENTOPS_API_BASE_URL', 'postgres://db.example.test'],
     ['AGENTOPS_API_BASE_URL', 'not a URL'],
+    ['AGENTOPS_API_BASE_URL', 'https://user@api.example.test'],
+    ['AGENTOPS_API_BASE_URL', 'https://user:secret@api.example.test'],
+    ['AGENTOPS_API_BASE_URL', 'https://@api.example.test'],
+    ['AGENTOPS_API_BASE_URL', 'https://api.example.test/v1'],
+    ['AGENTOPS_API_BASE_URL', 'https://api.example.test?debug=true'],
+    ['AGENTOPS_API_BASE_URL', 'https://api.example.test?'],
+    ['AGENTOPS_API_BASE_URL', 'https://api.example.test#debug'],
+    ['AGENTOPS_API_BASE_URL', 'https://api.example.test#'],
     ['MCP_HOST', '   '],
   ])('rejects invalid required value %s=%s', (name, value) => {
     expect(() => readHostedMcpEnv({ [name]: value })).toThrow(name);

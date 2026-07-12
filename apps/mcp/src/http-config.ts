@@ -29,6 +29,19 @@ function requiredString(value: string | undefined, name: string, fallback: strin
   return trimmed;
 }
 
+function hasRawUserInfo(value: string): boolean {
+  const schemeEnd = value.indexOf('://');
+  if (schemeEnd === -1) return false;
+  const authorityStart = schemeEnd + 3;
+  const authorityEndOffset = value.slice(authorityStart).search(/[/?#]/);
+  const authorityEnd = authorityEndOffset === -1 ? value.length : authorityStart + authorityEndOffset;
+  return value.slice(authorityStart, authorityEnd).includes('@');
+}
+
+function hasRawQueryOrHash(value: string): boolean {
+  return value.includes('?') || value.includes('#');
+}
+
 function parseApiBaseUrl(value: string | undefined): string {
   const raw = requiredString(value, 'AGENTOPS_API_BASE_URL', DEFAULT_API_BASE_URL);
   let parsed: URL;
@@ -40,7 +53,16 @@ function parseApiBaseUrl(value: string | undefined): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error('AGENTOPS_API_BASE_URL must be a valid http or https URL.');
   }
-  return raw.replace(/\/+$/, '');
+  if (hasRawUserInfo(raw) || parsed.username.length > 0 || parsed.password.length > 0) {
+    throw new Error('AGENTOPS_API_BASE_URL must not include credentials.');
+  }
+  if (parsed.pathname !== '/') {
+    throw new Error('AGENTOPS_API_BASE_URL must be an origin with no path.');
+  }
+  if (hasRawQueryOrHash(raw)) {
+    throw new Error('AGENTOPS_API_BASE_URL must not include a query or hash.');
+  }
+  return parsed.origin;
 }
 
 function parsePositiveInteger(
@@ -79,13 +101,13 @@ function parsePublicUrl(value: string, production: boolean): string {
   if (production && parsed.protocol !== 'https:') {
     throw new Error('MCP_PUBLIC_URL must use https in production.');
   }
-  if (parsed.username.length > 0 || parsed.password.length > 0) {
+  if (hasRawUserInfo(raw) || parsed.username.length > 0 || parsed.password.length > 0) {
     throw new Error('MCP_PUBLIC_URL must not include credentials.');
   }
   if (parsed.pathname !== '/mcp') {
     throw new Error('MCP_PUBLIC_URL path must be exactly /mcp.');
   }
-  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+  if (hasRawQueryOrHash(raw)) {
     throw new Error('MCP_PUBLIC_URL must not include a query or hash.');
   }
   return parsed.toString();
@@ -136,11 +158,11 @@ function parseAllowedOrigins(value: string): readonly string[] {
     }
     if (
       (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      hasRawUserInfo(origin) ||
       parsed.username.length > 0 ||
       parsed.password.length > 0 ||
       parsed.pathname !== '/' ||
-      parsed.search.length > 0 ||
-      parsed.hash.length > 0
+      hasRawQueryOrHash(origin)
     ) {
       throw new Error(`MCP_ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
     }
