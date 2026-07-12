@@ -215,7 +215,9 @@ describe('AgentDetailShell', () => {
     await user.click(within(screen.getByRole('dialog', { name: 'Create credential' })).getByRole('button', { name: 'Create credential' }));
 
     expect(await screen.findByText('https://mcp.agentops.test/mcp')).toBeInTheDocument();
-    expect(screen.getByText(/Bearer conn_page_threaded/)).toBeInTheDocument();
+    const claudeCodeSection = screen.getByRole('heading', { name: 'Claude Code' }).closest('section');
+    expect(claudeCodeSection?.textContent).toContain('Bearer ${AGENTOPS_MCP_CREDENTIAL}');
+    expect(claudeCodeSection?.textContent).not.toContain('conn_page_threaded');
   });
 
   it('shows recent runtime evidence separately from on-demand live monitoring and configuration history', () => {

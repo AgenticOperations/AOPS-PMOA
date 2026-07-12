@@ -2,6 +2,7 @@ export type VerifyHostedMcpInput = {
   readonly endpoint: string;
   readonly credential: string;
   readonly fetchImpl?: typeof fetch;
+  readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
 };
 
@@ -15,6 +16,7 @@ export type McpVerificationResult = {
 
 export type McpVerificationErrorCode =
   | 'invalid_input'
+  | 'cancelled'
   | 'invalid_credential'
   | 'origin_not_allowed'
   | 'rate_limited'
@@ -54,6 +56,7 @@ const REQUIRED_TOOLS = new Set([
 
 const SAFE_MESSAGES: Readonly<Record<McpVerificationErrorCode, string>> = {
   invalid_input: 'Enter a valid hosted MCP endpoint and credential.',
+  cancelled: 'MCP verification was cancelled.',
   invalid_credential: 'The MCP credential is invalid or has been revoked.',
   origin_not_allowed: 'This browser origin is not allowed to connect to the MCP service.',
   rate_limited: 'The MCP service is busy. Try again shortly.',
@@ -73,6 +76,7 @@ const INITIALIZE_PARAMS = {
 type ValidatedInput = {
   readonly credential: string;
   readonly endpoint: string;
+  readonly externalSignal: AbortSignal | undefined;
   readonly fetchImpl: typeof fetch;
   readonly timeoutMs: number;
 };
@@ -131,6 +135,7 @@ function validateInput(input: VerifyHostedMcpInput): ValidatedInput {
   return {
     credential: input.credential,
     endpoint: input.endpoint,
+    externalSignal: input.signal,
     fetchImpl: input.fetchImpl ?? fetch,
     timeoutMs,
   };
@@ -477,10 +482,23 @@ function readVerifiedIdentity(
 export async function verifyHostedMcp(input: VerifyHostedMcpInput): Promise<McpVerificationResult> {
   const validated = validateInput(input);
   const controller = new AbortController();
-  const timeout = globalThis.setTimeout(() => controller.abort(), validated.timeoutMs);
+  let abortedBy: 'external' | 'timeout' | null = null;
+  const abort = (source: 'external' | 'timeout') => {
+    if (controller.signal.aborted) return;
+    abortedBy = source;
+    controller.abort();
+  };
+  const onExternalAbort = () => abort('external');
+  if (validated.externalSignal?.aborted === true) {
+    onExternalAbort();
+  } else {
+    validated.externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+  }
+  const timeout = globalThis.setTimeout(() => abort('timeout'), validated.timeoutMs);
   const context: RequestContext = { ...validated, signal: controller.signal };
 
   try {
+    if (controller.signal.aborted) throw verificationError('cancelled', null);
     const initialized = await rpc(context, 1, 'initialize', INITIALIZE_PARAMS);
     assertInitializeResult(initialized);
     await notify(context, 'notifications/initialized');
@@ -489,11 +507,14 @@ export async function verifyHostedMcp(input: VerifyHostedMcpInput): Promise<McpV
     const onboarded = await rpc(context, 3, 'tools/call', { arguments: {}, name: 'agentops.onboard' });
     return readVerifiedIdentity(toolCount, onboarded);
   } catch (error) {
-    if (controller.signal.aborted) throw verificationError('timeout', null);
+    if (controller.signal.aborted) {
+      throw verificationError(abortedBy === 'external' ? 'cancelled' : 'timeout', null);
+    }
     if (error instanceof McpVerificationError) throw error;
     throw verificationError('protocol_error', null);
   } finally {
     globalThis.clearTimeout(timeout);
+    validated.externalSignal?.removeEventListener('abort', onExternalAbort);
   }
 }
 

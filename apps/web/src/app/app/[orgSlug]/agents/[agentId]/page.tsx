@@ -19,6 +19,7 @@ import {
 import { getAgentActivityFeed, getAgentDetail, getOrgBySlug, listTeams } from '@/lib/server/identity-spine-client';
 import { listAgentAllowedActions, listBlockedOperations } from '@/lib/server/operations-client';
 import { listAgentPolicies, listPolicyLibrary } from '@/lib/server/policy-client';
+import { resolveMcpPublicUrl } from '@/lib/server/mcp-public-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +42,7 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
   const { agentId, orgSlug } = await params;
   const query = (await searchParams) ?? {};
   const activeTab = normalizeAgentTab(singleParam(query.tab));
-  const mcpEndpoint = process.env.MCP_PUBLIC_URL ?? 'http://localhost:8070/mcp';
+  const mcpEndpoint = resolveMcpPublicUrl();
   let org;
   try {
     org = await getOrgBySlug(orgSlug);

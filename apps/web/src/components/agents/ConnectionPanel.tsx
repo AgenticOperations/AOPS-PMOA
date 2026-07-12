@@ -194,7 +194,7 @@ function CredentialCreateSession({
   }, [onPendingChange, pending]);
 
   if (visibleSecret !== undefined) {
-    return <SheetBody><CredentialMcpSetup mcpEndpoint={mcpEndpoint} secret={visibleSecret} title="Save this secret now" /></SheetBody>;
+    return <SheetBody><CredentialMcpSetup key={visibleSecret.secret} mcpEndpoint={mcpEndpoint} secret={visibleSecret} title="Save this secret now" /></SheetBody>;
   }
 
   return (
@@ -399,7 +399,7 @@ function CredentialRotateSession({
   }, [onPendingChange, pending]);
 
   if (state.secret !== undefined) {
-    return <SheetBody><CredentialMcpSetup mcpEndpoint={mcpEndpoint} secret={state.secret} title="Save this rotated secret now" /></SheetBody>;
+    return <SheetBody><CredentialMcpSetup key={state.secret.secret} mcpEndpoint={mcpEndpoint} secret={state.secret} title="Save this rotated secret now" /></SheetBody>;
   }
 
   return (

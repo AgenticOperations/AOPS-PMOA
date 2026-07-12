@@ -5166,7 +5166,10 @@ html[data-theme="dark"] .controls-console {
 }
 
 .mcp-copy-button {
+  display: inline-flex;
   flex: 0 0 auto;
+  min-height: 36px;
+  align-items: center;
   border: 0;
   background: transparent;
   color: var(--accent-blue);
@@ -5174,7 +5177,7 @@ html[data-theme="dark"] .controls-console {
   font: inherit;
   font-size: 0.72rem;
   font-weight: 760;
-  padding: 2px 0;
+  padding: 0 8px;
   transition: color 160ms ease, transform 160ms ease;
 }
 
@@ -5234,6 +5237,7 @@ html[data-theme="dark"] .controls-console {
 
 .mcp-verification .agent-primary-button {
   flex: 0 0 auto;
+  min-height: 36px;
 }
 
 .mcp-verification-status:empty {
@@ -5243,8 +5247,9 @@ html[data-theme="dark"] .controls-console {
 .mcp-verification-result {
   display: grid;
   gap: 14px;
-  padding: 14px 0 0 14px;
-  border-left: 2px solid var(--accent-blue);
+  padding: 14px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .mcp-verification-result > div:first-child {

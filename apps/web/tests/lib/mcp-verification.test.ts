@@ -596,6 +596,42 @@ describe('verifyHostedMcp', () => {
     });
   });
 
+  it('maps an external abort to a safe cancelled error without changing timeout semantics', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener(
+        'abort',
+        () => reject(new DOMException(`raw ${credential}`, 'AbortError')),
+        { once: true },
+      );
+    }));
+    const verification = captureError({ credential, endpoint, fetchImpl, signal: controller.signal });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce());
+
+    controller.abort();
+    const error = await verification;
+
+    expect(fetchImpl.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(error).toMatchObject({
+      code: 'cancelled',
+      message: 'MCP verification was cancelled.',
+      status: null,
+    });
+    expect(safeMcpVerificationMessage(error)).toBe('MCP verification was cancelled.');
+    expect(JSON.stringify(error)).not.toContain(credential);
+  });
+
+  it('does not fetch when the external signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    const error = await captureError({ credential, endpoint, fetchImpl, signal: controller.signal });
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(error).toMatchObject({ code: 'cancelled', status: null });
+  });
+
   it('maps an abort while streaming a JSON-RPC response body to timeout', async () => {
     vi.useFakeTimers();
     const encoder = new TextEncoder();

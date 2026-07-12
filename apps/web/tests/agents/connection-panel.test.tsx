@@ -14,6 +14,22 @@ vi.mock('@/lib/mcp-verification', async (importOriginal) => ({
 
 const mcpEndpoint = 'https://mcp.agentops.test/mcp';
 const boundaryInstruction = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Call the matching check tool first, follow approval requirements, and record the final outcome. Actions sent outside AOPS are not governed by this connection.';
+const claudeCodeConfig = `{
+  "mcpServers": {
+    "agentops": {
+      "type": "http",
+      "url": "${mcpEndpoint}",
+      "headers": {
+        "Authorization": "Bearer \${AGENTOPS_MCP_CREDENTIAL}"
+      }
+    }
+  }
+}`;
+const codexCommand = `codex mcp add agentops --url ${mcpEndpoint} --bearer-token-env-var AGENTOPS_MCP_CREDENTIAL`;
+
+function localAdapterConfig(secret: string): string {
+  return `AGENTOPS_API_BASE_URL=http://localhost:8080\nAGENTOPS_MCP_CREDENTIAL=${secret}\nnpm run dev:mcp`;
+}
 
 describe('ConnectionPanel', () => {
   beforeEach(() => {
@@ -21,16 +37,6 @@ describe('ConnectionPanel', () => {
   });
 
   it('reveals the complete hosted MCP setup once for a new credential', () => {
-    const remoteConfig = JSON.stringify({
-      mcpServers: {
-        agentops: {
-          type: 'http',
-          url: mcpEndpoint,
-          headers: { Authorization: 'Bearer conn_test_abc123' },
-        },
-      },
-    }, null, 2);
-
     render(
       <ConnectionPanel
         orgId="org_acme"
@@ -50,14 +56,24 @@ describe('ConnectionPanel', () => {
     expect(screen.getByText('Local Claude')).toBeInTheDocument();
     expect(screen.getByText('conn_test_abc123')).toBeInTheDocument();
     expect(screen.getByText(mcpEndpoint)).toBeInTheDocument();
-    expect(screen.getByText('AGENTOPS_MCP_CREDENTIAL=conn_test_abc123')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Claude Code' })).toBeInTheDocument();
+    expect(screen.getByText('Keep project configuration secret-free. Set AGENTOPS_MCP_CREDENTIAL in the host environment.')).toBeInTheDocument();
+    const claudeSection = screen.getByRole('heading', { name: 'Claude Code' }).closest('section');
+    expect(claudeSection?.querySelector('pre')?.textContent).toBe(claudeCodeConfig);
+    expect(claudeSection?.textContent).not.toContain('conn_test_abc123');
+    expect(screen.getByRole('heading', { name: 'Codex CLI' })).toBeInTheDocument();
+    expect(screen.getByText(codexCommand)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Local repository adapter' })).toBeInTheDocument();
+    expect(screen.getByText('Requires a BUILD-PMOA checkout. Run these lines from the repository root.')).toBeInTheDocument();
+    const localSection = screen.getByRole('heading', { name: 'Local repository adapter' }).closest('section');
+    expect(localSection?.querySelector('pre')?.textContent).toBe(localAdapterConfig('conn_test_abc123'));
     expect(screen.getByText(boundaryInstruction)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Verify MCP connection' })).toBeInTheDocument();
     expect(screen.queryByText(/AGENTOPS_CONNECTION_SECRET=/)).not.toBeInTheDocument();
     const setup = screen.getByTestId('credential-mcp-setup');
     expect(setup.querySelector('.secret-reveal')).toBeNull();
-    expect(setup.querySelectorAll('.mcp-setup-code')).toHaveLength(4);
-    expect(Array.from(setup.querySelectorAll('.mcp-setup-code')).some((block) => block.textContent === remoteConfig)).toBe(true);
+    expect(setup.querySelectorAll('.mcp-setup-code')).toHaveLength(5);
+    expect(screen.queryByRole('heading', { name: 'Remote JSON configuration' })).not.toBeInTheDocument();
   });
 
   it('forgets an initial one-time secret after the reveal drawer closes', async () => {
@@ -272,8 +288,12 @@ describe('ConnectionPanel', () => {
     expect(await screen.findByText('Save this rotated secret now')).toBeInTheDocument();
     expect(screen.getByText('conn_rotated_abc123')).toBeInTheDocument();
     expect(screen.getByText(mcpEndpoint)).toBeInTheDocument();
-    expect(screen.getByText(/Bearer conn_rotated_abc123/)).toBeInTheDocument();
-    expect(screen.getByText('AGENTOPS_MCP_CREDENTIAL=conn_rotated_abc123')).toBeInTheDocument();
+    const rotatedClaudeSection = screen.getByRole('heading', { name: 'Claude Code' }).closest('section');
+    expect(rotatedClaudeSection?.querySelector('pre')?.textContent).toBe(claudeCodeConfig);
+    expect(rotatedClaudeSection?.textContent).not.toContain('conn_rotated_abc123');
+    expect(screen.getByText(codexCommand)).toBeInTheDocument();
+    const rotatedLocalSection = screen.getByRole('heading', { name: 'Local repository adapter' }).closest('section');
+    expect(rotatedLocalSection?.querySelector('pre')?.textContent).toBe(localAdapterConfig('conn_rotated_abc123'));
     expect(screen.getByText(boundaryInstruction)).toBeInTheDocument();
     expect(screen.queryByText(/AGENTOPS_CONNECTION_SECRET=/)).not.toBeInTheDocument();
   });
@@ -369,10 +389,11 @@ describe('ConnectionPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
 
     expect(verifyHostedMcpMock).toHaveBeenCalledOnce();
-    expect(verifyHostedMcpMock).toHaveBeenCalledWith({
+    expect(verifyHostedMcpMock).toHaveBeenCalledWith(expect.objectContaining({
       credential: 'conn_verify_once',
       endpoint: mcpEndpoint,
-    });
+      signal: expect.any(AbortSignal),
+    }));
     expect(screen.getByRole('button', { name: 'Verifying...' })).toBeDisabled();
 
     finishVerification?.({
@@ -416,14 +437,18 @@ describe('ConnectionPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
     expect(await screen.findByText('MCP verification failed. Try again.')).toBeInTheDocument();
     expect(screen.queryByText(/conn_private leaked/)).not.toBeInTheDocument();
+    const firstSignal = verifyHostedMcpMock.mock.calls[0]?.[0]?.signal as AbortSignal;
+    expect(firstSignal.aborted).toBe(false);
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Authenticated')).toBeInTheDocument();
+    expect(firstSignal.aborted).toBe(true);
     expect(verifyHostedMcpMock).toHaveBeenCalledTimes(2);
-    expect(verifyHostedMcpMock).toHaveBeenLastCalledWith({
+    expect(verifyHostedMcpMock).toHaveBeenLastCalledWith(expect.objectContaining({
       credential: 'conn_retry_once',
       endpoint: mcpEndpoint,
-    });
+      signal: expect.any(AbortSignal),
+    }));
   });
 
   it('copies each setup value only when its accessible button is clicked', async () => {
@@ -434,15 +459,6 @@ describe('ConnectionPanel', () => {
       value: { writeText },
     });
     const secret = 'conn_copy_once';
-    const remoteConfig = JSON.stringify({
-      mcpServers: {
-        agentops: {
-          type: 'http',
-          url: mcpEndpoint,
-          headers: { Authorization: `Bearer ${secret}` },
-        },
-      },
-    }, null, 2);
     render(
       <ConnectionPanel
         agentId="agt_research"
@@ -458,8 +474,9 @@ describe('ConnectionPanel', () => {
     const copies = [
       ['Copy credential', secret, 'Copied credential'],
       ['Copy endpoint', mcpEndpoint, 'Copied endpoint'],
-      ['Copy remote configuration', remoteConfig, 'Copied remote configuration'],
-      ['Copy local stdio configuration', `AGENTOPS_MCP_CREDENTIAL=${secret}`, 'Copied local stdio configuration'],
+      ['Copy Claude Code configuration', claudeCodeConfig, 'Copied Claude Code configuration'],
+      ['Copy Codex CLI command', codexCommand, 'Copied Codex CLI command'],
+      ['Copy local repository adapter', localAdapterConfig(secret), 'Copied local repository adapter'],
       ['Copy boundary instruction', boundaryInstruction, 'Copied boundary instruction'],
     ] as const;
 
@@ -469,6 +486,84 @@ describe('ConnectionPanel', () => {
       expect(screen.getByText(status)).toBeInTheDocument();
     }
     expect(writeText).toHaveBeenCalledTimes(copies.length);
+  });
+
+  it('re-announces a repeated copy action through a fresh live-region node', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    render(
+      <ConnectionPanel
+        agentId="agt_research"
+        connections={[]}
+        mcpEndpoint={mcpEndpoint}
+        newSecret={{ connectionName: 'Local Claude', secret: 'conn_copy_repeat' }}
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Copy endpoint' }));
+    const firstAnnouncement = screen.getByText('Copied endpoint');
+    await user.click(screen.getByRole('button', { name: 'Copy endpoint' }));
+    const secondAnnouncement = screen.getByText('Copied endpoint');
+
+    expect(secondAnnouncement).not.toBe(firstAnnouncement);
+  });
+
+  it('aborts an in-flight verification when the setup unmounts', async () => {
+    verifyHostedMcpMock.mockReturnValueOnce(new Promise(() => {}));
+    const user = userEvent.setup();
+    const view = render(
+      <ConnectionPanel
+        agentId="agt_research"
+        connections={[]}
+        mcpEndpoint={mcpEndpoint}
+        newSecret={{ connectionName: 'Local Claude', secret: 'conn_abort_unmount' }}
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
+    const signal = verifyHostedMcpMock.mock.calls[0]?.[0]?.signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+
+    view.unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it('aborts an in-flight verification when the revealed secret changes', async () => {
+    verifyHostedMcpMock.mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    const view = render(
+      <ConnectionPanel
+        agentId="agt_research"
+        connections={[]}
+        mcpEndpoint={mcpEndpoint}
+        newSecret={{ connectionName: 'Local Claude', secret: 'conn_abort_old' }}
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
+    const signal = verifyHostedMcpMock.mock.calls[0]?.[0]?.signal as AbortSignal;
+    view.rerender(
+      <ConnectionPanel
+        agentId="agt_research"
+        connections={[]}
+        mcpEndpoint={mcpEndpoint}
+        newSecret={{ connectionName: 'Replacement', secret: 'conn_abort_new' }}
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+      />,
+    );
+
+    expect(signal.aborted).toBe(true);
+    expect(screen.getByRole('button', { name: 'Verify MCP connection' })).toBeInTheDocument();
   });
 
   it('announces when clipboard access is unavailable without throwing', async () => {
