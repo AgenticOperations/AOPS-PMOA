@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
-import { request as httpRequest } from 'node:http';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { createServer, request as httpRequest, type Server } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -17,8 +17,156 @@ type HttpResponse = {
   readonly status: number;
 };
 
+type ChildExit = {
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+};
+
+type HostedChild = {
+  readonly child: ChildProcess;
+  readonly exited: Promise<ChildExit>;
+  readonly stderr: () => string;
+  readonly stdout: () => string;
+};
+
 const execFileAsync = promisify(execFile);
 const services = new Set<HostedMcpService>();
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function withTimeout<T>(promise: Promise<T>, message: string, milliseconds = 3_000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), milliseconds);
+    void promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error instanceof Error ? error : new Error(message));
+      },
+    );
+  });
+}
+
+function childEnvironment(port: number, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    TMPDIR: process.env.TMPDIR,
+    NODE_ENV: 'test',
+    AGENTOPS_API_BASE_URL: 'https://private-api.example.test',
+    AGENTOPS_MCP_TIMEOUT_MS: '100',
+    MCP_HOST: '127.0.0.1',
+    MCP_PORT: String(port),
+    MCP_PUBLIC_URL: 'https://configured-public.example.test/mcp',
+    MCP_ALLOWED_HOSTS: `127.0.0.1:${String(port)}`,
+    MCP_ALLOWED_ORIGINS: 'https://console.example.test',
+    MCP_MAX_BODY_BYTES: '16384',
+    MCP_MAX_IN_FLIGHT: '20',
+    MCP_SHUTDOWN_GRACE_MS: '100',
+    ...overrides,
+  };
+}
+
+function spawnHostedChild(port: number, overrides: NodeJS.ProcessEnv = {}): HostedChild {
+  const child = spawn(process.execPath, ['--import', 'tsx', 'src/http.ts'], {
+    cwd: new URL('..', import.meta.url),
+    env: childEnvironment(port, overrides),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk: Buffer | string) => {
+    stdout += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+  });
+  child.stderr?.on('data', (chunk: Buffer | string) => {
+    stderr += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+  });
+  const exited = new Promise<ChildExit>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => resolve({ code, signal }));
+  });
+  return {
+    child,
+    exited,
+    stderr: () => stderr,
+    stdout: () => stdout,
+  };
+}
+
+async function stopChild(running: HostedChild): Promise<void> {
+  if (running.child.exitCode === null && running.child.signalCode === null) {
+    running.child.kill('SIGKILL');
+  }
+  await withTimeout(running.exited, 'Hosted child did not stop.', 1_000).catch(() => undefined);
+}
+
+async function listenOnAvailablePort(): Promise<{ readonly port: number; readonly server: Server }> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('Missing reserved test port.');
+  return { port: address.port, server };
+}
+
+async function closeNodeServer(server: Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error === undefined) resolve();
+      else reject(error);
+    });
+  });
+}
+
+async function availablePort(): Promise<number> {
+  const reserved = await listenOnAvailablePort();
+  await closeNodeServer(reserved.server);
+  return reserved.port;
+}
+
+async function waitForHealth(origin: string): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${origin}/healthz`, { signal: AbortSignal.timeout(250) });
+      if (response.status === 200 && (await response.text()) === '{"status":"ok"}') return;
+    } catch {
+      // The child may still be binding the listener.
+    }
+    await delay(15);
+  }
+  throw new Error('Hosted child health endpoint did not become ready.');
+}
+
+async function isPortOpen(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const socket = netConnect({ host: '127.0.0.1', port });
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, 250);
+    socket.once('connect', () => {
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+  });
+}
 
 function fakeRuntimeClient(): AgentOpsRuntimeClient {
   return {
@@ -380,5 +528,62 @@ describe('hosted HTTP module', () => {
       { cwd: new URL('..', import.meta.url), env, timeout: 1_000 },
     );
     expect(stdout).toBe('imported');
+  });
+
+  it.each(['SIGINT', 'SIGTERM'] as const)(
+    'runs the executable service and exits cleanly on %s',
+    async (signal) => {
+      const port = await availablePort();
+      const origin = `http://127.0.0.1:${String(port)}`;
+      const running = spawnHostedChild(port);
+      try {
+        await waitForHealth(origin);
+        expect(running.stdout()).toBe('');
+        expect(running.stderr()).toBe(`agentOps hosted MCP listening on ${origin}\n`);
+
+        expect(running.child.kill(signal)).toBe(true);
+        const exit = await withTimeout(running.exited, `Hosted child did not exit after ${signal}.`);
+        expect(exit).toEqual({ code: 0, signal: null });
+        expect(await isPortOpen(port)).toBe(false);
+      } finally {
+        await stopChild(running);
+      }
+    },
+  );
+
+  it('exits nonzero with one generic line for invalid configuration', async () => {
+    const port = await availablePort();
+    const secret = 'forbidden-customer-secret';
+    const running = spawnHostedChild(port, { AGENTOPS_MCP_CREDENTIAL: secret });
+    try {
+      const exit = await withTimeout(running.exited, 'Invalid-config child did not exit.');
+      expect(exit.code).not.toBe(0);
+      expect(exit.signal).toBeNull();
+      expect(running.stdout()).toBe('');
+      expect(running.stderr()).toBe('agentOps hosted MCP failed to start.\n');
+      expect(running.stderr()).not.toContain(secret);
+      expect(running.stderr()).not.toContain('private-api.example.test');
+    } finally {
+      await stopChild(running);
+    }
+  });
+
+  it('exits nonzero safely when the listener address is already in use', async () => {
+    const reserved = await listenOnAvailablePort();
+    const secretApiUrl = 'https://bind-failure-secret.example.test';
+    const running = spawnHostedChild(reserved.port, { AGENTOPS_API_BASE_URL: secretApiUrl });
+    try {
+      const exit = await withTimeout(running.exited, 'Bind-failure child did not exit.');
+      expect(exit.code).not.toBe(0);
+      expect(exit.signal).toBeNull();
+      expect(running.stdout()).toBe('');
+      expect(running.stderr()).toBe('agentOps hosted MCP failed to start.\n');
+      expect(running.stderr()).not.toContain(secretApiUrl);
+      expect(running.stderr()).not.toContain('EADDRINUSE');
+      expect(running.stderr()).not.toContain('Error:');
+    } finally {
+      await stopChild(running);
+      await closeNodeServer(reserved.server);
+    }
   });
 });

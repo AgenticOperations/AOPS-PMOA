@@ -324,7 +324,7 @@ export async function main(): Promise<void> {
   await service.start();
   const address = service.address;
   if (address === null) throw new Error('Hosted MCP listener did not expose an address.');
-  console.error(`agentOps hosted MCP listening on ${formatOrigin(address)}; public URL ${config.publicUrl}`);
+  console.error(`agentOps hosted MCP listening on ${formatOrigin(address)}`);
 
   let shuttingDown = false;
   const shutdown = (): void => {
