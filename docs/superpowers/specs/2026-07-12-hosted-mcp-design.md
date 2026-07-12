@@ -11,7 +11,7 @@ tags: [mcp, hosted-mcp, runtime, credentials, production]
 
 ## Status
 
-Approved architecture, awaiting written-spec review. This specification defines the first production-usable hosted MCP surface for AOPS. It does not authorize implementation until the product owner approves this written version and the validation spikes in this document pass.
+Approved and empirically validated architecture. The product owner approved this written design, and all three assumptions passed in `[[validation/spike-results]]`. Production edits follow the committed TDD implementation plan.
 
 ## Outcome
 
@@ -140,14 +140,14 @@ The exact instruction is concise and factual. It does not imply that installing 
 
 The hosted service exposes the same eight tools as stdio:
 
-1. `agentops_onboard`
-2. `agentops_policy_check`
-3. `agentops_payment_x402`
-4. `agentops_approval_status`
-5. `agentops_approval_consume`
-6. `agentops_activity_record`
-7. `agentops_operation_check`
-8. `agentops_operation_record`
+1. `agentops.onboard`
+2. `agentops.policy_check`
+3. `agentops.payment_x402`
+4. `agentops.approval_status`
+5. `agentops.approval_consume`
+6. `agentops.activity_record`
+7. `agentops.operation_check`
+8. `agentops.operation_record`
 
 Tool schemas and runtime paths remain single-sourced in `createAgentOpsTools`. The HTTP implementation may not maintain a second registry.
 
@@ -179,7 +179,7 @@ Verification performs an actual remote MCP sequence against the configured hoste
 1. `initialize`
 2. `notifications/initialized` when required by the tested client library
 3. `tools/list`
-4. `agentops_onboard`
+4. `agentops.onboard`
 
 Success requires authenticated discovery plus the onboard call. Merely updating `last_tested_at` is not success.
 
@@ -189,10 +189,10 @@ Because plaintext credentials are intentionally not recoverable, the later crede
 
 ### Client configurations
 
-Only configurations executed successfully in the compatibility spike are displayed. The console must not show an invented universal JSON format. The default target set is:
+Only configurations executed successfully in compatibility validation are displayed. The console must not show an invented universal JSON format. The default target set is:
 
-- MCP Inspector for protocol-level diagnosis.
-- One production agent host available in the release environment that supports remote URL plus static bearer headers.
+- One production agent host validated with a real model-directed MCP tool call.
+- An optional protocol diagnostic client when it is already trusted and available in the release environment.
 
 If a named host does not support static headers, the console marks it unsupported for the credential-only MVP instead of exposing a broken example.
 
@@ -239,7 +239,7 @@ Hosted service variables:
 | `MCP_MAX_IN_FLIGHT` | no | Per-process concurrency ceiling |
 | `MCP_SHUTDOWN_GRACE_MS` | no | Graceful shutdown deadline |
 
-`AGENTOPS_MCP_CREDENTIAL` remains valid only for the stdio entrypoint and is forbidden as a hosted-service deployment secret. The hosted process must fail startup if that variable is present in its production environment, preventing accidental use of one customer credential for all callers.
+`AGENTOPS_MCP_CREDENTIAL` remains valid only for the stdio entrypoint and is forbidden in the hosted process in every environment. The hosted entrypoint does not load the stdio `.env` file and fails startup if that variable is present, preventing accidental use of one customer credential for all callers.
 
 ## Local Bootstrap and Deployment
 
@@ -306,11 +306,11 @@ Two simultaneous HTTP MCP calls using different agent credentials can create req
 
 Failure impact: the server lifecycle and dependency-injection design is unsafe and implementation stops.
 
-### Assumption 3: real client compatibility
+### Assumption 3: real agent compatibility
 
-MCP Inspector plus one production agent host available locally can connect to a remote Streamable HTTP URL and send a static bearer header on every request.
+A production agent host available locally can connect to a remote Streamable HTTP URL, send a static bearer header on every request, and have a real model invoke an MCP tool rather than a direct API substitute.
 
-Failure impact: the credential-only hosted MVP cannot claim those clients; either a supported client must be selected or the authentication architecture must return for review.
+Failure impact: the credential-only hosted MVP cannot claim usable agent integration; either a supported host must be selected or the authentication architecture must return for review.
 
 ## Test and Release Gates
 
@@ -328,7 +328,7 @@ Failure impact: the credential-only hosted MVP cannot claim those clients; eithe
 ### Live
 
 - The public HTTPS endpoint is exercised from outside the deployment network.
-- At least two real MCP clients complete the supported connection flow.
+- At least one production agent host completes a real model-directed MCP tool call; direct runtime API calls do not satisfy this gate.
 - A real restrictive policy denies a tool/operation through hosted MCP.
 - An approval-required action completes the approval lifecycle through hosted MCP.
 - A real testnet x402 payment succeeds through hosted MCP and appears in activity/evidence surfaces.
