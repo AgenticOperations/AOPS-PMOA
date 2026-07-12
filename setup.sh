@@ -202,7 +202,7 @@ start_service() {
 }
 
 wait_for_service_health() {
-  local label="$1" url="$2" timeout="$3" probe_pid index pid status
+  local label="$1" url="$2" timeout="$3" probe_pid probe_status index pid status
   FAILED_SERVICE_NAME=''
   FAILED_SERVICE_STATUS=''
 
@@ -224,22 +224,22 @@ wait_for_service_health() {
     sleep 0.1
   done
 
-  if wait "$probe_pid"; then
-    for index in "${!SERVICE_PIDS[@]}"; do
-      pid="${SERVICE_PIDS[$index]}"
-      if ! kill -0 "$pid" 2>/dev/null; then
-        if wait "$pid"; then status=0; else status="$?"; fi
-        FAILED_SERVICE_NAME="${SERVICE_NAMES[$index]}"
-        FAILED_SERVICE_STATUS="$status"
-        return 1
-      fi
-    done
+  if wait "$probe_pid"; then probe_status=0; else probe_status="$?"; fi
+  for index in "${!SERVICE_PIDS[@]}"; do
+    pid="${SERVICE_PIDS[$index]}"
+    if ! kill -0 "$pid" 2>/dev/null; then
+      if wait "$pid"; then status=0; else status="$?"; fi
+      FAILED_SERVICE_NAME="${SERVICE_NAMES[$index]}"
+      FAILED_SERVICE_STATUS="$status"
+      return 1
+    fi
+  done
+
+  if [[ "$probe_status" -eq 0 ]]; then
     return 0
-  else
-    status="$?"
   fi
   FAILED_SERVICE_NAME="$label health check"
-  FAILED_SERVICE_STATUS="$status"
+  FAILED_SERVICE_STATUS="$probe_status"
   return 1
 }
 

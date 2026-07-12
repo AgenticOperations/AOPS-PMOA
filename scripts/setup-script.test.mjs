@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const setup = path.join(root, 'setup.sh');
 const startup = path.join(root, 'startup.sh');
+const shellQuote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
 
 test('bootstrap entrypoints are executable and syntactically valid Bash', async () => {
   execFileSync('bash', ['-n', setup, startup]);
@@ -86,7 +87,6 @@ test('sourced supervisor helpers monitor health, exits, logs, pids, and shutdown
   const portFile = path.join(temporaryRoot, 'port');
   const mockRoot = path.join(temporaryRoot, 'mock-root');
   const probeMarker = path.join(temporaryRoot, 'probe-started');
-  const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
   const server = [
     "const fs = require('node:fs');",
     "const http = require('node:http');",
@@ -106,27 +106,27 @@ test('sourced supervisor helpers monitor health, exits, logs, pids, and shutdown
   ].join(' ');
   const script = `
     export AGENTOPS_SETUP_LIB_ONLY=true
-    source ${quote(setup)}
-    RUNTIME_DIR=${quote(runtime)}
+    source ${shellQuote(setup)}
+    RUNTIME_DIR=${shellQuote(runtime)}
     LOG_DIR="$RUNTIME_DIR/logs"
     mkdir -p "$LOG_DIR"
     trap shutdown EXIT INT TERM
 
-    start_service healthy node -e ${quote(server)} ${quote(portFile)}
+    start_service healthy node -e ${shellQuote(server)} ${shellQuote(portFile)}
     healthy_pid="\${SERVICE_PIDS[0]}"
     for _ in {1..100}; do
-      [[ -s ${quote(portFile)} ]] && break
+      [[ -s ${shellQuote(portFile)} ]] && break
       sleep 0.02
     done
-    [[ -s ${quote(portFile)} ]]
-    port="$(<${quote(portFile)})"
+    [[ -s ${shellQuote(portFile)} ]]
+    port="$(<${shellQuote(portFile)})"
     wait_for_service_health Healthy "http://127.0.0.1:$port/healthz" 5000
     [[ -f "$RUNTIME_DIR/healthy.pid" ]]
     [[ -f "$LOG_DIR/healthy.log" ]]
 
-    ROOT_DIR=${quote(mockRoot)}
-    export PROBE_MARKER=${quote(probeMarker)}
-    start_service doomed node -e ${quote(exitsAfterProbeStarts)} ${quote(probeMarker)}
+    ROOT_DIR=${shellQuote(mockRoot)}
+    export PROBE_MARKER=${shellQuote(probeMarker)}
+    start_service doomed node -e ${shellQuote(exitsAfterProbeStarts)} ${shellQuote(probeMarker)}
     doomed_pid="\${SERVICE_PIDS[1]}"
     started="$(node -e 'process.stdout.write(String(Date.now()))')"
     if wait_for_service_health SuccessfulProbe http://127.0.0.1:1/healthz 10000; then
@@ -158,6 +158,58 @@ test('sourced supervisor helpers monitor health, exits, logs, pids, and shutdown
     assert.match(result.stdout, /failure=doomed:7 elapsed=\d+/);
     assert.match(result.stdout, /shutdown=clean/);
     assert.doesNotMatch(result.stdout + result.stderr, /AGENTOPS_MCP_CREDENTIAL/);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test('failed health probe attributes a sibling exit from the final polling gap', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'agentops-failed-probe-'));
+  const runtime = path.join(temporaryRoot, 'runtime');
+  const mockRoot = path.join(temporaryRoot, 'mock-root');
+  const probeMarker = path.join(temporaryRoot, 'probe-started');
+  const exitsAfterProbeStarts = [
+    "const fs = require('node:fs');",
+    'const marker = process.argv[1];',
+    "const poll = () => fs.existsSync(marker) ? setTimeout(() => process.exit(7), 20) : setTimeout(poll, 1);",
+    'poll();',
+  ].join(' ');
+
+  await mkdir(path.join(mockRoot, 'scripts'), { recursive: true });
+  await writeFile(
+    path.join(mockRoot, 'scripts', 'wait-for-http.mjs'),
+    "import fs from 'node:fs'; fs.writeFileSync(process.env.PROBE_MARKER, 'started'); setTimeout(() => process.exit(9), 50);\n",
+  );
+  const script = `
+    export AGENTOPS_SETUP_LIB_ONLY=true
+    source ${shellQuote(setup)}
+    ROOT_DIR=${shellQuote(mockRoot)}
+    RUNTIME_DIR=${shellQuote(runtime)}
+    LOG_DIR="$RUNTIME_DIR/logs"
+    export PROBE_MARKER=${shellQuote(probeMarker)}
+    mkdir -p "$LOG_DIR"
+    trap shutdown EXIT INT TERM
+
+    start_service sibling node -e ${shellQuote(exitsAfterProbeStarts)} ${shellQuote(probeMarker)}
+    if wait_for_service_health FailingProbe http://127.0.0.1:1/healthz 10000; then
+      exit 20
+    fi
+    [[ "$FAILED_SERVICE_NAME" == sibling ]]
+    [[ "$FAILED_SERVICE_STATUS" == 7 ]]
+    printf 'diagnostic=%s:%s\n' "$FAILED_SERVICE_NAME" "$FAILED_SERVICE_STATUS"
+
+    shutdown
+    trap - EXIT
+    [[ ! -e "$RUNTIME_DIR/sibling.pid" ]]
+  `;
+
+  try {
+    const result = spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.match(result.stdout, /diagnostic=sibling:7/);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
