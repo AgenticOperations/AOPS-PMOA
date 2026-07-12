@@ -29,6 +29,11 @@ type HostedChild = {
   readonly stdout: () => string;
 };
 
+type AbortableRequest = {
+  readonly abort: () => void;
+  readonly response: Promise<HttpResponse>;
+};
+
 const execFileAsync = promisify(execFile);
 const services = new Set<HostedMcpService>();
 
@@ -135,9 +140,15 @@ async function availablePort(): Promise<number> {
   return reserved.port;
 }
 
-async function waitForHealth(origin: string): Promise<void> {
+async function waitForHealth(origin: string, running?: HostedChild): Promise<void> {
   const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
+    if (
+      running !== undefined &&
+      (running.child.exitCode !== null || running.child.signalCode !== null)
+    ) {
+      throw new Error('Hosted child exited before health became ready.');
+    }
     try {
       const response = await fetch(`${origin}/healthz`, { signal: AbortSignal.timeout(250) });
       if (response.status === 200 && (await response.text()) === '{"status":"ok"}') return;
@@ -147,6 +158,27 @@ async function waitForHealth(origin: string): Promise<void> {
     await delay(15);
   }
   throw new Error('Hosted child health endpoint did not become ready.');
+}
+
+async function startHealthyHostedChild(): Promise<{
+  readonly origin: string;
+  readonly port: number;
+  readonly running: HostedChild;
+}> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const port = await availablePort();
+    const origin = `http://127.0.0.1:${String(port)}`;
+    const running = spawnHostedChild(port);
+    try {
+      await waitForHealth(origin, running);
+      return { origin, port, running };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Hosted child failed before health.');
+      await stopChild(running);
+    }
+  }
+  throw lastError ?? new Error('Hosted child failed to start after three port attempts.');
 }
 
 async function isPortOpen(port: number): Promise<boolean> {
@@ -257,6 +289,41 @@ async function request(
     if (options.body !== undefined) outgoing.write(options.body);
     outgoing.end();
   });
+}
+
+function beginAbortableRequest(service: HostedMcpService, path: string): AbortableRequest {
+  const address = service.address;
+  if (address === null) throw new Error('Test service is not listening.');
+  let outgoing: ReturnType<typeof httpRequest> | undefined;
+  const response = new Promise<HttpResponse>((resolve, reject) => {
+    outgoing = httpRequest(
+      {
+        headers: { host: 'mcp.example.test' },
+        hostname: '127.0.0.1',
+        method: 'GET',
+        path,
+        port: address.port,
+        setHost: false,
+      },
+      (incoming) => {
+        const chunks: Buffer[] = [];
+        incoming.on('data', (chunk: Buffer) => chunks.push(chunk));
+        incoming.once('end', () => {
+          resolve({
+            body: Buffer.concat(chunks).toString('utf8'),
+            headers: new Headers(),
+            status: incoming.statusCode ?? 0,
+          });
+        });
+      },
+    );
+    outgoing.once('error', reject);
+    outgoing.end();
+  });
+  return {
+    abort: () => outgoing?.destroy(new Error('Test client disconnected.')),
+    response,
+  };
 }
 
 async function rawRequest(service: HostedMcpService, lines: readonly string[]): Promise<string> {
@@ -382,6 +449,154 @@ describe('createHostedMcpService', () => {
     expect(response.body).not.toContain(secret);
   });
 
+  it('rejects upstream redirects without contacting the redirect target', async () => {
+    let targetRequests = 0;
+    const target = createServer((_request, response) => {
+      targetRequests += 1;
+      response.statusCode = 200;
+      response.end('target-secret');
+    });
+    const redirect = createServer();
+    try {
+      await Promise.all([
+        new Promise<void>((resolve, reject) => {
+          target.once('error', reject);
+          target.listen(0, '127.0.0.1', () => {
+            target.off('error', reject);
+            resolve();
+          });
+        }),
+        new Promise<void>((resolve, reject) => {
+          redirect.once('error', reject);
+          redirect.listen(0, '127.0.0.1', () => {
+            redirect.off('error', reject);
+            resolve();
+          });
+        }),
+      ]);
+      const targetAddress = target.address();
+      const redirectAddress = redirect.address();
+      if (
+        targetAddress === null ||
+        typeof targetAddress === 'string' ||
+        redirectAddress === null ||
+        typeof redirectAddress === 'string'
+      ) {
+        throw new Error('Missing redirect test listener.');
+      }
+      let redirectRequests = 0;
+      redirect.on('request', (_request, response) => {
+        redirectRequests += 1;
+        response.statusCode = 302;
+        response.setHeader(
+          'Location',
+          `http://127.0.0.1:${String(targetAddress.port)}/redirect-target`,
+        );
+        response.end();
+      });
+      const service = await startService({
+        config: testConfig({
+          apiBaseUrl: `http://127.0.0.1:${String(redirectAddress.port)}`,
+        }),
+        fetch,
+      });
+
+      const response = await request(service, { path: '/readyz' });
+
+      expect(response.status).toBe(503);
+      expect(response.body).toBe('{"status":"not_ready"}');
+      expect(redirectRequests).toBe(1);
+      expect(targetRequests).toBe(0);
+    } finally {
+      await Promise.all([closeNodeServer(redirect), closeNodeServer(target)]);
+    }
+  });
+
+  it('shares one readiness probe across 40 callers and re-probes after settlement', async () => {
+    let fetchCalls = 0;
+    let releaseProbe: (() => void) | undefined;
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const service = await startService({
+      config: testConfig({ timeoutMs: 500 }),
+      fetch: async () => {
+        fetchCalls += 1;
+        await probeGate;
+        return new Response(null, { status: 204 });
+      },
+    });
+    const concurrent = Array.from({ length: 40 }, async () => request(service, { path: '/readyz' }));
+    await delay(25);
+    const callsBeforeRelease = fetchCalls;
+    releaseProbe?.();
+
+    const responses = await Promise.all(concurrent);
+    expect(callsBeforeRelease).toBe(1);
+    expect(responses.map((response) => response.status)).toEqual(Array(40).fill(200));
+    expect(new Set(responses.map((response) => response.body))).toEqual(
+      new Set(['{"status":"ready"}']),
+    );
+
+    const later = await request(service, { path: '/readyz' });
+    expect(later.status).toBe(200);
+    expect(fetchCalls).toBe(2);
+  });
+
+  it('aborts one shared readiness probe during shutdown', async () => {
+    let fetchCalls = 0;
+    let sharedSignal: AbortSignal | undefined;
+    const service = await startService({
+      config: testConfig({ shutdownGraceMs: 30, timeoutMs: 1_000 }),
+      fetch: (_input, init) => {
+        fetchCalls += 1;
+        sharedSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          sharedSignal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('shutdown-secret', 'AbortError')),
+            { once: true },
+          );
+        });
+      },
+    });
+    const requests = Array.from({ length: 8 }, async () => request(service, { path: '/readyz' }));
+    await delay(20);
+
+    await service.close();
+    await Promise.allSettled(requests);
+
+    expect(fetchCalls).toBe(1);
+    expect(sharedSignal?.aborted).toBe(true);
+  });
+
+  it('keeps the shared probe bounded when one readiness client disconnects', async () => {
+    let fetchCalls = 0;
+    let releaseProbe: (() => void) | undefined;
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const service = await startService({
+      config: testConfig({ timeoutMs: 500 }),
+      fetch: async () => {
+        fetchCalls += 1;
+        await probeGate;
+        return new Response(null, { status: 204 });
+      },
+    });
+    const disconnected = beginAbortableRequest(service, '/readyz');
+    const remaining = request(service, { path: '/readyz' });
+    await delay(20);
+    disconnected.abort();
+    await expect(disconnected.response).rejects.toThrow('Test client disconnected');
+    const callsBeforeRelease = fetchCalls;
+    releaseProbe?.();
+
+    await expect(remaining).resolves.toMatchObject({ status: 200 });
+    expect(callsBeforeRelease).toBe(1);
+    expect(fetchCalls).toBe(1);
+  });
+
   it('delegates /mcp to the real hosted handler with a request-scoped runtime client', async () => {
     const credentials: string[] = [];
     const service = await startService({
@@ -454,6 +669,59 @@ describe('createHostedMcpService', () => {
 
     expect(service.address?.port).toBeGreaterThan(0);
     expect(service.origin).toBe(`http://127.0.0.1:${String(service.address?.port)}`);
+  });
+
+  it('leaves no listener after the exact concurrent start-close race and repeated close calls', async () => {
+    for (let iteration = 0; iteration < 20; iteration += 1) {
+      const service = createHostedMcpService({
+        config: testConfig(),
+        fetch: () => Promise.resolve(new Response(null, { status: 204 })),
+        createRuntimeClient: () => fakeRuntimeClient(),
+      });
+      services.add(service);
+
+      const started = service.start();
+      const closed = service.close();
+      expect(service.close()).toBe(closed);
+      await Promise.allSettled([started, closed]);
+
+      expect(service.server.listening).toBe(false);
+      expect(service.address).toBeNull();
+      expect(service.origin).toBeNull();
+      await expect(service.close()).resolves.toBeUndefined();
+    }
+  });
+
+  it('is idempotent before start and after a failed start', async () => {
+    const closedBeforeStart = createHostedMcpService({
+      config: testConfig(),
+      fetch: () => Promise.resolve(new Response(null, { status: 204 })),
+      createRuntimeClient: () => fakeRuntimeClient(),
+    });
+    services.add(closedBeforeStart);
+    const firstClose = closedBeforeStart.close();
+    expect(closedBeforeStart.close()).toBe(firstClose);
+    await firstClose;
+    await expect(closedBeforeStart.start()).rejects.toThrow('closed');
+    expect(closedBeforeStart.address).toBeNull();
+
+    const reserved = await listenOnAvailablePort();
+    try {
+      const failedStart = createHostedMcpService({
+        config: testConfig({ port: reserved.port }),
+        fetch: () => Promise.resolve(new Response(null, { status: 204 })),
+        createRuntimeClient: () => fakeRuntimeClient(),
+      });
+      services.add(failedStart);
+      await expect(failedStart.start()).rejects.toMatchObject({ code: 'EADDRINUSE' });
+      const closeAfterFailure = failedStart.close();
+      expect(failedStart.close()).toBe(closeAfterFailure);
+      await expect(closeAfterFailure).resolves.toBeUndefined();
+      expect(failedStart.server.listening).toBe(false);
+      expect(failedStart.address).toBeNull();
+    } finally {
+      await closeNodeServer(reserved.server);
+    }
   });
 
   it('closes idempotently and force-closes an incomplete in-flight request within the grace bound', async () => {
@@ -533,11 +801,8 @@ describe('hosted HTTP module', () => {
   it.each(['SIGINT', 'SIGTERM'] as const)(
     'runs the executable service and exits cleanly on %s',
     async (signal) => {
-      const port = await availablePort();
-      const origin = `http://127.0.0.1:${String(port)}`;
-      const running = spawnHostedChild(port);
+      const { origin, port, running } = await startHealthyHostedChild();
       try {
-        await waitForHealth(origin);
         expect(running.stdout()).toBe('');
         expect(running.stderr()).toBe(`agentOps hosted MCP listening on ${origin}\n`);
 

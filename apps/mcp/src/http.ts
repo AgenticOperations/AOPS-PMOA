@@ -150,10 +150,10 @@ export function createHostedMcpService(options: HostedMcpServiceOptions = {}): H
   let inFlight = 0;
   let startPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
-  let serverClosed = false;
+  let readinessProbe: Promise<boolean> | undefined;
   let resolveWhenIdle: (() => void) | undefined;
 
-  const probeReadiness = async (): Promise<boolean> => {
+  const runReadinessProbe = async (): Promise<boolean> => {
     const controller = new AbortController();
     readinessControllers.add(controller);
     let timeout: NodeJS.Timeout | undefined;
@@ -168,6 +168,7 @@ export function createHostedMcpService(options: HostedMcpServiceOptions = {}): H
         fetchImpl(upstreamHealthUrl(config.apiBaseUrl), {
           headers: { accept: 'application/json' },
           method: 'GET',
+          redirect: 'error',
           signal: controller.signal,
         }),
       ).then(
@@ -181,6 +182,16 @@ export function createHostedMcpService(options: HostedMcpServiceOptions = {}): H
       if (timeout !== undefined) clearTimeout(timeout);
       readinessControllers.delete(controller);
     }
+  };
+
+  const probeReadiness = (): Promise<boolean> => {
+    if (readinessProbe !== undefined) return readinessProbe;
+    const probe = runReadinessProbe();
+    readinessProbe = probe;
+    void probe.then(() => {
+      if (readinessProbe === probe) readinessProbe = undefined;
+    });
+    return probe;
   };
 
   const route = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -257,12 +268,10 @@ export function createHostedMcpService(options: HostedMcpServiceOptions = {}): H
     server,
     start(): Promise<void> {
       if (closePromise !== undefined) return Promise.reject(new Error('Hosted MCP service is closed.'));
-      if (server.listening) return Promise.resolve();
       if (startPromise !== undefined) return startPromise;
       startPromise = new Promise<void>((resolve, reject) => {
         const onError = (error: Error): void => {
           server.off('listening', onListening);
-          startPromise = undefined;
           reject(error);
         };
         const onListening = (): void => {
@@ -277,40 +286,47 @@ export function createHostedMcpService(options: HostedMcpServiceOptions = {}): H
     },
     close(): Promise<void> {
       if (closePromise !== undefined) return closePromise;
-      if (!server.listening) {
-        closePromise = Promise.resolve();
-        return closePromise;
-      }
+      closePromise = (async () => {
+        if (startPromise !== undefined) {
+          await startPromise.catch(() => undefined);
+        }
+        for (const controller of readinessControllers) controller.abort();
+        if (!server.listening) return;
 
-      closePromise = new Promise<void>((resolve, reject) => {
-        let settled = false;
-        const finish = (error?: Error): void => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(graceTimer);
-          resolveWhenIdle = undefined;
-          if (error === undefined) resolve();
-          else reject(error);
-        };
-        const maybeFinish = (): void => {
-          if (serverClosed && inFlight === 0) finish();
-        };
-        resolveWhenIdle = maybeFinish;
-        const graceTimer = setTimeout(() => {
-          for (const controller of readinessControllers) controller.abort();
-          server.closeAllConnections();
-          for (const socket of sockets) socket.destroy();
-          finish();
-        }, config.shutdownGraceMs);
-        server.close((error) => {
-          if (error !== undefined && (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
-            finish(error);
-            return;
-          }
-          serverClosed = true;
-          maybeFinish();
+        await new Promise<void>((resolve, reject) => {
+          let serverClosed = false;
+          let settled = false;
+          const finish = (error?: Error): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(graceTimer);
+            resolveWhenIdle = undefined;
+            if (error === undefined) resolve();
+            else reject(error);
+          };
+          const maybeFinish = (): void => {
+            if (serverClosed && inFlight === 0) finish();
+          };
+          resolveWhenIdle = maybeFinish;
+          const graceTimer = setTimeout(() => {
+            for (const controller of readinessControllers) controller.abort();
+            server.closeAllConnections();
+            for (const socket of sockets) socket.destroy();
+            finish();
+          }, config.shutdownGraceMs);
+          server.close((error) => {
+            if (
+              error !== undefined &&
+              (error as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING'
+            ) {
+              finish(error);
+              return;
+            }
+            serverClosed = true;
+            maybeFinish();
+          });
         });
-      });
+      })();
       return closePromise;
     },
   };
