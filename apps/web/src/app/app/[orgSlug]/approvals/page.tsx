@@ -1,11 +1,10 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
-import { OrgAuditPanel } from '@/components/audit/OrgAuditPanel';
-import { PageHeader } from '@/components/ui/page-header';
+import { ApprovalIndex } from '@/components/approvals/ApprovalIndex';
+import { ApprovalFilters } from '@/components/approvals/ApprovalFilters';
 import { approveApprovalAction, denyApprovalAction } from '@/app/actions/approvals';
-import type { ApprovalActionRecord, ApprovalRecord } from '@/lib/approval-types';
-import { listAuditEvents } from '@/lib/server/audit-client';
+import type { ApprovalRecord } from '@/lib/approval-types';
 import { listApprovals } from '@/lib/server/approval-client';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 
@@ -29,7 +28,7 @@ function singleParam(value: string | readonly string[] | undefined): string {
 }
 
 function normalizeStatus(value: string): StatusFilter {
-  return approvalStatuses.includes(value as ApprovalStatus) ? (value as ApprovalStatus) : 'all';
+  return approvalStatuses.includes(value as ApprovalStatus) ? value as ApprovalStatus : 'all';
 }
 
 function normalizeTab(value: string): ApprovalTab {
@@ -39,110 +38,6 @@ function normalizeTab(value: string): ApprovalTab {
 function normalizePage(value: string): number {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
-}
-
-function titleCase(value: string): string {
-  return value
-    .split(/[_\s]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function objectValue(value: unknown, key: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
-  const child = (value as Record<string, unknown>)[key];
-  return child !== null && typeof child === 'object' && !Array.isArray(child) ? (child as Record<string, unknown>) : {};
-}
-
-function stringValue(value: Record<string, unknown>, key: string): string | null {
-  const child = value[key];
-  return typeof child === 'string' && child.trim().length > 0 ? child : null;
-}
-
-function approvalContextRows(context: Record<string, unknown>): Array<{ readonly label: string; readonly value: string }> {
-  const resource = objectValue(context, 'resource');
-  const payment = objectValue(context, 'payment');
-  const tool = objectValue(context, 'tool');
-  const rows = [
-    {
-      label: 'Resource',
-      value: stringValue(resource, 'url') ?? stringValue(resource, 'domain') ?? stringValue(resource, 'category'),
-    },
-    {
-      label: 'Payment',
-      value:
-        stringValue(payment, 'amount') === null
-          ? null
-          : `${stringValue(payment, 'amount')} ${stringValue(payment, 'asset') ?? ''}`.trim(),
-    },
-    { label: 'Tool', value: stringValue(tool, 'name') },
-  ];
-  return rows.filter((row): row is { readonly label: string; readonly value: string } => row.value !== null);
-}
-
-function timeText(value: string): string {
-  return new Date(value).toLocaleString();
-}
-
-function expiryText(expiresAt: string): string {
-  const diffMs = new Date(expiresAt).getTime() - Date.now();
-  if (diffMs <= 0) return 'Expired';
-  const minutes = Math.max(1, Math.floor(diffMs / 60000));
-  if (minutes < 60) return `${minutes} min left`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  if (hours < 24) return remainingMinutes === 0 ? `${hours} hr left` : `${hours} hr ${remainingMinutes} min left`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? '1 day left' : `${days} days left`;
-}
-
-function fallbackActions(approval: ApprovalRecord): readonly ApprovalActionRecord[] {
-  const actions: ApprovalActionRecord[] = [
-    {
-      id: `${approval.id}:requested`,
-      actor_type: 'connection',
-      actor_id: approval.requested_by,
-      action: 'requested',
-      note: '',
-      created_at: approval.created_at,
-    },
-  ];
-  if (approval.approved_at !== null && approval.approved_by !== null) {
-    actions.push({
-      id: `${approval.id}:approved`,
-      actor_type: 'user',
-      actor_id: approval.approved_by,
-      action: 'approved',
-      note: approval.note,
-      created_at: approval.approved_at,
-    });
-  }
-  if (approval.denied_at !== null && approval.denied_by !== null) {
-    actions.push({
-      id: `${approval.id}:denied`,
-      actor_type: 'user',
-      actor_id: approval.denied_by,
-      action: 'denied',
-      note: approval.note,
-      created_at: approval.denied_at,
-    });
-  }
-  if (approval.consumed_at !== null) {
-    actions.push({
-      id: `${approval.id}:consumed`,
-      actor_type: 'connection',
-      actor_id: approval.connection_id,
-      action: 'consumed',
-      note: '',
-      created_at: approval.consumed_at,
-    });
-  }
-  return actions;
-}
-
-function actionTimeline(approval: ApprovalRecord): readonly ApprovalActionRecord[] {
-  return approval.actions !== undefined && approval.actions.length > 0 ? approval.actions : fallbackActions(approval);
 }
 
 function pageHref(orgSlug: string, nextPage: number, filters: {
@@ -169,6 +64,7 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
   const actionFilter = singleParam(query.action).trim();
   const agentFilter = singleParam(query.agent).trim();
   const pageNumber = normalizePage(singleParam(query.page));
+  const renderedAt = new Date().toISOString();
 
   let org;
   try {
@@ -177,10 +73,8 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
     redirect('/auth');
   }
 
-  const [{ approvals }, auditEvents] = await Promise.all([listApprovals(org.id), listAuditEvents(org.id, 30)]);
-  const tabApprovals = approvals.filter((approval) =>
-    activeTab === 'inbox' ? approval.status === 'pending' : approval.status !== 'pending',
-  );
+  const { approvals } = await listApprovals(org.id);
+  const tabApprovals = approvals.filter((approval) => activeTab === 'inbox' ? approval.status === 'pending' : approval.status !== 'pending');
   const filteredApprovals = tabApprovals.filter((approval) => {
     if (statusFilter !== 'all' && approval.status !== statusFilter) return false;
     if (actionFilter.length > 0 && !approval.action_id.toLowerCase().includes(actionFilter.toLowerCase())) return false;
@@ -190,257 +84,91 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
   const totalPages = Math.max(1, Math.ceil(filteredApprovals.length / pageSize));
   const currentPage = Math.min(pageNumber, totalPages);
   const visibleApprovals = filteredApprovals.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const pendingCount = approvals.filter((approval) => approval.status === 'pending').length;
-  const consumedCount = approvals.filter((approval) => approval.status === 'consumed').length;
-  const finalCount = approvals.filter((approval) => ['approved', 'denied', 'expired', 'cancelled', 'consumed'].includes(approval.status)).length;
+  const actions = Object.fromEntries(visibleApprovals.map((approval) => [approval.id, {
+    approve: approveApprovalAction.bind(null, org.id, org.slug, approval.id),
+    deny: denyApprovalAction.bind(null, org.id, org.slug, approval.id),
+  }]));
 
   return (
     <ConsoleShell active="approvals" org={org}>
-      <div className="ops-page approvals-workbench">
-        <PageHeader
-          className="approvals-header"
-          description="Review one-time runtime exceptions, preserve the decision trail, and verify consumption."
-          title="Approvals"
-          actions={
-          <div className="approvals-stats" aria-label="Approval queue summary">
-            <div>
-              <span>Pending</span>
-              <strong>{pendingCount}</strong>
-            </div>
-            <div>
-              <span>Consumed</span>
-              <strong>{consumedCount}</strong>
-            </div>
-            <div>
-              <span>Closed</span>
-              <strong>{finalCount}</strong>
-            </div>
-          </div>
-          }
-        />
-
-        <nav aria-label="Approval sections" className="settings-tabs">
-          <Link
-            aria-current={activeTab === 'inbox' ? 'page' : undefined}
-            className={activeTab === 'inbox' ? 'is-active' : ''}
-            href={`/app/${org.slug}/approvals`}
-          >
-            Inbox
-          </Link>
-          <Link
-            aria-current={activeTab === 'history' ? 'page' : undefined}
-            className={activeTab === 'history' ? 'is-active' : ''}
-            href={`/app/${org.slug}/approvals?tab=history`}
-          >
-            History
-          </Link>
+      <div className="approvals-workbench">
+        <nav aria-label="Approval sections" className="approval-subnav">
+          <Link aria-current={activeTab === 'inbox' ? 'page' : undefined} className={activeTab === 'inbox' ? 'is-active' : ''} href={`/app/${org.slug}/approvals`}>Inbox</Link>
+          <Link aria-current={activeTab === 'history' ? 'page' : undefined} className={activeTab === 'history' ? 'is-active' : ''} href={`/app/${org.slug}/approvals?tab=history`}>History</Link>
         </nav>
 
-        <section className="ops-surface" aria-labelledby="approval-inbox-title">
-          <div className="ops-surface-heading approvals-surface-heading">
-            <div>
-              <h2 id="approval-inbox-title">{activeTab === 'inbox' ? 'Inbox' : 'Approval history'}</h2>
-              <p>Every request is tied to a policy decision, target context, expiry, and single-use consumption hash.</p>
-            </div>
-            <span className="ops-count-pill">
-              {filteredApprovals.length} of {tabApprovals.length}
-            </span>
+        <header className="approval-page-header">
+          <div>
+            <p className="approval-eyebrow">Runtime / human decisions</p>
+            <h1>Approvals</h1>
+            <p>Resolve one-time policy exceptions with their full context, expiry, decision, and consumption trail.</p>
+          </div>
+        </header>
+
+        <ApprovalFilters
+          action={actionFilter}
+          agent={agentFilter}
+          clearHref={activeTab === 'inbox' ? `/app/${org.slug}/approvals` : `/app/${org.slug}/approvals?tab=history`}
+          formAction={`/app/${org.slug}/approvals`}
+          status={statusFilter}
+          statuses={activeTab === 'inbox' ? ['pending'] : ['approved', 'denied', 'expired', 'cancelled', 'consumed']}
+          tab={activeTab}
+        />
+
+        <section className="approval-index-section" aria-labelledby="approval-index-title">
+          <div className="approval-index-heading">
+            <div><h2 id="approval-index-title">{activeTab === 'inbox' ? 'Pending requests' : 'Approval history'}</h2><p>Each request remains tied to its decision, target, context hash, expiry, and consumption evidence.</p></div>
+            <span>{filteredApprovals.length} of {tabApprovals.length}</span>
+          </div>
+          <div className="approval-index-body">
+            {visibleApprovals.length === 0 ? (
+              <div className="console-empty-state"><h3>{activeTab === 'inbox' ? 'No pending approvals' : 'No matching approval history'}</h3><p>Approval-required managed requests appear here with their persisted policy context.</p></div>
+            ) : <ApprovalIndex actions={actions} approvals={visibleApprovals} renderedAt={renderedAt} />}
           </div>
 
-          <form className="approvals-filter-bar" action={`/app/${org.slug}/approvals`}>
-            <input name="tab" type="hidden" value={activeTab} />
-            <label>
-              <span>Status</span>
-              <select defaultValue={statusFilter} name="status">
-                <option value="all">All statuses</option>
-                {approvalStatuses.map((status) => (
-                  <option key={status} value={status}>
-                    {titleCase(status)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Action</span>
-              <input defaultValue={actionFilter} name="action" placeholder="payment.x402.authorize" />
-            </label>
-            <label>
-              <span>Agent</span>
-              <input defaultValue={agentFilter} name="agent" placeholder="agt_..." />
-            </label>
-            <div className="approvals-filter-actions">
-              <button className="button-secondary" type="submit">
-                Apply
-              </button>
-              <Link
-                className="button-ghost"
-                href={activeTab === 'inbox' ? `/app/${org.slug}/approvals` : `/app/${org.slug}/approvals?tab=history`}
-              >
-                Reset
-              </Link>
-            </div>
-          </form>
-
-          {visibleApprovals.length === 0 ? (
-            <div className="ops-empty-state">
-              <h3>{activeTab === 'inbox' ? 'No pending approvals' : 'No matching approval history'}</h3>
-              <p>Approval-required runtime checks will appear here when policy evaluation returns approval_required.</p>
-            </div>
-          ) : (
-            <div className="approvals-list" aria-label="Approval requests">
-              {visibleApprovals.map((approval) => {
-                const contextRows = approvalContextRows(approval.context);
-                const actions = actionTimeline(approval);
-                return (
-                  <article className="approval-card" key={approval.id}>
-                    <div className="approval-card-main">
-                      <div className="approval-title-row">
-                        <div>
-                          <span className="approval-eyebrow">{approval.action_id}</span>
-                          <h3>{titleCase(approval.status)} request</h3>
-                        </div>
-                        <span className={`ops-state-pill ops-state-${approval.status}`}>{approval.status}</span>
-                      </div>
-
-                      <div className="approval-meta-grid">
-                        <div>
-                          <span>Agent</span>
-                          <strong>{approval.agent_id}</strong>
-                        </div>
-                        <div>
-                          <span>Decision</span>
-                          <strong>{approval.decision_id}</strong>
-                        </div>
-                        <div>
-                          <span>Target</span>
-                          <strong>
-                            {approval.target_type}
-                            {approval.target_id === null ? '' : `:${approval.target_id}`}
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Expires</span>
-                          <strong>{expiryText(approval.expires_at)}</strong>
-                        </div>
-                      </div>
-
-                      {contextRows.length > 0 ? (
-                        <dl className="approval-context-grid">
-                          {contextRows.map((row) => (
-                            <div key={row.label}>
-                              <dt>{row.label}</dt>
-                              <dd>{row.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      ) : null}
-
-                      <div className="approval-proof-grid">
-                        <div>
-                          <span>Request</span>
-                          <strong>{approval.id}</strong>
-                          <small>
-                            Created <time dateTime={approval.created_at}>{timeText(approval.created_at)}</time>
-                          </small>
-                        </div>
-                        <div>
-                          <span>Context hash</span>
-                          <strong>{approval.context_hash}</strong>
-                          <small>Replay guard for the original request context.</small>
-                        </div>
-                        {approval.consumption !== null && approval.consumption !== undefined ? (
-                          <div>
-                            <span>Consumption proof</span>
-                            <strong>{approval.consumption.id}</strong>
-                            <small>
-                              Decision {approval.consumption.decision_id} · {timeText(approval.consumption.created_at)}
-                            </small>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div className="approval-timeline" aria-label={`Approval ${approval.id} history`}>
-                        {actions.map((action) => (
-                          <div className="approval-timeline-row" key={action.id}>
-                            <span>{titleCase(action.action)}</span>
-                            <strong>
-                              {action.actor_type}:{action.actor_id}
-                            </strong>
-                            <time dateTime={action.created_at}>{timeText(action.created_at)}</time>
-                            {action.note.trim().length > 0 ? <em>{action.note}</em> : null}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {approval.status === 'pending' ? (
-                      <div className="approval-decision-panel">
-                        <form action={approveApprovalAction.bind(null, org.id, org.slug, approval.id)}>
-                          <label>
-                            <span>Decision note</span>
-                            <input name="note" placeholder="Why this request is acceptable" />
-                          </label>
-                          <button className="button-primary" type="submit">
-                            Approve
-                          </button>
-                        </form>
-                        <form action={denyApprovalAction.bind(null, org.id, org.slug, approval.id)}>
-                          <label>
-                            <span>Decision note</span>
-                            <input name="note" placeholder="Why this request is denied" />
-                          </label>
-                          <button className="button-danger" type="submit">
-                            Deny
-                          </button>
-                        </form>
-                      </div>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-
-          {filteredApprovals.length > pageSize ? (
-            <nav className="approvals-pagination" aria-label="Approval pagination">
-              <Link
-                aria-disabled={currentPage === 1}
-                className={`button-secondary ${currentPage === 1 ? 'is-disabled' : ''}`}
-                href={pageHref(org.slug, Math.max(1, currentPage - 1), {
-                  status: statusFilter,
-                  action: actionFilter,
-                  agent: agentFilter,
-                  tab: activeTab,
-                })}
-              >
-                Previous
-              </Link>
-              <span>
-                Page {currentPage} of {totalPages}
-              </span>
-              <Link
-                aria-disabled={currentPage === totalPages}
-                className={`button-secondary ${currentPage === totalPages ? 'is-disabled' : ''}`}
-                href={pageHref(org.slug, Math.min(totalPages, currentPage + 1), {
-                  status: statusFilter,
-                  action: actionFilter,
-                  agent: agentFilter,
-                  tab: activeTab,
-                })}
-              >
-                Next
-              </Link>
-            </nav>
-          ) : null}
+          <ApprovalPager
+            action={actionFilter}
+            agent={agentFilter}
+            currentPage={currentPage}
+            orgSlug={org.slug}
+            status={statusFilter}
+            tab={activeTab}
+            total={filteredApprovals.length}
+            totalPages={totalPages}
+          />
         </section>
-        <OrgAuditPanel
-          description="Approval requests, grants, denials, and one-time consumption events recorded in the immutable audit chain."
-          domains={['policy']}
-          emptyText="No approval audit events have been recorded yet."
-          events={auditEvents.events.filter((event) => event.action.startsWith('approval.'))}
-          title="Approval audit"
-        />
       </div>
     </ConsoleShell>
+  );
+}
+
+function ApprovalPager({ action, agent, currentPage, orgSlug, status, tab, total, totalPages }: {
+  readonly action: string;
+  readonly agent: string;
+  readonly currentPage: number;
+  readonly orgSlug: string;
+  readonly status: StatusFilter;
+  readonly tab: ApprovalTab;
+  readonly total: number;
+  readonly totalPages: number;
+}) {
+  const start = total === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const end = Math.min(total, currentPage * pageSize);
+  const pageNumbers = Array.from({ length: totalPages }, (_, index) => index + 1).slice(
+    Math.max(0, Math.min(currentPage - 2, totalPages - 3)),
+    Math.max(0, Math.min(currentPage - 2, totalPages - 3)) + 3,
+  );
+  const href = (page: number) => pageHref(orgSlug, page, { status, action, agent, tab });
+
+  return (
+    <nav aria-label="Approval pagination" className="approval-pager">
+      <span>Showing {start}-{end} of {total}</span>
+      <div>
+        {currentPage > 1 ? <Link aria-label="Previous approval page" href={href(currentPage - 1)}>‹</Link> : <span aria-hidden="true">‹</span>}
+        {pageNumbers.map((page) => <Link aria-current={page === currentPage ? 'page' : undefined} href={href(page)} key={page}>{page}</Link>)}
+        {currentPage < totalPages ? <Link aria-label="Next approval page" href={href(currentPage + 1)}>›</Link> : <span aria-hidden="true">›</span>}
+      </div>
+      <span>{pageSize} per page</span>
+    </nav>
   );
 }

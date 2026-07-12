@@ -31,6 +31,22 @@ type ApiErrorBody = {
   readonly message?: string;
 };
 
+class PaymentsApiError extends Error {
+  readonly code: string | null;
+  readonly status: number;
+
+  constructor(status: number, body: ApiErrorBody) {
+    super(body.message ?? body.error ?? `API request failed with ${status}`);
+    this.name = 'PaymentsApiError';
+    this.code = body.error ?? null;
+    this.status = status;
+  }
+}
+
+export type ProviderReadResult<T> =
+  | { readonly status: 'available'; readonly value: T }
+  | { readonly status: 'unavailable'; readonly value: null };
+
 function apiBaseUrl(): string {
   return readWebEnv().AGENTOPS_API_BASE_URL.replace(/\/$/, '');
 }
@@ -61,7 +77,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       body = {};
     }
-    throw new Error(body.message ?? body.error ?? `API request failed with ${response.status}`);
+    throw new PaymentsApiError(response.status, body);
   }
 
   return (await response.json()) as T;
@@ -134,6 +150,17 @@ export async function getCircleConnection(orgId: string): Promise<CircleConnecti
   return body.connection;
 }
 
+export async function readCircleConnection(orgId: string): Promise<ProviderReadResult<CircleConnectionRecord>> {
+  try {
+    return { status: 'available', value: await getCircleConnection(orgId) };
+  } catch (error) {
+    if (error instanceof PaymentsApiError && error.status >= 500) {
+      return { status: 'unavailable', value: null };
+    }
+    throw error;
+  }
+}
+
 export async function initializeCircleConnection(
   orgId: string,
   input: { readonly email: string },
@@ -171,6 +198,17 @@ export async function setProviderMode(orgId: string, input: { readonly mode: Pay
 export async function getProviderHealth(orgId: string): Promise<CircleProviderHealth> {
   const body = await apiFetch<{ readonly health: CircleProviderHealth }>(`/v1/orgs/${orgId}/payments/provider-health`);
   return body.health;
+}
+
+export async function readProviderHealth(orgId: string): Promise<ProviderReadResult<CircleProviderHealth>> {
+  try {
+    return { status: 'available', value: await getProviderHealth(orgId) };
+  } catch (error) {
+    if (error instanceof PaymentsApiError && error.status >= 500) {
+      return { status: 'unavailable', value: null };
+    }
+    throw error;
+  }
 }
 
 export async function listPaymentCapabilities(orgId: string): Promise<CircleChainCapabilityRecord[]> {

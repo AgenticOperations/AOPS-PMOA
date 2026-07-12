@@ -1,159 +1,182 @@
-import type { ReactNode } from 'react';
-import { Suspense } from 'react';
 import Link from 'next/link';
-import { IconAlertTriangle } from '@tabler/icons-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PageHeader } from '@/components/ui/page-header';
+import { IconAlertTriangle, IconArrowRight } from '@tabler/icons-react';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { EmptyState } from '@/components/ui/empty-state';
-import { StatTile } from './StatTile';
-import { TreasuryBalanceTiles, TreasuryBalanceTilesSkeleton } from './TreasuryBalanceTiles';
-import type { CircleProviderJobRecord, OrgPaymentModeRecord, PaymentRailReadinessRecord } from '@/lib/payments-types';
+import { ChainMark } from './ChainMark';
+import { TreasuryPageHeader, TreasurySectionNav } from './TreasuryChrome';
+import { CHAIN_LABELS, PRIMARY_RAILS, walletUsdc } from '@/lib/payments-format';
+import type { AgentRosterItem } from '@/lib/identity-spine-types';
+import type {
+  AgentPaymentAccountRecord,
+  CircleChainBalanceRecord,
+  CircleProviderJobRecord,
+  OrgPaymentModeRecord,
+  PaymentChain,
+  PaymentRailReadinessRecord,
+  TreasuryOverviewRecord,
+} from '@/lib/payments-types';
 
 type NeedsAttentionItem = {
   readonly description: string;
   readonly href: string;
   readonly title: string;
+  readonly tone: 'warning' | 'danger';
 };
 
 type TreasuryOverviewProps = {
-  readonly agentsWithAccess: number;
-  readonly circleConnected: boolean;
+  readonly accounts: readonly AgentPaymentAccountRecord[];
+  readonly agents: readonly AgentRosterItem[];
+  readonly balances: readonly CircleChainBalanceRecord[];
+  readonly circleConnectionState: 'connected' | 'disconnected' | 'unavailable';
   readonly failedJobs: readonly CircleProviderJobRecord[];
-  readonly orgId: string;
   readonly orgSlug: string;
+  readonly overview: TreasuryOverviewRecord;
   readonly paymentMode: OrgPaymentModeRecord;
   readonly pendingReservations: number;
   readonly railReadiness: readonly PaymentRailReadinessRecord[];
 };
 
+function amount(value: string | null | undefined): number {
+  const parsed = Number.parseFloat(value ?? '0');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function money(value: string | number): string {
+  const parsed = typeof value === 'number' ? value : amount(value);
+  return `${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(parsed)} USDC`;
+}
+
 export function TreasuryOverview({
-  agentsWithAccess,
-  circleConnected,
+  accounts,
+  agents,
+  balances,
+  circleConnectionState,
   failedJobs,
-  orgId,
   orgSlug,
+  overview,
   paymentMode,
   pendingReservations,
   railReadiness,
 }: TreasuryOverviewProps) {
   const base = `/app/${orgSlug}/payments`;
+  const circleConnected = circleConnectionState === 'connected';
   const verifiedRails = circleConnected ? railReadiness.filter((rail) => rail.status === 'ready').length : 0;
-  const unverifiedSupported = circleConnected
-    ? railReadiness.filter((rail) => rail.supported && rail.status !== 'ready')
-    : [];
+  const supportedRails = railReadiness.filter((rail) => rail.supported);
+  const activeAccounts = accounts.filter((account) => account.payment_access && account.status === 'active');
+  const disabledAccounts = accounts.filter((account) => account.status === 'disabled').length;
+  const unverifiedSupported = circleConnected ? supportedRails.filter((rail) => rail.status !== 'ready') : [];
+  const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const nearBudget = activeAccounts.find((account) => amount(account.budget_usdc) > 0 && amount(account.spent_usdc) / amount(account.budget_usdc) >= 0.8);
 
   const needsAttention: NeedsAttentionItem[] = [];
-  if (!circleConnected) {
+  if (circleConnectionState === 'unavailable') {
     needsAttention.push({
-      description: 'Connect the organization-owned Circle Agent Wallet before agents can access treasury liquidity or execute payments.',
+      description: 'The current Circle connection state could not be verified. Payment mutations remain disabled until the provider service recovers.',
+      href: `${base}/sources`,
+      title: 'Circle provider unavailable',
+      tone: 'danger',
+    });
+  } else if (!circleConnected) {
+    needsAttention.push({
+      description: 'Connect the organization-owned Circle Agent Wallet before agents can execute payments.',
       href: `/onboarding/${orgSlug}`,
       title: 'Circle connection required',
+      tone: 'danger',
     });
   }
   if (unverifiedSupported.length > 0) {
     needsAttention.push({
-      description: `${unverifiedSupported.length} supported rail${unverifiedSupported.length === 1 ? '' : 's'} still ${unverifiedSupported.length === 1 ? 'needs' : 'need'} a settlement proof before agents can use ${unverifiedSupported.length === 1 ? 'it' : 'them'}.`,
+      description: `${unverifiedSupported.length} supported rail${unverifiedSupported.length === 1 ? '' : 's'} still need settlement evidence.`,
       href: `${base}/sources`,
-      title: 'Unverified payment rail',
+      title: 'Rail proof required',
+      tone: 'warning',
     });
   }
   if (failedJobs.length > 0) {
     needsAttention.push({
-      description: `${failedJobs.length} provider job${failedJobs.length === 1 ? '' : 's'} recently failed. Review and retry from Liquidity.`,
+      description: `${failedJobs.length} provider job${failedJobs.length === 1 ? '' : 's'} failed and can be reviewed from Liquidity.`,
       href: `${base}/liquidity`,
-      title: 'Failed provider job',
+      title: 'Provider job failed',
+      tone: 'danger',
     });
   }
-  if (agentsWithAccess === 0) {
+  if (activeAccounts.length === 0) {
     needsAttention.push({
-      description: 'No agent currently has payment access enabled. Grant access from Agent Access.',
+      description: 'No agent currently has payment access enabled.',
       href: `${base}/agent-access`,
-      title: 'No agent has payment access',
+      title: 'Payment access is off',
+      tone: 'warning',
+    });
+  }
+  if (nearBudget !== undefined) {
+    needsAttention.push({
+      description: `${agentNames.get(nearBudget.agent_id) ?? nearBudget.agent_id} has used ${money(nearBudget.spent_usdc)} of a ${money(nearBudget.budget_usdc)} budget.`,
+      href: `${base}/agent-access`,
+      title: 'Agent is near budget',
+      tone: 'warning',
     });
   }
 
   return (
-    <div className="grid gap-6">
-      <PageHeader
-        description="Fund once, enable agent access, and let agentOps prepare gasless USDC liquidity across exact and Gateway x402 rails."
-        title="Treasury"
+    <div className="treasury-workbench">
+      <TreasurySectionNav active="overview" orgSlug={orgSlug} />
+      <TreasuryPageHeader
+        description="A calm operational view of funded liquidity, executable rails, delegated access, and exceptions."
+        eyebrow="Treasury / command view"
+        title="Money your agents can use."
       />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {circleConnected ? (
-          <Suspense fallback={<TreasuryBalanceTilesSkeleton />}>
-            <TreasuryBalanceTiles orgId={orgId} />
-          </Suspense>
-        ) : (
-          <>
-            <StatTile label="Available USDC" value="Unavailable" />
-            <StatTile label="Gateway liquidity" value="Unavailable" />
-          </>
-        )}
-        <StatTile label="Executable rails" value={`${verifiedRails}/${railReadiness.length}`} />
-        <StatTile label="Agents with access" value={agentsWithAccess} />
-      </div>
+      <section aria-label="Treasury status" className="treasury-status-band">
+        <div className="treasury-metric treasury-metric-lead">
+          <span>Treasury position</span>
+          <strong>{circleConnected ? money(overview.totals.treasury_usdc) : 'Unavailable'}</strong>
+          <p>{circleConnected ? `${balances.length} networks reporting · ${paymentMode.mode === 'live' ? 'Live' : 'Testnet'} mode` : circleConnectionState === 'unavailable' ? 'Provider status is temporarily unavailable' : 'Circle Agent Wallet is not connected'}</p>
+        </div>
+        <div className="treasury-metric"><span>Rails ready</span><strong>{circleConnectionState === 'unavailable' ? 'Unavailable' : `${verifiedRails} / ${supportedRails.length}`}</strong><small>{circleConnectionState === 'unavailable' ? 'Provider status could not be verified' : !circleConnected ? 'Circle connection required' : unverifiedSupported.length === 0 ? 'All supported rails executable' : `${unverifiedSupported.length} need evidence`}</small></div>
+        <div className="treasury-metric"><span>Agent access</span><strong>{activeAccounts.length}</strong><small>{disabledAccounts} disabled · {accounts.length} configured</small></div>
+        <div className="treasury-metric"><span>Settled spend</span><strong>{money(overview.payments.total_spent_usdc)}</strong><small>{overview.payments.last_payment === null ? 'No settled payment yet' : `Last: ${money(overview.payments.last_payment.amount)}`}</small></div>
+      </section>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>Needs attention</CardTitle>
-          <StatusBadge label={paymentMode.mode === 'live' ? 'Live mode' : 'Test mode'} status={paymentMode.mode === 'live' ? 'active' : 'pending'} />
-        </CardHeader>
-        <CardContent>
+      <div className="treasury-overview-grid">
+        <section className="treasury-overview-section">
+          <div className="treasury-section-heading"><div><h2>Needs your attention</h2><p>Only actionable treasury exceptions.</p></div><span>{needsAttention.length} open</span></div>
           {needsAttention.length === 0 ? (
-            <EmptyState
-              description="Everything supported is verified, provider jobs are healthy, and at least one agent has payment access."
-              title="Nothing needs your attention"
-              variant="treasury"
-            />
+            <div className="treasury-calm-state"><strong>No treasury action is required.</strong><p>Supported rails are verified, provider jobs are healthy, and payment access is configured.</p></div>
           ) : (
-            <ul className="grid gap-2">
-              {needsAttention.map((item) => (
-                <NeedsAttentionRow key={item.title} {...item} />
-              ))}
-            </ul>
+            <div className="treasury-attention-list">{needsAttention.map((item) => <AttentionRow item={item} key={item.title} />)}</div>
           )}
-        </CardContent>
-      </Card>
+          {pendingReservations > 0 ? <p className="treasury-reservation-note">{pendingReservations} payment reservation{pendingReservations === 1 ? '' : 's'} currently in flight.</p> : null}
+        </section>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <StatTile label="In-flight reservations" value={pendingReservations} />
-        <OverviewLinkCard description="Treasury, wallets, sources, and rail proofs." href={`${base}/sources`} title="Sources & rails" />
-        <OverviewLinkCard description="Payment ledger, routing, and provider job evidence." href={`${base}/activity`} title="Activity & evidence" />
+        <section className="treasury-overview-section">
+          <div className="treasury-section-heading"><div><h2>Network readiness</h2><p>Exact and Gateway availability by chain.</p></div></div>
+          <div className="treasury-network-list">
+            {PRIMARY_RAILS.filter((rail) => rail.startsWith('gateway_')).map((rail) => {
+              const chain = rail.replace('gateway_', '') as PaymentChain;
+              const chainRails = railReadiness.filter((item) => item.chain === chain && item.supported);
+              const ready = circleConnected ? chainRails.filter((item) => item.status === 'ready').length : 0;
+              const balance = balances.find((item) => item.chain === chain) ?? null;
+              const available = amount(walletUsdc(balance)) + amount(balance?.gateway?.available);
+              return (
+                <Link className="treasury-network-row" href={`${base}/sources`} key={chain}>
+                  <ChainMark chain={chain} size="small" />
+                  <div><strong>{CHAIN_LABELS[chain]}</strong><small>{money(available)} available</small></div>
+                  <StatusBadge label={circleConnectionState === 'unavailable' ? 'Unavailable' : `${ready}/${chainRails.length} ready`} status={ready === chainRails.length && chainRails.length > 0 ? 'active' : 'warning'} />
+                </Link>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-function NeedsAttentionRow({ description, href, title }: NeedsAttentionItem) {
+function AttentionRow({ item }: { readonly item: NeedsAttentionItem }) {
   return (
-    <li>
-      <Link
-        className="flex items-start gap-3 rounded-xl bg-(--state-warning-tint) px-4 py-3 ring-1 ring-(--state-warning)/30 transition-colors hover:ring-(--state-warning)/60"
-        href={href}
-      >
-        <IconAlertTriangle aria-hidden="true" className="mt-0.5 shrink-0 text-(--state-warning)" size={16} stroke={2} />
-        <div className="grid gap-0.5">
-          <span className="text-sm font-semibold text-foreground">{title}</span>
-          <span className="text-sm text-muted-foreground">{description}</span>
-        </div>
-      </Link>
-    </li>
-  );
-}
-
-function OverviewLinkCard({ description, href, title }: { readonly description: string; readonly href: string; readonly title: string }): ReactNode {
-  return (
-    <Link className="group/card" href={href}>
-      <Card className="h-full transition-colors group-hover/card:ring-primary/40">
-        <CardHeader>
-          <CardTitle>{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </CardContent>
-      </Card>
+    <Link className={`treasury-attention-row is-${item.tone}`} href={item.href}>
+      <IconAlertTriangle aria-hidden="true" size={16} stroke={1.8} />
+      <div><strong>{item.title}</strong><span>{item.description}</span></div>
+      <IconArrowRight aria-hidden="true" size={15} stroke={1.8} />
     </Link>
   );
 }

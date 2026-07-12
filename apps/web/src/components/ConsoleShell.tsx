@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { CommandPalette } from './CommandPalette';
 import { ConsoleSidebarNav } from './ConsoleSidebarNav';
+import { ConsoleMobileNavigation } from './ConsoleMobileNavigation';
 import { ThemeToggle } from './ThemeToggle';
 import type { Org } from '@/lib/identity-spine-types';
 
@@ -33,6 +34,7 @@ export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
       <section className="app-frame">
         <header className="app-header">
           <div className="app-header-left">
+            <ConsoleMobileNavigation org={org} />
             <span className="header-breadcrumb">Console</span>
             <span className="header-breadcrumb-divider">/</span>
             <span className="header-breadcrumb-current">{currentLabel}</span>

@@ -1,6 +1,13 @@
 import type { Metadata } from 'next';
 import { Montserrat } from 'next/font/google';
 import './globals.css';
+import './agents.css';
+import './overview.css';
+import './controls.css';
+import './operations.css';
+import './approvals.css';
+import './payments.css';
+import './settings.css';
 
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -12,6 +19,9 @@ const montserrat = Montserrat({
 export const metadata: Metadata = {
   title: 'agentOps PMOA',
   description: 'Clean PMOA control plane build for agent operations.',
+  icons: {
+    icon: [{ sizes: '160x160', type: 'image/png', url: '/landing/aops-tab-icon.png' }],
+  },
 };
 
 const themeInitScript = `

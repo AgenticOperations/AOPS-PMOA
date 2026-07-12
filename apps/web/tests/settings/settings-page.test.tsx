@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import SettingsPage from '../../src/app/app/[orgSlug]/settings/page.js';
 import {
@@ -123,15 +123,19 @@ describe('SettingsPage', () => {
       }),
     );
 
-    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Members' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Members' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByText('owner@example.test')).toBeInTheDocument();
     expect(screen.queryByText('removed@example.test')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open member Owner User' }));
+    expect(screen.getByRole('dialog', { name: 'Owner User' })).toBeInTheDocument();
     expect(screen.getByText('Sole owner')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Add member' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
     expect(screen.getByRole('button', { name: 'Add member' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
+    expect(screen.getByRole('dialog', { name: 'Add member' })).toBeInTheDocument();
   });
 
   it('shows teams and create team action on the teams tab', async () => {
@@ -148,10 +152,14 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Default team')).toBeInTheDocument();
     const archivedRow = screen.getByText('Archived QA').closest('tr');
     expect(archivedRow).not.toBeNull();
-    expect(within(archivedRow!).getByText('Archived')).toBeInTheDocument();
+    expect(within(archivedRow!).getByText('archived')).toBeInTheDocument();
+    fireEvent.click(within(archivedRow!).getByRole('button', { name: 'Open team Archived QA' }));
+    expect(screen.getByRole('dialog', { name: 'Archived QA' })).toBeInTheDocument();
     expect(within(archivedRow!).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     expect(within(archivedRow!).queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Create team' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close panel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
+    expect(screen.getByRole('dialog', { name: 'Create team' })).toBeInTheDocument();
   });
 
   it('keeps setup optional on the profile tab', async () => {
@@ -166,8 +174,8 @@ describe('SettingsPage', () => {
 
     expect(screen.getByRole('link', { name: 'Profile & setup' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getAllByText('Acme Agent Ops').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Sync Circle Agent Wallet')).toBeInTheDocument();
-    expect(screen.getByText('completed')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Skip' }).length).toBeGreaterThan(0);
+    expect(screen.getByText('Circle wallet sync')).toBeInTheDocument();
+    expect(screen.getAllByText('completed').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Skip for now' }).length).toBeGreaterThan(0);
   });
 });

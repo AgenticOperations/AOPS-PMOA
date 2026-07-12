@@ -1,11 +1,11 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   IconActivity,
-  IconBuilding,
   IconChevronDown,
   IconChecks,
   IconCreditCard,
@@ -23,25 +23,74 @@ import type { Org } from '@/lib/identity-spine-types';
 import { cn } from '@/lib/utils';
 
 type ConsoleSidebarNavProps = {
+  readonly className?: string | undefined;
+  readonly collapsible?: boolean | undefined;
+  readonly onNavigate?: (() => void) | undefined;
   readonly org: Org;
 };
+
+const SIDEBAR_IDLE_TIMEOUT_MS = 15_000;
 
 const iconProps = {
   size: 18,
   stroke: 1.8,
 } as const;
 
-export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
+export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, org }: ConsoleSidebarNavProps) {
   const pathname = usePathname();
   const base = `/app/${org.slug}`;
   const paymentsActive = pathname?.startsWith(`${base}/payments`) ?? false;
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(collapsible);
   const [treasuryOpen, setTreasuryOpen] = useState(paymentsActive);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastPointerActivityRef = useRef(0);
+
+  const clearCollapseTimer = useCallback(() => {
+    if (collapseTimerRef.current === null) return;
+    clearTimeout(collapseTimerRef.current);
+    collapseTimerRef.current = null;
+  }, []);
+
+  const scheduleCollapse = useCallback(() => {
+    clearCollapseTimer();
+    if (!collapsible || sidebarCollapsed) return;
+
+    collapseTimerRef.current = setTimeout(() => {
+      setSidebarCollapsed(true);
+    }, SIDEBAR_IDLE_TIMEOUT_MS);
+  }, [clearCollapseTimer, collapsible, sidebarCollapsed]);
 
   useEffect(() => {
     if (paymentsActive) {
       setTreasuryOpen(true);
     }
   }, [paymentsActive]);
+
+  useEffect(() => {
+    scheduleCollapse();
+    return clearCollapseTimer;
+  }, [clearCollapseTimer, scheduleCollapse]);
+
+  const registerActivity = useCallback(() => {
+    if (!collapsible) return;
+    if (sidebarCollapsed) {
+      setSidebarCollapsed(false);
+      return;
+    }
+    scheduleCollapse();
+  }, [collapsible, scheduleCollapse, sidebarCollapsed]);
+
+  const handlePointerEnter = () => {
+    if (!collapsible) return;
+    setSidebarCollapsed(false);
+  };
+
+  const handlePointerMove = () => {
+    const now = Date.now();
+    if (now - lastPointerActivityRef.current < 750) return;
+    lastPointerActivityRef.current = now;
+    registerActivity();
+  };
 
   const groups = useMemo(
     () => [
@@ -82,16 +131,6 @@ export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
             href: `${base}/approvals`,
             icon: <IconChecks aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Approvals',
-          },
-        ],
-      },
-      {
-        label: 'Org',
-        items: [
-          {
-            href: `${base}/settings`,
-            icon: <IconSettings aria-hidden="true" className="nav-icon" {...iconProps} />,
-            label: 'Settings',
           },
         ],
       },
@@ -143,14 +182,40 @@ export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
     return pathname === href;
   };
 
+  const handleSidebarClick = (event: MouseEvent<HTMLElement>) => {
+    if (onNavigate === undefined || !(event.target instanceof Element)) return;
+
+    const navigationTarget = event.target.closest('a[href], button[type="submit"]');
+    if (navigationTarget !== null) onNavigate();
+  };
+
   return (
-    <aside aria-label="Workspace navigation" className="app-sidebar-body">
-      <Link className="sidebar-workspace" href="/auth" title={`Switch workspace (${org.name})`}>
-        <span aria-hidden="true" className="sidebar-workspace-mark">
-          <IconBuilding size={17} stroke={1.8} />
+    <aside
+      aria-label="Workspace navigation"
+      className={cn('app-sidebar-body', className)}
+      data-collapsed={collapsible && sidebarCollapsed}
+      onClick={handleSidebarClick}
+      onFocusCapture={registerActivity}
+      onKeyDownCapture={registerActivity}
+      onPointerDown={registerActivity}
+      onPointerEnter={handlePointerEnter}
+      onPointerMove={handlePointerMove}
+    >
+      <div className="sidebar-brand">
+        <span className="sidebar-brand-logo-frame">
+          <Image
+            alt="AOPS"
+            className="sidebar-brand-logo"
+            height={157}
+            priority
+            src="/landing/aops-wordmark-nav.png"
+            unoptimized
+            width={580}
+          />
         </span>
+      </div>
+      <Link className="sidebar-workspace" href="/auth" title={`Switch workspace (${org.name})`}>
         <span className="sidebar-link-label">
-          <span>Workspace</span>
           <strong>{org.name}</strong>
         </span>
       </Link>
@@ -166,6 +231,7 @@ export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
                   className={cn('sidebar-nav-link', isActive(item.href) && 'nav-active')}
                   href={item.href}
                   key={item.href}
+                  title={item.label}
                 >
                   {item.icon}
                   <span className="sidebar-link-label">{item.label}</span>
@@ -183,6 +249,7 @@ export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
                 aria-current={pathname === `${base}/payments` ? 'page' : undefined}
                 className="sidebar-nav-link sidebar-nav-parent-link"
                 href={`${base}/payments`}
+                title="Treasury"
               >
                 <IconCreditCard aria-hidden="true" className="nav-icon" {...iconProps} />
                 <span className="sidebar-link-label">Treasury</span>
@@ -205,6 +272,7 @@ export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
                   className={cn('sidebar-subnav-link', isActive(item.href) && 'nav-active')}
                   href={item.href}
                   key={item.href}
+                  title={item.label}
                 >
                   {item.icon}
                   <span className="sidebar-link-label">{item.label}</span>
@@ -214,27 +282,18 @@ export function ConsoleSidebarNav({ org }: ConsoleSidebarNavProps) {
           </div>
         </div>
 
-        {groups.slice(3).map((group) => (
-          <div className="sidebar-section" key={group.label}>
-            <p className="sidebar-section-label">{group.label}</p>
-            <div className="sidebar-nav">
-              {group.items.map((item) => (
-                <Link
-                  aria-current={isActive(item.href) ? 'page' : undefined}
-                  className={cn('sidebar-nav-link', isActive(item.href) && 'nav-active')}
-                  href={item.href}
-                  key={item.href}
-                >
-                  {item.icon}
-                  <span className="sidebar-link-label">{item.label}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        ))}
       </nav>
 
       <div className="sidebar-footer">
+        <Link
+          aria-current={isActive(`${base}/settings`) ? 'page' : undefined}
+          className={cn('sidebar-nav-link sidebar-footer-link', isActive(`${base}/settings`) && 'nav-active')}
+          href={`${base}/settings`}
+          title="Settings"
+        >
+          <IconSettings aria-hidden="true" className="nav-icon" {...iconProps} />
+          <span className="sidebar-link-label">Settings</span>
+        </Link>
         <form action="/api/auth/logout" className="logout-form" method="post">
           <button aria-label="Logout" className="sidebar-logout-btn" title="Logout" type="submit">
             <IconLogout aria-hidden="true" className="logout-icon" size={18} stroke={1.8} />

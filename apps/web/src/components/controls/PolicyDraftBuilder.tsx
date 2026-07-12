@@ -175,6 +175,7 @@ export function PolicyDraftBuilder({
   );
   const [toolName, setToolName] = useState(joinList(initialStatement?.conditions?.tool?.names));
   const [toolRiskLevel, setToolRiskLevel] = useState(joinList(initialStatement?.conditions?.tool?.riskLevels));
+  const [step, setStep] = useState(0);
   const selectedActionId = availableActions.some((candidate) => candidate.action_id === selectedAction)
     ? selectedAction
     : availableActions[0]?.action_id ?? defaultPolicyAction.action_id;
@@ -222,34 +223,27 @@ export function PolicyDraftBuilder({
           <input name="category" type="hidden" value={initialDraft.category} />
         </>
       )}
-      <div className="policy-builder-frame">
-        <aside className="policy-builder-rail" aria-label="Policy draft setup">
-          <div>
-            <span>Draft setup</span>
-            <p className="policy-builder-rail-summary">
-              Configure one action surface at a time. The form only exposes compatible match fields.
-            </p>
-          </div>
-          <ol>
-            <li>
-              <span>01</span>
-              <p>Define policy details</p>
-            </li>
-            <li>
-              <span>02</span>
-              <p>Select the controlled action</p>
-            </li>
-            <li>
-              <span>03</span>
-              <p>Add only valid match fields</p>
-            </li>
-          </ol>
-        </aside>
+      <nav aria-label="Policy draft steps" className="policy-builder-progress">
+        {['Define', 'Conditions', 'Review'].map((label, index) => (
+          <button
+            aria-current={step === index ? 'step' : undefined}
+            className={step === index ? 'is-active' : step > index ? 'is-complete' : undefined}
+            disabled={index > step}
+            key={label}
+            onClick={() => setStep(index)}
+            type="button"
+          >
+            <span>{index + 1}</span>
+            {label}
+          </button>
+        ))}
+      </nav>
 
+      <div className="policy-builder-frame">
         <div className="policy-builder-main">
+          <div className={step === 0 ? 'policy-builder-step is-active' : 'policy-builder-step'}>
           <section className="policy-builder-section">
             <div className="policy-builder-section-heading">
-              <span>01</span>
               <div>
                 <h3>Policy details</h3>
                 <p>Name the rule so operators can recognize it before assignment.</p>
@@ -280,7 +274,6 @@ export function PolicyDraftBuilder({
 
           <section className="policy-builder-section">
             <div className="policy-builder-section-heading">
-              <span>02</span>
               <div>
                 <h3>Action and result</h3>
                 <p>Choose one policy surface. Assignment scopes come from backend metadata.</p>
@@ -329,10 +322,21 @@ export function PolicyDraftBuilder({
               <em>Assignable to: {targetLabel(action)}</em>
             </div>
           </section>
+          <div className="policy-builder-step-actions">
+            <button
+              className="button-primary"
+              disabled={policyName.trim().length === 0}
+              onClick={() => setStep(1)}
+              type="button"
+            >
+              Continue to conditions
+            </button>
+          </div>
+          </div>
 
+          <div className={step === 1 ? 'policy-builder-step is-active' : 'policy-builder-step'}>
           <section className="policy-builder-section">
             <div className="policy-builder-section-heading">
-              <span>03</span>
               <div>
                 <h3>Match conditions</h3>
                 <p>Only condition groups accepted by this action are visible.</p>
@@ -450,40 +454,56 @@ export function PolicyDraftBuilder({
               </div>
             ) : null}
           </section>
-        </div>
-
-        <aside className="policy-builder-review" aria-label="Draft preview">
-          <div>
-            <span className="policy-builder-review-kicker">Review</span>
-            <h3>{previewName}</h3>
-            <p>{previewDescription}</p>
+          <div className="policy-builder-step-actions">
+            <button className="button-secondary" onClick={() => setStep(0)} type="button">Back</button>
+            <button className="button-primary" onClick={() => setStep(2)} type="button">Review draft</button>
           </div>
-          <dl>
-            <div>
-              <dt>Decision</dt>
-              <dd>{formatDecision(decision)}</dd>
+          </div>
+
+          <div className={step === 2 ? 'policy-builder-step is-active' : 'policy-builder-step'}>
+            <section className="policy-builder-section policy-builder-review" aria-label="Draft preview">
+              <div className="policy-builder-section-heading">
+                <div>
+                  <span className="policy-builder-review-kicker">Ready for review</span>
+                  <h3>{previewName}</h3>
+                  <p>{previewDescription}</p>
+                </div>
+              </div>
+              <dl>
+                <div>
+                  <dt>Decision</dt>
+                  <dd>{formatDecision(decision)}</dd>
+                </div>
+                <div>
+                  <dt>Action</dt>
+                  <dd>{action.label}</dd>
+                </div>
+                <div>
+                  <dt>Matches</dt>
+                  <dd>{conditionSummary}</dd>
+                </div>
+                <div>
+                  <dt>Assignment</dt>
+                  <dd>{targetLabel(action)}</dd>
+                </div>
+                <div>
+                  <dt>Lifecycle</dt>
+                  <dd>
+                    {initialDraft === undefined
+                      ? 'Creates a non-enforcing draft. Validate and activate it before assignment.'
+                      : 'Saving returns this draft to validation before it can be activated.'}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+            <div className="policy-builder-step-actions">
+              <button className="button-secondary" onClick={() => setStep(1)} type="button">Back</button>
+              <button className="button-primary" type="submit">
+                {submitLabel ?? (initialDraft === undefined ? 'Create draft' : 'Save draft changes')}
+              </button>
             </div>
-            <div>
-              <dt>Action</dt>
-              <dd>{action.label}</dd>
-            </div>
-            <div>
-              <dt>Matches</dt>
-              <dd>{conditionSummary}</dd>
-            </div>
-            <div>
-              <dt>Lifecycle</dt>
-              <dd>
-                {initialDraft === undefined
-                  ? 'Draft first. Validate and activate before assignment.'
-                  : 'Saving returns this draft to validation before it can be activated.'}
-              </dd>
-            </div>
-          </dl>
-          <button className="button-primary" type="submit">
-            {submitLabel ?? (initialDraft === undefined ? 'Create draft' : 'Save draft changes')}
-          </button>
-        </aside>
+          </div>
+        </div>
       </div>
     </form>
   );

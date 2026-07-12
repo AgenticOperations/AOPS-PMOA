@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import ApprovalsPage from '../../src/app/app/[orgSlug]/approvals/page.js';
 import { listApprovals } from '@/lib/server/approval-client.js';
@@ -57,7 +57,7 @@ const approvals = [
     denied_by: null,
     denied_at: null,
     consumed_at: null,
-    expires_at: '2026-07-11T00:00:00.000Z',
+    expires_at: '2099-07-11T00:00:00.000Z',
     note: '',
     created_at: '2026-07-10T00:00:00.000Z',
     updated_at: '2026-07-10T00:00:00.000Z',
@@ -116,9 +116,11 @@ describe('ApprovalsPage', () => {
 
     expect(screen.getByRole('heading', { name: 'Approvals' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Pending requests' })).toBeInTheDocument();
     expect(screen.getByText('apr_pending')).toBeInTheDocument();
     expect(screen.queryByText('apr_consumed')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review apr_pending' }));
     expect(screen.getByRole('button', { name: 'Approve' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Deny' })).toBeInTheDocument();
   });
@@ -138,5 +140,7 @@ describe('ApprovalsPage', () => {
     expect(screen.getByText('apr_consumed')).toBeInTheDocument();
     expect(screen.queryByText('apr_pending')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review apr_consumed' }));
+    expect(screen.getByText('apc_1')).toBeInTheDocument();
   });
 });

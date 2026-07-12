@@ -51,7 +51,6 @@ describe('ControlsLibrary', () => {
     expect(screen.getByText('Action and result')).toBeInTheDocument();
     expect(screen.getByText('Match conditions')).toBeInTheDocument();
     expect(screen.getByText('Review')).toBeInTheDocument();
-    expect(screen.getByText('Draft setup')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create draft' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'External HTTP/API request' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Authorize x402 payment check' })).toBeInTheDocument();
@@ -137,8 +136,8 @@ describe('ControlsLibrary', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Deny weather API' }));
     expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Conditions' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Evidence' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Targets' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Lifecycle' })).toBeInTheDocument();
     expect(screen.getByText('Assignment scopes')).toBeInTheDocument();
     expect(screen.queryByText('Bound targets')).not.toBeInTheDocument();
@@ -533,7 +532,6 @@ describe('ControlsLibrary', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Credential issue control' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Conditions' }));
     expect(screen.getByText('Additional conditions')).toBeInTheDocument();
     expect(screen.queryByText('Resource category')).not.toBeInTheDocument();
     expect(screen.queryByText('Payment minimum')).not.toBeInTheDocument();

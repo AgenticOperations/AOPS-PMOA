@@ -62,6 +62,15 @@ export type AgentRosterItem = {
   readonly last_activity_at: string | null;
 };
 
+export type AgentRosterPage = {
+  readonly agents: AgentRosterItem[];
+  readonly pagination: {
+    readonly limit: number;
+    readonly offset: number;
+    readonly total: number;
+  };
+};
+
 export type TeamRecord = {
   readonly id: string;
   readonly org_id: string;

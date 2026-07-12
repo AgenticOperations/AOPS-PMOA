@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Badge } from '../../src/components/ui/badge.js';
@@ -87,5 +88,68 @@ describe('Phase 0 design primitives', () => {
     expect(screen.getByRole('dialog', { name: /Policy details/i })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('moves focus into an open sheet, traps tab focus, and restores its trigger', async () => {
+    const user = userEvent.setup();
+
+    function SheetHarness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">Open details</button>
+          <Sheet labelledBy="focus-sheet-title" onOpenChange={setOpen} open={open}>
+            <SheetHeader>
+              <SheetTitle id="focus-sheet-title">Focus details</SheetTitle>
+              <SheetCloseButton onClick={() => setOpen(false)} />
+            </SheetHeader>
+            <SheetBody>
+              <button type="button">First action</button>
+              <button type="button">Last action</button>
+            </SheetBody>
+          </Sheet>
+        </>
+      );
+    }
+
+    render(<SheetHarness />);
+    const trigger = screen.getByRole('button', { name: 'Open details' });
+    await user.click(trigger);
+
+    const close = screen.getByRole('button', { name: 'Close panel' });
+    expect(close).toHaveFocus();
+
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(screen.getByRole('button', { name: 'Last action' })).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(trigger).toHaveFocus();
+  });
+
+  it('does not reset drawer focus when an inline open-change callback rerenders', async () => {
+    const user = userEvent.setup();
+
+    function UnstableCallbackHarness() {
+      const [open, setOpen] = useState(false);
+      const [revision, setRevision] = useState(0);
+      return (
+        <>
+          <button onClick={() => setOpen(true)} type="button">Open editor</button>
+          <Sheet labelledBy="unstable-sheet-title" onOpenChange={(nextOpen) => setOpen(nextOpen)} open={open}>
+            <SheetHeader><SheetTitle id="unstable-sheet-title">Editor</SheetTitle></SheetHeader>
+            <SheetBody>
+              <button onClick={() => setRevision((value) => value + 1)} type="button">Update {revision}</button>
+            </SheetBody>
+          </Sheet>
+        </>
+      );
+    }
+
+    render(<UnstableCallbackHarness />);
+    await user.click(screen.getByRole('button', { name: 'Open editor' }));
+    const update = screen.getByRole('button', { name: 'Update 0' });
+    await user.click(update);
+
+    expect(screen.getByRole('button', { name: 'Update 1' })).toHaveFocus();
   });
 });

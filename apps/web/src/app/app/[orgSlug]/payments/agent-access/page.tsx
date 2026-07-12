@@ -26,10 +26,6 @@ export default async function PaymentsAgentAccessPage({ params }: AgentAccessPag
     listPaymentCapabilities(org.id),
   ]);
 
-  const hasActiveGatewaySource = agentAccounts.sources.some(
-    (source) => source.status === 'active' && source.rail === 'gateway_base',
-  );
-
   return (
     <ConsoleShell active="payments" org={org}>
       <TreasuryAgentAccess
@@ -37,7 +33,7 @@ export default async function PaymentsAgentAccessPage({ params }: AgentAccessPag
         accounts={agentAccounts.accounts}
         agents={agents}
         capabilities={capabilities}
-        hasActiveGatewaySource={hasActiveGatewaySource}
+        orgSlug={org.slug}
       />
     </ConsoleShell>
   );

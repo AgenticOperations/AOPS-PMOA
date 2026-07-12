@@ -8,11 +8,18 @@ describe('TreasuryOverview', () => {
   it('does not present historical rail proofs as executable when Circle is disconnected', () => {
     render(
       <TreasuryOverview
-        agentsWithAccess={0}
-        circleConnected={false}
+        accounts={[]}
+        agents={[]}
+        balances={[]}
+        circleConnectionState="disconnected"
         failedJobs={[]}
-        orgId="org_1"
         orgSlug="openassets-qa-workspace"
+        overview={{
+          mode: 'test',
+          totals: { gateway_usdc: '0', wallet_usdc: '0', treasury_usdc: '0' },
+          liquidity: { pending_jobs: 0, failed_jobs: 0, last_job: null },
+          payments: { agents_with_access: 0, total_spent_usdc: '0', last_payment: null },
+        }}
         paymentMode={{
           mode: 'test',
           org_id: 'org_1',
@@ -36,12 +43,43 @@ describe('TreasuryOverview', () => {
       />,
     );
 
-    expect(screen.getByText('Circle connection required')).toBeInTheDocument();
-    expect(screen.getByText('0/10')).toBeInTheDocument();
-    expect(screen.getAllByText('Unavailable')).toHaveLength(2);
+    expect(screen.getAllByText('Circle connection required')).toHaveLength(2);
+    expect(screen.getByText('0 / 10')).toBeInTheDocument();
+    expect(screen.getByText('Unavailable')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Circle connection required/ })).toHaveAttribute(
       'href',
       '/onboarding/openassets-qa-workspace',
     );
+  });
+
+  it('distinguishes provider unavailability from a disconnected organization', () => {
+    render(
+      <TreasuryOverview
+        accounts={[]}
+        agents={[]}
+        balances={[]}
+        circleConnectionState="unavailable"
+        failedJobs={[]}
+        orgSlug="openassets-qa-workspace"
+        overview={{
+          mode: 'test',
+          totals: { gateway_usdc: '0', wallet_usdc: '0', treasury_usdc: '0' },
+          liquidity: { pending_jobs: 0, failed_jobs: 0, last_job: null },
+          payments: { agents_with_access: 0, total_spent_usdc: '0', last_payment: null },
+        }}
+        paymentMode={{
+          mode: 'test',
+          org_id: 'org_1',
+          updated_at: '2026-07-11T00:00:00.000Z',
+          updated_by: 'usr_1',
+        }}
+        pendingReservations={0}
+        railReadiness={[]}
+      />,
+    );
+
+    expect(screen.getByText('Circle provider unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Provider status is temporarily unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Circle connection required')).not.toBeInTheDocument();
   });
 });

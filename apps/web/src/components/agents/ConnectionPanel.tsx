@@ -1,9 +1,21 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect, useState } from 'react';
 import type { ConnectionActionState } from '@/app/actions/identity-spine';
 import type { ConnectionRecord } from '@/lib/identity-spine-types';
+import { formatUtcDateTime } from '@/lib/date-format';
 import { formatConnectionKind, formatStatus } from './format';
+import { AgentTablePager } from './AgentTablePager';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableShell } from '@/components/ui/table-shell';
+import {
+  Sheet,
+  SheetBody,
+  SheetCloseButton,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 type ConnectionPanelProps = {
   readonly orgId: string;
@@ -33,6 +45,7 @@ type ConnectionPanelProps = {
 };
 
 const initialState: ConnectionActionState = {};
+const PAGE_SIZE = 10;
 
 export function ConnectionPanel({
   orgId,
@@ -45,81 +58,157 @@ export function ConnectionPanel({
   testAction,
   revokeAction,
 }: ConnectionPanelProps) {
-  const [createState, createFormAction, createPending] = useActionState(
-    createAction ?? (async () => initialState),
-    initialState,
-  );
-  const visibleSecret = createState.secret ?? newSecret;
+  const [createOpen, setCreateOpen] = useState(newSecret !== undefined);
+  const [createSession, setCreateSession] = useState(0);
+  const [createPending, setCreatePending] = useState(false);
+  const [initialSecretAvailable, setInitialSecretAvailable] = useState(newSecret !== undefined);
+  const [page, setPage] = useState(1);
+  const [selectedConnection, setSelectedConnection] = useState<ConnectionRecord | null>(null);
+  const visibleConnections = connections.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const closeCreateDrawer = () => {
+    if (createPending) return;
+    setCreateOpen(false);
+    setInitialSecretAvailable(false);
+    setCreateSession((session) => session + 1);
+  };
 
   return (
-    <section className="section-block" aria-labelledby="connections-title">
-      <div className="section-heading">
+    <section className="agent-record-section" aria-labelledby="connections-title">
+      <div className="agent-section-heading">
         <div>
-          <p className="eyebrow">Agent access</p>
-          <h2 id="connections-title">Access credential</h2>
+          <h2 id="connections-title">Credentials</h2>
+          <p>Runtime secrets issued to this identity. Secret values are shown only once.</p>
         </div>
-        <p>
-          Issue the credential this agent will use to identify itself to agentOps. Scope and
-          authorization rules are handled by later policy sections.
-        </p>
+        <button className="agent-secondary-button" disabled={createAction === undefined} onClick={() => setCreateOpen(true)} type="button">Create credential</button>
       </div>
 
-      {visibleSecret !== undefined ? (
-        <CredentialSecretReveal secret={visibleSecret} title="Save this secret now" />
-      ) : null}
-
-      <form action={createFormAction} className="inline-form">
-        <input name="orgId" type="hidden" value={orgId} />
-        <input name="orgSlug" type="hidden" value={orgSlug} />
-        <input name="agentId" type="hidden" value={agentId} />
-        <input name="kind" type="hidden" value="agent_credential" />
-        <label>
-          <span>Credential name</span>
-          <input name="name" placeholder="Production worker" required />
-        </label>
-        <button className="button-primary" disabled={createPending} type="submit">
-          {createPending ? 'Creating credential...' : 'Create credential'}
-        </button>
-      </form>
-
-      {createState.error !== undefined ? <p className="form-error">{createState.error}</p> : null}
-
-      <div className="stack-list">
-        {connections.length === 0 ? (
-          <div className="soft-row">
+      {connections.length === 0 ? (
+          <div className="agent-table-empty">
             <strong>No credential issued</strong>
             <span>Create a connection when the agent is ready to call agentOps.</span>
           </div>
-        ) : (
-          connections.map((connection) => (
-            <article className="connection-row" key={connection.id}>
-              <div>
-                <strong>{connection.name}</strong>
-                <span>
-                  {formatConnectionKind(connection.kind)} / {formatStatus(connection.status)}
-                </span>
-                {connection.secret_last4 !== null ? (
-                  <span>ending in {connection.secret_last4}</span>
-                ) : (
-                  <span>No credential issued</span>
-                )}
-              </div>
-              {connection.status === 'active' ? (
+      ) : (
+        <>
+          <TableShell className="agent-record-table-shell" maxHeight={620}>
+            <Table aria-label="Agent credentials" className="agent-record-table">
+              <TableHeader><TableRow><TableHead>Credential</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Last used</TableHead><TableHead>Created</TableHead><TableHead aria-label="Open" /></TableRow></TableHeader>
+              <TableBody>
+                {visibleConnections.map((connection) => (
+                  <TableRow key={connection.id}>
+                    <TableCell data-label="Credential"><div className="agent-primary-cell"><span className="agent-entity-icon">KY</span><div><strong>{connection.name}</strong><code>{connection.id}</code></div></div></TableCell>
+                    <TableCell data-label="Kind">{formatConnectionKind(connection.kind)}</TableCell>
+                    <TableCell data-label="Status"><span className={`agent-status-badge is-${connection.status === 'active' ? 'active' : 'danger'}`}>{formatStatus(connection.status)}</span></TableCell>
+                    <TableCell data-label="Last used">{connection.last_used_at === null ? 'Never' : formatUtcDateTime(connection.last_used_at)}</TableCell>
+                    <TableCell data-label="Created">{formatUtcDateTime(connection.created_at)}</TableCell>
+                    <TableCell className="agent-row-action" data-label=""><button onClick={() => setSelectedConnection(connection)} type="button">Open <span aria-hidden="true">→</span></button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableShell>
+          <AgentTablePager itemLabel="credentials" onPageChange={setPage} page={page} pageSize={PAGE_SIZE} total={connections.length} />
+        </>
+      )}
+
+      <Sheet
+        labelledBy="create-credential-title"
+        onOpenChange={(open) => {
+          if (!open) closeCreateDrawer();
+        }}
+        open={createOpen}
+        panelClassName="agent-action-sheet"
+      >
+        <SheetHeader>
+          <div><SheetTitle id="create-credential-title">Create credential</SheetTitle><SheetDescription>Issue the one credential this agent uses to authenticate managed API and MCP calls.</SheetDescription></div>
+          <SheetCloseButton disabled={createPending} onClick={closeCreateDrawer} />
+        </SheetHeader>
+        <CredentialCreateSession
+          agentId={agentId}
+          createAction={createAction}
+          initialSecret={initialSecretAvailable ? newSecret : undefined}
+          key={createSession}
+          onPendingChange={setCreatePending}
+          orgId={orgId}
+          orgSlug={orgSlug}
+        />
+      </Sheet>
+
+      <Sheet labelledBy="credential-detail-title" onOpenChange={(open) => !open && setSelectedConnection(null)} open={selectedConnection !== null} panelClassName="agent-action-sheet">
+        <SheetHeader>
+          <div><SheetTitle id="credential-detail-title">Credential details</SheetTitle><SheetDescription>Inspect, test, rotate, or revoke this runtime credential.</SheetDescription></div>
+          <SheetCloseButton onClick={() => setSelectedConnection(null)} />
+        </SheetHeader>
+        {selectedConnection !== null ? (
+          <SheetBody>
+            <dl className="agent-drawer-definitions">
+              <div><dt>Name</dt><dd>{selectedConnection.name}</dd></div>
+              <div><dt>Credential ID</dt><dd><code>{selectedConnection.id}</code></dd></div>
+              <div><dt>Kind</dt><dd>{formatConnectionKind(selectedConnection.kind)}</dd></div>
+              <div><dt>Status</dt><dd>{formatStatus(selectedConnection.status)}</dd></div>
+              <div><dt>Secret</dt><dd>{selectedConnection.secret_last4 === null ? 'Not issued' : `Ending in ${selectedConnection.secret_last4}`}</dd></div>
+              <div><dt>Last tested</dt><dd>{selectedConnection.last_tested_at === null ? 'Never' : formatUtcDateTime(selectedConnection.last_tested_at)}</dd></div>
+              <div><dt>Last used</dt><dd>{selectedConnection.last_used_at === null ? 'Never' : formatUtcDateTime(selectedConnection.last_used_at)}</dd></div>
+            </dl>
+            {selectedConnection.status === 'active' ? (
+              <div className="agent-drawer-action-section">
+                <h3>Credential actions</h3>
                 <ConnectionRowActions
                   agentId={agentId}
-                  connectionId={connection.id}
+                  connectionId={selectedConnection.id}
                   orgId={orgId}
                   orgSlug={orgSlug}
                   revokeAction={revokeAction}
                   rotateAction={rotateAction}
                   testAction={testAction}
                 />
-              ) : null}
-            </article>
-          ))
-        )}
-      </div>
+              </div>
+            ) : null}
+          </SheetBody>
+        ) : null}
+      </Sheet>
     </section>
+  );
+}
+
+function CredentialCreateSession({
+  agentId,
+  createAction,
+  initialSecret,
+  onPendingChange,
+  orgId,
+  orgSlug,
+}: {
+  readonly agentId: string;
+  readonly createAction: ConnectionPanelProps['createAction'];
+  readonly initialSecret: ConnectionPanelProps['newSecret'];
+  readonly onPendingChange: (pending: boolean) => void;
+  readonly orgId: string;
+  readonly orgSlug: string;
+}) {
+  const [state, formAction, pending] = useActionState(createAction ?? (async () => initialState), initialState);
+  const visibleSecret = state.secret ?? initialSecret;
+
+  useEffect(() => {
+    onPendingChange(pending);
+  }, [onPendingChange, pending]);
+
+  if (visibleSecret !== undefined) {
+    return <SheetBody><CredentialSecretReveal secret={visibleSecret} title="Save this secret now" /></SheetBody>;
+  }
+
+  return (
+    <form action={formAction} className="focus-form">
+      <SheetBody className="operations-form">
+        <input name="orgId" type="hidden" value={orgId} />
+        <input name="orgSlug" type="hidden" value={orgSlug} />
+        <input name="agentId" type="hidden" value={agentId} />
+        <input name="kind" type="hidden" value="agent_credential" />
+        <label><span>Credential name</span><input name="name" placeholder="Production worker" required /></label>
+        {state.error !== undefined ? <p className="form-error" role="alert">{state.error}</p> : null}
+        <button className="agent-primary-button agent-inline-submit" disabled={pending} type="submit">{pending ? 'Creating...' : 'Create credential'}</button>
+      </SheetBody>
+    </form>
   );
 }
 
@@ -201,8 +290,12 @@ function ConnectionRowActions({
             action={revokeAction}
             agentId={agentId}
             buttonClassName="button-danger"
+            confirmation={{
+              description: 'The current secret stops authenticating immediately. Historical activity remains available.',
+              title: 'Revoke this credential?',
+            }}
             connectionId={connectionId}
-            label="Revoke"
+            label="Revoke credential"
             orgId={orgId}
             orgSlug={orgSlug}
             pendingLabel="Revoking..."
@@ -222,6 +315,7 @@ function ConnectionSubmitForm({
   label,
   pendingLabel,
   buttonClassName,
+  confirmation,
 }: {
   readonly action: (
     state: ConnectionActionState,
@@ -234,18 +328,26 @@ function ConnectionSubmitForm({
   readonly label: string;
   readonly pendingLabel: string;
   readonly buttonClassName: string;
+  readonly confirmation?: { readonly description: string; readonly title: string } | undefined;
 }) {
-  const [state, formAction, pending] = useActionState(action, initialState);
+  const [confirming, setConfirming] = useState(false);
+  const [state, formAction, pending] = useActionState(async (previousState: ConnectionActionState, formData: FormData) => {
+    const nextState = await action(previousState, formData);
+    if (nextState.error === undefined) setConfirming(false);
+    return nextState;
+  }, initialState);
+
+  if (confirmation !== undefined && !confirming) {
+    return <button className={buttonClassName} onClick={() => setConfirming(true)} type="button">{label}</button>;
+  }
 
   return (
-    <form action={formAction} className="credential-action-form">
+    <form action={formAction} className={confirmation === undefined ? 'credential-action-form' : 'credential-action-form is-confirming'}>
       <input name="orgId" type="hidden" value={orgId} />
       <input name="orgSlug" type="hidden" value={orgSlug} />
       <input name="agentId" type="hidden" value={agentId} />
       <input name="connectionId" type="hidden" value={connectionId} />
-      <button className={buttonClassName} disabled={pending} type="submit">
-        {pending ? pendingLabel : label}
-      </button>
+      {confirmation === undefined ? <button className={buttonClassName} disabled={pending} type="submit">{pending ? pendingLabel : label}</button> : <><div><strong>{confirmation.title}</strong><p>{confirmation.description}</p></div><div className="button-row"><button className="button-secondary" disabled={pending} onClick={() => setConfirming(false)} type="button">Keep credential</button><button className={buttonClassName} disabled={pending} type="submit">{pending ? pendingLabel : 'Confirm revoke'}</button></div></>}
       {state.message !== undefined ? <span className="form-success">{state.message}</span> : null}
       {state.error !== undefined ? <span className="form-error">{state.error}</span> : null}
     </form>
@@ -268,23 +370,81 @@ function ConnectionRotateForm({
   readonly agentId: string;
   readonly connectionId: string;
 }) {
-  const [state, formAction, pending] = useActionState(action, initialState);
+  const [open, setOpen] = useState(false);
+  const [session, setSession] = useState(0);
+  const [pending, setPending] = useState(false);
+
+  const closeDrawer = () => {
+    if (pending) return;
+    setOpen(false);
+    setSession((value) => value + 1);
+  };
 
   return (
-    <div className="credential-rotate-action">
-      <form action={formAction} className="credential-action-form">
+    <>
+      <button className="button-secondary" onClick={() => setOpen(true)} type="button">Rotate</button>
+      <Sheet
+        labelledBy={`rotate-credential-${connectionId}`}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) closeDrawer();
+        }}
+        open={open}
+        panelClassName="agent-action-sheet"
+      >
+        <SheetHeader>
+          <div><SheetTitle id={`rotate-credential-${connectionId}`}>Rotate credential</SheetTitle><SheetDescription>The current secret stops working immediately after rotation.</SheetDescription></div>
+          <SheetCloseButton disabled={pending} onClick={closeDrawer} />
+        </SheetHeader>
+        <CredentialRotateSession
+          action={action}
+          agentId={agentId}
+          connectionId={connectionId}
+          key={session}
+          onPendingChange={setPending}
+          orgId={orgId}
+          orgSlug={orgSlug}
+        />
+      </Sheet>
+    </>
+  );
+}
+
+function CredentialRotateSession({
+  action,
+  agentId,
+  connectionId,
+  onPendingChange,
+  orgId,
+  orgSlug,
+}: {
+  readonly action: NonNullable<ConnectionPanelProps['rotateAction']>;
+  readonly agentId: string;
+  readonly connectionId: string;
+  readonly onPendingChange: (pending: boolean) => void;
+  readonly orgId: string;
+  readonly orgSlug: string;
+}) {
+  const [state, formAction, pending] = useActionState(action, initialState);
+
+  useEffect(() => {
+    onPendingChange(pending);
+  }, [onPendingChange, pending]);
+
+  if (state.secret !== undefined) {
+    return <SheetBody><CredentialSecretReveal secret={state.secret} title="Save this rotated secret now" /></SheetBody>;
+  }
+
+  return (
+    <form action={formAction} className="focus-form">
+      <SheetBody>
         <input name="orgId" type="hidden" value={orgId} />
         <input name="orgSlug" type="hidden" value={orgSlug} />
         <input name="agentId" type="hidden" value={agentId} />
         <input name="connectionId" type="hidden" value={connectionId} />
-        <button className="button-secondary" disabled={pending} type="submit">
-          {pending ? 'Rotating...' : 'Rotate'}
-        </button>
-      </form>
-      {state.error !== undefined ? <span className="form-error">{state.error}</span> : null}
-      {state.secret !== undefined ? (
-        <CredentialSecretReveal secret={state.secret} title="Save this rotated secret now" />
-      ) : null}
-    </div>
+        <p className="drawer-confirm-copy">Create a replacement secret for this credential. Save it before closing the drawer.</p>
+        {state.error !== undefined ? <span className="form-error" role="alert">{state.error}</span> : null}
+        <button className="agent-primary-button agent-inline-submit" disabled={pending} type="submit">{pending ? 'Rotating...' : 'Rotate credential'}</button>
+      </SheetBody>
+    </form>
   );
 }

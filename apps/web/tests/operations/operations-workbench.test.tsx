@@ -32,10 +32,8 @@ describe('OperationsWorkbench', () => {
     const { rerender } = render(
       <OperationsWorkbench
         agents={[{ id: 'agt_research', name: 'Research agent' }]}
-        blocked={[]}
         decisions={[]}
         rateLimits={[rateLimit]}
-        sessions={[]}
         tools={[]}
         {...actions}
       />,
@@ -44,14 +42,15 @@ describe('OperationsWorkbench', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Rate limits' }));
     fireEvent.click(screen.getByRole('button', { name: 'Configure' }));
     expect(screen.getByLabelText('Status')).toHaveValue('active');
+    fireEvent.click(screen.getByRole('button', { name: 'Disable limit' }));
+    expect(screen.getByRole('button', { name: 'Confirm disable' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Keep active' })).toBeInTheDocument();
 
     rerender(
       <OperationsWorkbench
         agents={[{ id: 'agt_research', name: 'Research agent' }]}
-        blocked={[]}
         decisions={[]}
         rateLimits={[{ ...rateLimit, status: 'disabled' }]}
-        sessions={[]}
         tools={[]}
         {...actions}
       />,
@@ -60,24 +59,10 @@ describe('OperationsWorkbench', () => {
     expect(screen.getByLabelText('Status')).toHaveValue('disabled');
   });
 
-  it('shows tool catalog and blocked operational actions without finance placeholders', () => {
+  it('keeps tools, limits, and runtime decisions in focused source-backed views', () => {
     render(
       <OperationsWorkbench
         agents={[{ id: 'agt_research', name: 'Research agent' }]}
-        blocked={[
-          {
-            id: 'opdec_weather',
-            action: 'runtime.http.request',
-            agent_id: 'agt_research',
-            connection_id: 'conn_local',
-            decision: 'deny',
-            reasonCode: 'policy_denied',
-            explanation: 'A policy denied this request.',
-            tool_name: null,
-            resource_label: 'api.weather.test',
-            created_at: '2026-07-08T08:00:00.000Z',
-          },
-        ]}
         decisions={[
           {
             id: 'opdec_allowed',
@@ -157,24 +142,12 @@ describe('OperationsWorkbench', () => {
             updated_at: '2026-07-08T08:00:00.000Z',
           },
         ]}
-        sessions={[
-          {
-            id: 'mcp_session_1',
-            org_id: 'org_1',
-            agent_id: 'agt_research',
-            connection_id: 'conn_local',
-            protocol: 'stdio',
-            last_seen_at: new Date().toISOString(),
-            created_at: '2026-07-08T08:00:00.000Z',
-          },
-        ]}
         updateRateLimitAction={async () => {}}
         updateToolAction={async () => {}}
       />,
     );
 
     expect(screen.getByRole('heading', { name: 'Operations' })).toBeInTheDocument();
-    expect(screen.getByText('Active tools')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Tool catalog' })).toBeInTheDocument();
     expect(screen.getByText('browser.search')).toBeInTheDocument();
     expect(screen.getByText('Managed search tool')).toBeInTheDocument();
@@ -186,24 +159,24 @@ describe('OperationsWorkbench', () => {
     expect(screen.getByRole('button', { name: 'Create limit' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Decisions' }));
-    expect(screen.getByRole('heading', { name: 'Decisions' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Runtime decisions' })).toBeInTheDocument();
     expect(screen.getByText('api.market.test')).toBeInTheDocument();
-    expect(screen.getAllByText('api.weather.test')).toHaveLength(2);
+    expect(screen.getByText('api.weather.test')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Decision'), { target: { value: 'deny' } });
     expect(screen.queryByText('api.market.test')).not.toBeInTheDocument();
-    expect(screen.getAllByText('api.weather.test')).toHaveLength(2);
-    expect(screen.getByRole('heading', { name: 'Blocked actions' })).toBeInTheDocument();
+    expect(screen.getByText('api.weather.test')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Blocked actions' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Sessions' }));
-    expect(screen.getByRole('heading', { name: 'MCP sessions' })).toBeInTheDocument();
-    expect(screen.getByText('mcp_session_1')).toBeInTheDocument();
-    expect(screen.getByText('stdio')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Sessions' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Tool catalog' }));
     fireEvent.click(screen.getByRole('button', { name: 'Inspect browser.search' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save tool' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Archive tool' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Archive tool' }));
+    expect(screen.getByRole('button', { name: 'Confirm archive' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Keep tool' })).toBeInTheDocument();
 
     expect(screen.queryByText(/wallet/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/treasury/i)).not.toBeInTheDocument();

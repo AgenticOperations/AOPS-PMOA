@@ -5,6 +5,7 @@ import type {
   AgentDetailBundle,
   AgentActivityFeed,
   AgentRosterItem,
+  AgentRosterPage,
   ConnectionRecord,
   CurrentSession,
   MemberRecord,
@@ -135,6 +136,26 @@ export async function createOrg(input: {
 export async function listAgents(orgId: string): Promise<AgentRosterItem[]> {
   const body = await apiFetch<{ readonly agents: AgentRosterItem[] }>(`/v1/orgs/${orgId}/agents`);
   return body.agents;
+}
+
+export async function listAgentsPage(
+  orgId: string,
+  input: {
+    readonly search?: string | undefined;
+    readonly teamId?: string | undefined;
+    readonly status?: AgentRosterItem['status'] | undefined;
+    readonly limit: number;
+    readonly offset: number;
+  },
+): Promise<AgentRosterPage> {
+  const query = new URLSearchParams({
+    limit: String(input.limit),
+    offset: String(input.offset),
+  });
+  if (input.search !== undefined) query.set('search', input.search);
+  if (input.teamId !== undefined) query.set('team_id', input.teamId);
+  if (input.status !== undefined) query.set('status', input.status);
+  return apiFetch<AgentRosterPage>(`/v1/orgs/${orgId}/agents?${query.toString()}`);
 }
 
 export async function listTeams(orgId: string): Promise<TeamRecord[]> {

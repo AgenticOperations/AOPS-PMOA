@@ -18,6 +18,7 @@ type ChainDetailSectionProps = {
   readonly circleWallets: readonly CircleChainWalletRecord[];
   readonly orgId: string;
   readonly paymentMode: OrgPaymentModeRecord;
+  readonly providerReady: boolean;
   readonly railReadiness: readonly PaymentRailReadinessRecord[];
   readonly runProofAction: (formData: FormData) => Promise<void>;
   readonly sources: readonly PaymentSourceRecord[];
@@ -28,6 +29,7 @@ export async function ChainDetailSection({
   circleWallets,
   orgId,
   paymentMode,
+  providerReady,
   railReadiness,
   runProofAction,
   sources,
@@ -52,14 +54,17 @@ export async function ChainDetailSection({
       connected: wallet !== null,
       exactRail,
       exactSource,
+      gatewayTotal: balance?.gateway?.total ?? '0',
+      gatewayWithdrawable: balance?.gateway?.withdrawable ?? '0',
       gatewayAvailable,
       gatewayRail,
       gatewaySource,
       label: CHAIN_LABELS[chain],
       walletAddress: wallet?.address ?? null,
+      walletId: wallet?.circle_wallet_id ?? null,
       walletUsdc,
     };
   });
 
-  return <ChainSwitcher rows={rows} runProofAction={runProofAction} />;
+  return <ChainSwitcher providerReady={providerReady} rows={rows} runProofAction={runProofAction} />;
 }

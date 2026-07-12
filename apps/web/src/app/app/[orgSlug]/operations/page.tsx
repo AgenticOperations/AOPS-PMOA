@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
-import { OrgAuditPanel } from '@/components/audit/OrgAuditPanel';
 import { OperationsWorkbench } from '@/components/operations/OperationsWorkbench';
 import {
   archiveToolAction,
@@ -11,10 +10,7 @@ import {
   updateToolAction,
 } from '@/app/actions/operations';
 import { listAgents, getOrgBySlug } from '@/lib/server/identity-spine-client';
-import { listAuditEvents } from '@/lib/server/audit-client';
 import {
-  listBlockedOperations,
-  listMcpSessions,
   listOperationDecisions,
   listRateLimits,
   listTools,
@@ -35,44 +31,27 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
     redirect('/auth');
   }
 
-  const [agents, blocked, decisions, sessions, tools, rateLimits, auditEvents] = await Promise.all([
+  const [agents, decisions, tools, rateLimits] = await Promise.all([
     listAgents(org.id),
-    listBlockedOperations(org.id, { limit: 50 }),
     listOperationDecisions(org.id, { limit: 100 }),
-    listMcpSessions(org.id),
     listTools(org.id),
     listRateLimits(org.id),
-    listAuditEvents(org.id, 30),
   ]);
   const activeAgents = agents.filter((agent) => agent.status !== 'deactivated');
-  const operationAuditEvents = auditEvents.events.filter(
-    (event) =>
-      event.action.startsWith('operation.') ||
-      event.action.startsWith('tool.') ||
-      event.action.startsWith('rate_limit.'),
-  );
 
   return (
     <ConsoleShell active="operations" org={org}>
       <OperationsWorkbench
         agents={activeAgents.map((agent) => ({ id: agent.id, name: agent.name }))}
         archiveToolAction={archiveToolAction.bind(null, org.id, org.slug)}
-        blocked={blocked}
         decisions={decisions}
         disableRateLimitAction={disableOperationLimitAction.bind(null, org.id, org.slug)}
         importAction={importToolAction.bind(null, org.id, org.slug)}
         rateLimits={rateLimits}
         rateLimitAction={createOperationLimitAction.bind(null, org.id, org.slug)}
         tools={tools}
-        sessions={sessions}
         updateRateLimitAction={updateOperationLimitAction.bind(null, org.id, org.slug)}
         updateToolAction={updateToolAction.bind(null, org.id, org.slug)}
-      />
-      <OrgAuditPanel
-        description="Tool catalog changes, runtime operation checks, rate-limit decisions, and blocked actions from the audit stream."
-        domains={['system', 'policy']}
-        events={operationAuditEvents}
-        title="Operations activity"
       />
     </ConsoleShell>
   );

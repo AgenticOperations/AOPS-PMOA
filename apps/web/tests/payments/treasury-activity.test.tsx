@@ -6,7 +6,9 @@ describe('TreasuryActivity', () => {
   it('shows delivered fulfillment instead of the lower-level submitted payment state', () => {
     render(
       <TreasuryActivity
+        activeTab="payments"
         auditEvents={[]}
+        orgSlug="openassets-qa-workspace"
         paymentEvents={[
           {
             id: 'pay_1',
@@ -39,16 +41,16 @@ describe('TreasuryActivity', () => {
 
     expect(screen.getByText('weather')).toBeInTheDocument();
     expect(screen.getByText('0.05 USDC')).toBeInTheDocument();
-    expect(screen.getByText('Delivered')).toBeInTheDocument();
+    expect(screen.getAllByText('Delivered').length).toBeGreaterThan(0);
     expect(screen.queryByText('submitted')).not.toBeInTheDocument();
     expect(screen.queryByText('No provider jobs')).not.toBeInTheDocument();
   });
 
   it('shows an empty state on the ledger tab when there are no payment events', () => {
     render(
-      <TreasuryActivity auditEvents={[]} paymentEvents={[]} providerJobs={[]} reservations={[]} routeObservations={[]} />,
+      <TreasuryActivity activeTab="payments" auditEvents={[]} orgSlug="openassets-qa-workspace" paymentEvents={[]} providerJobs={[]} reservations={[]} routeObservations={[]} />,
     );
 
-    expect(screen.getByText('No payment events')).toBeInTheDocument();
+    expect(screen.getByText('No payments evidence')).toBeInTheDocument();
   });
 });

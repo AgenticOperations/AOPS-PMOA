@@ -1,10 +1,20 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { IconActivityHeartbeat } from '@tabler/icons-react';
 import type { AgentActivityFeed, AgentActivityFeedItem } from '@/lib/identity-spine-types';
+import {
+  Sheet,
+  SheetBody,
+  SheetCloseButton,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 type AgentLiveActivityProps = {
   readonly initialFeed: AgentActivityFeed;
+  readonly pollIntervalMs?: number | undefined;
   readonly pollUrl?: string | undefined;
 };
 
@@ -29,104 +39,154 @@ function formatTime(value: string | null): string {
   return `${date.toISOString().slice(0, 19).replace('T', ' ')} UTC`;
 }
 
+function outcomeClass(value: string): string {
+  const normalized = value.toLowerCase().replaceAll('-', '_');
+  if (['denied', 'error', 'expired', 'failed', 'rejected', 'revoked'].some((state) => normalized.includes(state))) {
+    return 'outcome-danger';
+  }
+  if (['approval', 'pending', 'queued', 'warning'].some((state) => normalized.includes(state))) {
+    return 'outcome-warning';
+  }
+  return 'outcome-success';
+}
+
 function eventKey(item: AgentActivityFeedItem): string {
   return `${item.source}:${item.id}`;
 }
 
-export function AgentLiveActivity({ initialFeed, pollUrl }: AgentLiveActivityProps) {
+function pageIsHidden(): boolean {
+  return document.visibilityState === 'hidden';
+}
+
+export function AgentLiveActivity({ initialFeed, pollIntervalMs = 5000, pollUrl }: AgentLiveActivityProps) {
   const [feed, setFeed] = useState<AgentActivityFeed>(initialFeed);
+  const [open, setOpen] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [statusText, setStatusText] = useState<string>('Watching');
+  const [statusText, setStatusText] = useState<string>('Waiting to start');
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const pollingGenerationRef = useRef(0);
+
+  const clearPolling = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+  }, []);
 
   useEffect(() => {
-    if (pollUrl === undefined) return undefined;
+    if (!open || pollUrl === undefined) return undefined;
+    const generation = ++pollingGenerationRef.current;
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
 
     const refresh = async () => {
+      if (cancelled || pollingGenerationRef.current !== generation || pageIsHidden()) {
+        return;
+      }
+
+      controllerRef.current?.abort();
+      const controller = new AbortController();
+      controllerRef.current = controller;
       try {
-        const response = await fetch(pollUrl, { cache: 'no-store' });
+        const response = await fetch(pollUrl, { cache: 'no-store', signal: controller.signal });
         if (!response.ok) throw new Error(`Activity feed failed with ${response.status}`);
         const nextFeed = (await response.json()) as AgentActivityFeed;
-        if (!cancelled) {
+        if (!cancelled && pollingGenerationRef.current === generation) {
           setFeed(nextFeed);
           setUpdatedAt(new Date().toISOString());
           setStatusText('Watching');
         }
-      } catch {
-        if (!cancelled) setStatusText('Reconnecting');
+      } catch (error) {
+        if (!cancelled && pollingGenerationRef.current === generation && !(error instanceof DOMException && error.name === 'AbortError')) {
+          setStatusText('Reconnecting');
+        }
+      } finally {
+        if (!cancelled && pollingGenerationRef.current === generation && !pageIsHidden()) {
+          timerRef.current = setTimeout(() => void refresh(), pollIntervalMs);
+        }
       }
     };
 
-    timer = setInterval(() => {
-      void refresh();
-    }, 5000);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        clearPolling();
+        setStatusText('Paused while hidden');
+      } else {
+        setStatusText('Refreshing');
+        void refresh();
+      }
+    };
+
+    setStatusText('Connecting');
+    void refresh();
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelled = true;
-      if (timer !== null) clearInterval(timer);
+      pollingGenerationRef.current += 1;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      clearPolling();
     };
-  }, [pollUrl]);
+  }, [clearPolling, open, pollIntervalMs, pollUrl]);
 
   const recentEvents = useMemo(() => feed.events.slice(0, 20), [feed.events]);
 
   return (
-    <section className="section-block live-activity-panel" aria-labelledby="live-activity-title">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Runtime stream</p>
-          <h2 id="live-activity-title">Live activity</h2>
-        </div>
-        <div className="live-status-stack">
-          <span className={`live-status-dot status-${feed.live.status}`}>{liveLabel(feed.live.status)}</span>
-          <span>{statusText}</span>
-        </div>
-      </div>
+    <>
+      <button className="agent-live-monitor-trigger" onClick={() => setOpen(true)} type="button">
+        <span className={`agent-live-indicator is-${feed.live.status}`} aria-hidden="true" />
+        <IconActivityHeartbeat aria-hidden="true" size={15} stroke={1.8} />
+        Open live monitor
+      </button>
+      <Sheet labelledBy="live-monitor-title" onOpenChange={setOpen} open={open} panelClassName="live-monitor-sheet">
+        <SheetHeader>
+          <div>
+            <SheetTitle id="live-monitor-title">Live monitor</SheetTitle>
+            <SheetDescription>Runtime evidence refreshes only while this drawer remains open.</SheetDescription>
+          </div>
+          <SheetCloseButton onClick={() => setOpen(false)} />
+        </SheetHeader>
+        <SheetBody>
+          <div className="agent-live-monitor-summary" role="status">
+            <div><span>Status</span><strong><i className={`agent-live-indicator is-${feed.live.status}`} />{liveLabel(feed.live.status)}</strong></div>
+            <div><span>Stream</span><strong>{statusText}</strong></div>
+            <div><span>Last refresh</span><strong><time dateTime={updatedAt ?? undefined}>{updatedAt === null ? 'Initial evidence' : formatTime(updatedAt)}</time></strong></div>
+          </div>
+          {recentEvents.length === 0 ? (
+            <div className="agent-table-empty agent-live-empty">
+              <strong>Waiting for managed activity</strong>
+              <span>Only actions recorded through agentOps API, MCP, policy, approval, or payment surfaces appear.</span>
+            </div>
+          ) : (
+            <ActivityEvents events={recentEvents} />
+          )}
+        </SheetBody>
+      </Sheet>
+    </>
+  );
+}
 
-      <div className="live-summary-grid">
-        <div>
-          <span>Last seen</span>
-          <strong>{formatTime(feed.live.last_seen_at)}</strong>
-        </div>
-        <div>
-          <span>Latest event</span>
-          <strong>{formatTime(feed.live.latest_event_at)}</strong>
-        </div>
-        <div>
-          <span>Active credentials</span>
-          <strong>{feed.live.active_connection_count}</strong>
-        </div>
-        <div>
-          <span>Feed updated</span>
-          <strong>{updatedAt === null ? 'Initial load' : formatTime(updatedAt)}</strong>
-        </div>
-      </div>
-
-      {recentEvents.length === 0 ? (
-        <div className="soft-row">
-          <strong>No runtime activity yet.</strong>
-          <span>Policy checks, approvals, MCP records, and runtime onboarding will appear here.</span>
-        </div>
-      ) : (
-        <ol className="activity-list live-activity-list">
-          {recentEvents.map((item) => (
-            <li key={eventKey(item)}>
-              <div className="activity-event-main">
-                <strong>{item.summary}</strong>
-                {item.subject !== null ? <span className="activity-event-subject">{item.subject}</span> : null}
-                {item.description !== null ? <span>{item.description}</span> : null}
-              </div>
-              <div className="activity-event-meta">
-                <span>{formatCategory(item.category)}</span>
-                <strong>{formatCategory(item.outcome)}</strong>
-                {item.approvalId !== null ? <span>{item.approvalId}</span> : null}
-                {item.decisionId !== null ? <span>{item.decisionId}</span> : null}
-                <time dateTime={item.occurredAt}>{formatTime(item.occurredAt)}</time>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
+function ActivityEvents({ events }: { readonly events: readonly AgentActivityFeedItem[] }) {
+  return (
+    <ol className="agent-live-event-list">
+      {events.map((item) => (
+        <li className={`is-${outcomeClass(item.outcome).replace('outcome-', '')}`} key={eventKey(item)}>
+          <div className="agent-live-event-main">
+            <strong>{item.summary}</strong>
+            {item.subject !== null ? <span>{item.subject}</span> : null}
+            {item.description !== null ? <span>{item.description}</span> : null}
+          </div>
+          <div className="agent-live-event-meta">
+            <span>{formatCategory(item.category)}</span>
+            <strong className={outcomeClass(item.outcome)}>{formatCategory(item.outcome)}</strong>
+            {item.approvalId !== null ? <span>{item.approvalId}</span> : null}
+            {item.decisionId !== null ? <span>{item.decisionId}</span> : null}
+            <time dateTime={item.occurredAt}>{formatTime(item.occurredAt)}</time>
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

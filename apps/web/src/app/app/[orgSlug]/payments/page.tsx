@@ -1,14 +1,15 @@
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
 import { TreasuryOverview } from '@/components/payments/TreasuryOverview';
-import { getOrgBySlug } from '@/lib/server/identity-spine-client';
+import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
 import {
-  getCircleConnection,
   getProviderMode,
+  getPaymentsConsoleSnapshot,
   listAgentPaymentAccounts,
   listCircleProviderJobs,
   listPaymentRailReadiness,
   listPaymentReservations,
+  readCircleConnection,
 } from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
@@ -26,29 +27,30 @@ export default async function PaymentsPage({ params }: PaymentsPageProps) {
     redirect('/auth');
   }
 
-  const [circleConnection, paymentMode, railReadiness, agentAccounts, recentJobs, reservations] = await Promise.all([
-    getCircleConnection(org.id),
+  const [circleConnection, paymentMode, railReadiness, agentAccounts, recentJobs, reservations, snapshot, agents] = await Promise.all([
+    readCircleConnection(org.id),
     getProviderMode(org.id),
     listPaymentRailReadiness(org.id),
     listAgentPaymentAccounts(org.id),
     listCircleProviderJobs(org.id),
     listPaymentReservations(org.id, 25),
+    getPaymentsConsoleSnapshot(org.id),
+    listAgents(org.id),
   ]);
 
-  const agentsWithAccess = agentAccounts.accounts.filter(
-    (account) => account.payment_access && account.status === 'active',
-  ).length;
   const failedJobs = recentJobs.filter((job) => job.status === 'failed');
   const pendingReservations = reservations.filter((reservation) => reservation.status === 'reserved').length;
 
   return (
     <ConsoleShell active="payments" org={org}>
       <TreasuryOverview
-        agentsWithAccess={agentsWithAccess}
-        circleConnected={circleConnection.status === 'connected'}
+        accounts={agentAccounts.accounts}
+        agents={agents}
+        balances={snapshot.balances}
+        circleConnectionState={circleConnection.status === 'unavailable' ? 'unavailable' : circleConnection.value.status === 'connected' ? 'connected' : 'disconnected'}
         failedJobs={failedJobs}
-        orgId={org.id}
         orgSlug={org.slug}
+        overview={snapshot.overview}
         paymentMode={paymentMode}
         pendingReservations={pendingReservations}
         railReadiness={railReadiness}

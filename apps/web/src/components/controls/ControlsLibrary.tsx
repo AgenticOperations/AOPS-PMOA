@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { IconArrowRight } from '@tabler/icons-react';
 import type { AuditEventRecord } from '@/lib/audit-types';
 import type {
   PolicyActionRecord,
@@ -9,7 +10,8 @@ import type {
   PolicyStatement,
   PolicyVersion,
 } from '@/lib/policy-types';
-import { Sheet } from '@/components/ui/sheet';
+import { Sheet, SheetCloseButton } from '@/components/ui/sheet';
+import { DataTablePager } from '@/components/ui/data-table-pager';
 import { PolicyDraftBuilder } from './PolicyDraftBuilder';
 
 type BindTargetType = 'agent' | 'connection' | 'org' | 'team';
@@ -48,7 +50,9 @@ type DrawerState =
   | { readonly kind: 'draft'; readonly draftId: string };
 
 type TableView = 'library' | 'drafts' | 'activity';
-type PolicyDetailTab = 'details' | 'conditions' | 'evidence' | 'lifecycle' | 'usage';
+type PolicyDetailTab = 'details' | 'evidence' | 'lifecycle' | 'targets';
+
+const TABLE_PAGE_SIZE = 8;
 
 const fallbackActionLabels: Record<string, string> = {
   'runtime.http.request': 'HTTP/API request',
@@ -106,15 +110,17 @@ function actionHasConditionGroup(action: PolicyActionRecord, group: 'payment' | 
 }
 
 function formatDate(value: string): string {
-  return new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(value));
+  return new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short', timeZone: 'UTC', year: 'numeric' }).format(new Date(value));
 }
 
 function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('en', {
+  return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
+    hour12: false,
     hour: '2-digit',
     minute: '2-digit',
     month: 'short',
+    timeZone: 'UTC',
   }).format(new Date(value));
 }
 
@@ -271,6 +277,7 @@ export function ControlsLibrary({
   const [detailTab, setDetailTab] = useState<PolicyDetailTab>('details');
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | PolicyVersion['category']>('all');
+  const [tablePage, setTablePage] = useState(1);
   const [confirmDiscardDraftId, setConfirmDiscardDraftId] = useState<string | null>(null);
   const [confirmArchivePolicyId, setConfirmArchivePolicyId] = useState<string | null>(null);
 
@@ -367,6 +374,20 @@ export function ControlsLibrary({
     },
   };
   const currentMeta = viewMeta[tableView];
+  const currentTotal = tableView === 'library'
+    ? filteredPolicies.length
+    : tableView === 'drafts'
+      ? visibleDrafts.length
+      : policyActivity.length;
+  const safeTablePage = Math.min(Math.max(1, tablePage), Math.max(1, Math.ceil(currentTotal / TABLE_PAGE_SIZE)));
+  const pageStart = (safeTablePage - 1) * TABLE_PAGE_SIZE;
+  const pagedPolicies = filteredPolicies.slice(pageStart, pageStart + TABLE_PAGE_SIZE);
+  const pagedDrafts = visibleDrafts.slice(pageStart, pageStart + TABLE_PAGE_SIZE);
+  const pagedActivity = policyActivity.slice(pageStart, pageStart + TABLE_PAGE_SIZE);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [categoryFilter, query, tableView]);
   const closeDrawer = () => {
     setDrawer({ kind: 'closed' });
     setConfirmArchivePolicyId(null);
@@ -378,11 +399,32 @@ export function ControlsLibrary({
   return (
     <div className="controls-console">
       <div className="controls-page" aria-hidden={drawerOpen}>
+        <div className="controls-workbench-top">
+          <nav className="controls-view-tabs" aria-label="Controls sections">
+            {([
+              ['library', 'Policy library'],
+              ['drafts', 'Drafts'],
+              ['activity', 'Change log'],
+            ] as const).map(([view, label]) => (
+              <button
+                aria-label={label}
+                aria-current={tableView === view ? 'page' : undefined}
+                className={tableView === view ? 'controls-view-tab active' : 'controls-view-tab'}
+                key={view}
+                onClick={() => setTableView(view)}
+                type="button"
+              >
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+
         <header className="controls-page-header">
           <div>
-            <span className="controls-page-kicker">Policy workbench</span>
+            <p className="controls-eyebrow">Policy / control plane</p>
             <h1>Controls</h1>
-            <p>Create reusable rules, validate drafts, and keep the policy library clean.</p>
+            <p>Author, test, activate, and trace the policies that govern managed agent actions.</p>
           </div>
           <button className="controls-primary-action" onClick={() => setDrawer({ kind: 'create' })} type="button">
             New policy
@@ -391,36 +433,6 @@ export function ControlsLibrary({
 
         <section className="controls-library-shell" aria-labelledby="policy-library-title">
           <div className="controls-library-core">
-            <div className="controls-workbench-top">
-              <nav className="controls-view-tabs" aria-label="Controls sections">
-                {([
-                  ['library', 'Library', activeCount],
-                  ['drafts', 'Drafts', draftCount],
-                  ['activity', 'Change log', activityCount],
-                ] as const).map(([view, label, count]) => (
-                  <button
-                    aria-label={label}
-                    aria-current={tableView === view ? 'page' : undefined}
-                    className={tableView === view ? 'controls-view-tab active' : 'controls-view-tab'}
-                    key={view}
-                    onClick={() => setTableView(view)}
-                    type="button"
-                  >
-                    <span>{label}</span>
-                    <strong>{count}</strong>
-                  </button>
-                ))}
-              </nav>
-            </div>
-
-            <div className="controls-library-heading">
-              <div>
-                <h2 id="policy-library-title">{currentMeta.title}</h2>
-                <p>{currentMeta.description}</p>
-              </div>
-              <span className="controls-muted-count">{currentMeta.count}</span>
-            </div>
-
             <div className="controls-toolbar" aria-label="Policy filters">
               <label>
                 <span>Search</span>
@@ -431,20 +443,29 @@ export function ControlsLibrary({
                   value={query}
                 />
               </label>
-              <label>
-                <span>Category</span>
-                <select
-                  aria-label="Filter by category"
-                  disabled={tableView === 'activity'}
-                  onChange={(event) => setCategoryFilter(event.target.value as typeof categoryFilter)}
-                  value={categoryFilter}
-                >
-                  <option value="all">All categories</option>
-                  <option value="operational">Operational</option>
-                  <option value="management">Management</option>
-                  <option value="capability">Capability</option>
-                </select>
-              </label>
+              {tableView === 'activity' ? null : (
+                <label>
+                  <span>Category</span>
+                  <select
+                    aria-label="Filter by category"
+                    onChange={(event) => setCategoryFilter(event.target.value as typeof categoryFilter)}
+                    value={categoryFilter}
+                  >
+                    <option value="all">All categories</option>
+                    <option value="operational">Operational</option>
+                    <option value="management">Management</option>
+                    <option value="capability">Capability</option>
+                  </select>
+                </label>
+              )}
+            </div>
+
+            <div className="controls-library-heading">
+              <div>
+                <h2 id="policy-library-title">{currentMeta.title}</h2>
+                <p>{currentMeta.description}</p>
+              </div>
+              <span className="controls-muted-count">{currentMeta.count}</span>
             </div>
 
             {tableView === 'library' && filteredPolicies.length === 0 ? (
@@ -483,7 +504,7 @@ export function ControlsLibrary({
                   <span role="columnheader">Assigned</span>
                   <span role="columnheader">Open</span>
                 </div>
-                {filteredPolicies.map((policy) => {
+                {pagedPolicies.map((policy) => {
                   const statement = primaryStatement(policy);
                   return (
                     <button
@@ -509,7 +530,7 @@ export function ControlsLibrary({
                       <span className="controls-neutral-badge" role="cell">
                         {policy.bindings_count} assigned
                       </span>
-                      <span className="controls-row-open" role="cell">Open</span>
+                      <span className="controls-row-open" role="cell"><IconArrowRight aria-hidden="true" size={13} stroke={1.8} /></span>
                     </button>
                   );
                 })}
@@ -525,7 +546,7 @@ export function ControlsLibrary({
                   <span role="columnheader">Enforcement</span>
                   <span role="columnheader">Actions</span>
                 </div>
-                {visibleDrafts.map((draft) => {
+                {pagedDrafts.map((draft) => {
                   const draftActivationAction = activationActionForDraft(draft);
                   return (
                   <div className="controls-policy-row controls-policy-row-static controls-drafts-grid" key={draft.id} role="row">
@@ -576,7 +597,7 @@ export function ControlsLibrary({
                   <span role="columnheader">Recorded</span>
                   <span role="columnheader">Evidence</span>
                 </div>
-                {policyActivity.slice(0, 30).map((event) => (
+                {pagedActivity.map((event) => (
                   <div className="controls-policy-row controls-policy-row-static controls-activity-grid" key={event.id} role="row">
                     <span className="controls-policy-name" role="cell">
                       <span className="controls-policy-title">{titleCase(event.action)}</span>
@@ -589,6 +610,16 @@ export function ControlsLibrary({
                   </div>
                 ))}
               </div>
+            ) : null}
+
+            {currentTotal > 0 ? (
+              <DataTablePager
+                itemLabel={tableView === 'library' ? 'policies' : tableView === 'drafts' ? 'drafts' : 'policy changes'}
+                onPageChange={setTablePage}
+                page={safeTablePage}
+                pageSize={TABLE_PAGE_SIZE}
+                total={currentTotal}
+              />
             ) : null}
           </div>
         </section>
@@ -608,9 +639,7 @@ export function ControlsLibrary({
             <h1 id="create-policy-title">Create policy</h1>
             <p>Pick one action surface, set only the conditions that can match it, then save a draft for validation.</p>
           </div>
-          <button className="button-secondary" onClick={closeDrawer} type="button">
-            Close
-          </button>
+          <SheetCloseButton ariaLabel="Close" onClick={closeDrawer} />
         </header>
         <div className="controls-drawer-body">
           <main className="controls-drawer-main">
@@ -639,9 +668,7 @@ export function ControlsLibrary({
                 <h1 id="draft-policy-title">{detailDraft.name}</h1>
                 <p>Drafts are editable. They do not enforce until validation, activation, and binding complete.</p>
               </div>
-              <button className="button-secondary" onClick={closeDrawer} type="button">
-                Close
-              </button>
+              <SheetCloseButton ariaLabel="Close" onClick={closeDrawer} />
             </header>
             <div className="controls-drawer-body">
               <main className="controls-drawer-main">
@@ -908,9 +935,7 @@ export function ControlsLibrary({
                 <h1 id="policy-detail-title">{detailPolicy.name}</h1>
                 <p>{detailPolicy.description || policySummary(detailPolicy, policyActions)}</p>
               </div>
-              <button className="button-secondary" onClick={closeDrawer} type="button">
-                Close
-              </button>
+              <SheetCloseButton ariaLabel="Close" onClick={closeDrawer} />
             </header>
             <div className="controls-drawer-body">
               <main className="controls-drawer-main">
@@ -918,9 +943,8 @@ export function ControlsLibrary({
                   <nav className="controls-detail-tabs" aria-label="Policy detail sections">
                     {([
                       ['details', 'Details'],
-                      ['conditions', 'Conditions'],
                       ['evidence', 'Evidence'],
-                      ['usage', 'Usage'],
+                      ['targets', 'Targets'],
                       ['lifecycle', 'Lifecycle'],
                     ] as const).map(([tab, label]) => (
                       <button
@@ -971,13 +995,8 @@ export function ControlsLibrary({
                       <p className="controls-detail-note">
                         Assignments are managed where the target lives. Open an agent, team, workspace, or credential surface to attach or remove this policy.
                       </p>
-                    </section>
-                  ) : null}
-
-                  {detailTab === 'conditions' ? (
-                    <section className="controls-form-surface controls-detail-panel">
-                      <div className="controls-form-heading">
-                        <h2>Conditions</h2>
+                      <div className="controls-form-heading controls-detail-subheading">
+                        <h2>Match conditions</h2>
                         <p>The exact fields this policy can match. Empty groups mean this policy is controlled by action and assignment scope.</p>
                       </div>
                       <dl className="controls-condition-list">
@@ -1067,10 +1086,10 @@ export function ControlsLibrary({
                     </section>
                   ) : null}
 
-                  {detailTab === 'usage' ? (
-                    <section className="controls-form-surface controls-detail-panel" aria-label={`${detailPolicy.name} usage`}>
+                  {detailTab === 'targets' ? (
+                    <section className="controls-form-surface controls-detail-panel" aria-label={`${detailPolicy.name} targets`}>
                       <div className="controls-form-heading">
-                        <h2>Usage</h2>
+                        <h2>Targets</h2>
                         <p>Current assignments are shown for impact review. Attach or remove policies from the workspace, team, agent, or credential page.</p>
                       </div>
                       {detailPolicy.bindings.length === 0 ? (

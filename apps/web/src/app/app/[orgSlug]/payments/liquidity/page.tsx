@@ -8,7 +8,7 @@ import {
   retryLiquidityJobAction,
 } from '@/app/actions/payments';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
-import { listLiquidityJobs, listPaymentCapabilities, listRebalanceRecommendations } from '@/lib/server/payments-client';
+import { listLiquidityJobs, listPaymentCapabilities, listRebalanceRecommendations, readProviderHealth } from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,11 +25,17 @@ export default async function PaymentsLiquidityPage({ params }: LiquidityPagePro
     redirect('/auth');
   }
 
-  const [liquidityJobs, rebalanceRecommendations, capabilities] = await Promise.all([
+  const [liquidityJobs, rebalanceRecommendations, capabilities, providerHealth] = await Promise.all([
     listLiquidityJobs(org.id),
     listRebalanceRecommendations(org.id),
     listPaymentCapabilities(org.id),
+    readProviderHealth(org.id),
   ]);
+  const providerState = providerHealth.status === 'unavailable'
+    ? 'unavailable'
+    : providerHealth.value.configured
+      ? 'ready'
+      : 'disconnected';
 
   return (
     <ConsoleShell active="payments" org={org}>
@@ -38,6 +44,8 @@ export default async function PaymentsLiquidityPage({ params }: LiquidityPagePro
         cancelLiquidityJobAction={cancelLiquidityJobAction.bind(null, org.id, org.slug)}
         capabilities={capabilities}
         liquidityJobs={liquidityJobs}
+        orgSlug={org.slug}
+        providerState={providerState}
         reconcileJobsAction={reconcileCircleProviderJobsAction.bind(null, org.id, org.slug)}
         rebalanceRecommendations={rebalanceRecommendations}
         retryLiquidityJobAction={retryLiquidityJobAction.bind(null, org.id, org.slug)}

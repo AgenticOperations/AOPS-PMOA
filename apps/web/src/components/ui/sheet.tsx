@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { IconX } from '@tabler/icons-react';
 import { cn } from '@/lib/utils';
 
@@ -13,30 +14,99 @@ type SheetProps = {
   readonly side?: 'right' | 'left';
 };
 
+const openSheetStack: symbol[] = [];
+
 function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side = 'right' }: SheetProps) {
+  const panelRef = React.useRef<HTMLElement>(null);
+  const onOpenChangeRef = React.useRef(onOpenChange);
+  const sheetIdRef = React.useRef(Symbol('sheet'));
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  React.useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
+
   React.useEffect(() => {
     if (!open) {
       return undefined;
     }
 
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    const sheetId = sheetIdRef.current;
+    openSheetStack.push(sheetId);
+    document.body.style.overflow = 'hidden';
+
+    const focusableSelector = [
+      'button:not([disabled])',
+      'a[href]',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+
+    const focusFirst = () => {
+      const firstFocusable = panelRef.current?.querySelector<HTMLElement>(focusableSelector);
+      (firstFocusable ?? panelRef.current)?.focus();
+    };
+    focusFirst();
+
     const onKeyDown = (event: KeyboardEvent) => {
+      if (openSheetStack.at(-1) !== sheetId) {
+        return;
+      }
+
       if (event.key === 'Escape') {
-        onOpenChange(false);
+        event.preventDefault();
+        onOpenChangeRef.current(false);
+        return;
+      }
+
+      if (event.key !== 'Tab' || panelRef.current === null) {
+        return;
+      }
+
+      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(focusableSelector));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panelRef.current.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
       }
     };
 
     document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onOpenChange, open]);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      const stackIndex = openSheetStack.lastIndexOf(sheetId);
+      if (stackIndex >= 0) openSheetStack.splice(stackIndex, 1);
+      document.body.style.overflow = previousOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [open]);
 
-  if (!open) {
+  if (!open || !mounted) {
     return null;
   }
 
-  return (
+  return createPortal(
     <div className="sheet-root" data-side={side}>
       <button
-        aria-label="Close panel"
+        aria-label="Dismiss panel"
         className="sheet-backdrop"
         onClick={() => onOpenChange(false)}
         type="button"
@@ -45,11 +115,14 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
         aria-labelledby={labelledBy}
         aria-modal="true"
         className={cn('sheet-panel', side === 'left' && 'sheet-panel-left', panelClassName)}
+        ref={panelRef}
         role="dialog"
+        tabIndex={-1}
       >
         {children}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -73,9 +146,19 @@ function SheetFooter({ className, ...props }: React.ComponentProps<'div'>) {
   return <div className={cn('sheet-footer', className)} {...props} />;
 }
 
-function SheetCloseButton({ className, onClick }: { readonly className?: string; readonly onClick: () => void }) {
+function SheetCloseButton({
+  ariaLabel = 'Close panel',
+  className,
+  disabled = false,
+  onClick,
+}: {
+  readonly ariaLabel?: string;
+  readonly className?: string;
+  readonly disabled?: boolean;
+  readonly onClick: () => void;
+}) {
   return (
-    <button aria-label="Close panel" className={cn('sheet-close', className)} onClick={onClick} type="button">
+    <button aria-label={ariaLabel} className={cn('sheet-close', className)} disabled={disabled} onClick={onClick} type="button">
       <IconX aria-hidden="true" size={17} />
     </button>
   );

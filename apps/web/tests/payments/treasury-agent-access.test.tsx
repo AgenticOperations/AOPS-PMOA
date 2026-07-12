@@ -64,12 +64,12 @@ describe('TreasuryAgentAccess', () => {
         ]}
         agents={[agent]}
         capabilities={[capability]}
-        hasActiveGatewaySource
+        orgSlug="openassets-qa-workspace"
       />,
     );
 
     expect(screen.getAllByText('Trade research agent').length).toBeGreaterThan(0);
-    expect(screen.getByText('On')).toBeInTheDocument();
+    expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
     expect(screen.getByText('5.00 USDC')).toBeInTheDocument();
   });
 
@@ -80,7 +80,7 @@ describe('TreasuryAgentAccess', () => {
         accounts={[]}
         agents={[]}
         capabilities={[capability]}
-        hasActiveGatewaySource={false}
+        orgSlug="openassets-qa-workspace"
       />,
     );
 
@@ -128,17 +128,18 @@ describe('TreasuryAgentAccess', () => {
         ]}
         agents={[agent, secondAgent]}
         capabilities={[capability, avalancheCapability]}
-        hasActiveGatewaySource
+        orgSlug="openassets-qa-workspace"
       />,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Grant access' }));
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: secondAgent.id } });
 
-    expect(screen.getByLabelText('Budget')).toHaveValue('7.50');
+    expect(screen.getByLabelText('Monthly budget')).toHaveValue('7.50');
     expect(screen.getByLabelText('Per request')).toHaveValue('3.25');
     expect(screen.getByLabelText('Approval threshold')).toHaveValue('2.00');
-    expect(screen.getByLabelText('Gateway · Avalanche')).toBeChecked();
-    expect(screen.getByLabelText('Gateway · Base')).not.toBeChecked();
+    expect(screen.getByLabelText(/Gateway · Avalanche/)).toBeChecked();
+    expect(screen.getByLabelText(/Gateway · Base/)).not.toBeChecked();
   });
 
   it('keeps the selected agent aligned with refreshed account values after save', () => {
@@ -173,12 +174,13 @@ describe('TreasuryAgentAccess', () => {
       accessAction: async () => {},
       agents: [agent, secondAgent],
       capabilities: [capability, avalancheCapability],
-      hasActiveGatewaySource: true,
+      orgSlug: 'openassets-qa-workspace',
     };
     const { rerender } = render(
       <TreasuryAgentAccess {...props} accounts={[firstAccount, secondAccount]} />,
     );
 
+    fireEvent.click(screen.getByRole('button', { name: 'Grant access' }));
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: secondAgent.id } });
     rerender(
       <TreasuryAgentAccess
@@ -197,7 +199,7 @@ describe('TreasuryAgentAccess', () => {
     );
 
     expect(screen.getByLabelText('Agent')).toHaveValue(secondAgent.id);
-    expect(screen.getByLabelText('Budget')).toHaveValue('9.00');
+    expect(screen.getByLabelText('Monthly budget')).toHaveValue('9.00');
     expect(screen.getByLabelText('Per request')).toHaveValue('4.00');
     expect(screen.getByLabelText('Approval threshold')).toHaveValue('2.50');
   });

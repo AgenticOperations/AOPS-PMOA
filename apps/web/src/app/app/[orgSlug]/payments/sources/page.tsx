@@ -10,12 +10,12 @@ import {
 } from '@/app/actions/payments';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import {
-  getProviderHealth,
   getProviderMode,
   listCircleWallets,
   listPaymentCapabilities,
   listPaymentRailReadiness,
   listPaymentSources,
+  readProviderHealth,
 } from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
@@ -36,7 +36,7 @@ export default async function PaymentsSourcesPage({ params }: SourcesPageProps) 
   const [sources, paymentMode, providerHealth, capabilities, circleWallets, railReadiness] = await Promise.all([
     listPaymentSources(org.id),
     getProviderMode(org.id),
-    getProviderHealth(org.id),
+    readProviderHealth(org.id),
     listPaymentCapabilities(org.id),
     listCircleWallets(org.id),
     listPaymentRailReadiness(org.id),
@@ -52,7 +52,8 @@ export default async function PaymentsSourcesPage({ params }: SourcesPageProps) 
         orgId={org.id}
         orgSlug={org.slug}
         paymentMode={paymentMode}
-        providerHealth={providerHealth}
+        providerHealth={providerHealth.value}
+        providerHealthAvailable={providerHealth.status === 'available'}
         railReadiness={railReadiness}
         sources={sources}
         testnetFundsAction={requestTestnetFundsAction.bind(null, org.id, org.slug)}

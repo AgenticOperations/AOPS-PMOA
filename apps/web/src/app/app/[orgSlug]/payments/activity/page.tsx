@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
-import { TreasuryActivity } from '@/components/payments/TreasuryActivity';
+import { TreasuryActivity, type TreasuryActivityTab } from '@/components/payments/TreasuryActivity';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { listAuditEvents } from '@/lib/server/audit-client';
 import {
@@ -14,10 +14,16 @@ export const dynamic = 'force-dynamic';
 
 type ActivityPageProps = {
   readonly params: Promise<{ readonly orgSlug: string }>;
+  readonly searchParams?: Promise<Record<string, string | readonly string[] | undefined>>;
 };
 
-export default async function PaymentsActivityPage({ params }: ActivityPageProps) {
+const activityTabs: readonly TreasuryActivityTab[] = ['payments', 'routing', 'reservations', 'jobs', 'audit'];
+
+export default async function PaymentsActivityPage({ params, searchParams }: ActivityPageProps) {
   const { orgSlug } = await params;
+  const query = (await searchParams) ?? {};
+  const tabValue = typeof query.tab === 'string' ? query.tab : query.tab?.[0];
+  const activeTab = activityTabs.includes(tabValue as TreasuryActivityTab) ? tabValue as TreasuryActivityTab : 'payments';
   let org;
   try {
     org = await getOrgBySlug(orgSlug);
@@ -36,7 +42,9 @@ export default async function PaymentsActivityPage({ params }: ActivityPageProps
   return (
     <ConsoleShell active="payments" org={org}>
       <TreasuryActivity
+        activeTab={activeTab}
         auditEvents={auditEvents.events}
+        orgSlug={org.slug}
         paymentEvents={paymentEvents}
         providerJobs={providerJobs}
         reservations={reservations}

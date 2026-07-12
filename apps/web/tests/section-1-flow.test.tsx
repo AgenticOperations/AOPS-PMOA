@@ -9,12 +9,32 @@ import {
   getCurrentSession,
   getOrgBySlug,
   listAgents,
+  listAgentsPage,
+  listTeams,
 } from '@/lib/server/identity-spine-client.js';
+import { listApprovals } from '@/lib/server/approval-client.js';
+import { listAuditEvents } from '@/lib/server/audit-client.js';
+
+vi.mock('server-only', () => ({}));
 
 vi.mock('@/lib/server/identity-spine-client.js', () => ({
   getCurrentSession: vi.fn(),
   getOrgBySlug: vi.fn(),
   listAgents: vi.fn(),
+  listAgentsPage: vi.fn(),
+  listTeams: vi.fn(),
+}));
+
+vi.mock('@/lib/server/approval-client.js', () => ({
+  listApprovals: vi.fn(),
+}));
+
+vi.mock('@/lib/server/audit-client.js', () => ({
+  listAuditEvents: vi.fn(),
+}));
+
+vi.mock('@/lib/server/payments-client.js', () => ({
+  getTreasuryOverview: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -27,8 +47,8 @@ describe('Section 1 product flow', () => {
   it('keeps root public and sends users to auth instead of public org creation', async () => {
     render(await HomePage());
 
-    expect(screen.getByRole('heading', { name: 'agentOps' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Get started' })).toHaveAttribute('href', '/auth');
+    expect(screen.getByRole('heading', { name: 'Let agents act. Keep authority.' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Request access' })).toHaveAttribute('href', '/auth');
     expect(screen.queryByRole('button', { name: 'Create organization' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Switch to dark theme/i })).not.toBeInTheDocument();
   });
@@ -60,7 +80,7 @@ describe('Section 1 product flow', () => {
     expect(screen.queryByText(/Forgot Password/i)).not.toBeInTheDocument();
     expect(screen.queryByText('G')).not.toBeInTheDocument();
     expect(screen.getByTestId('google-logo')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Switch to dark theme/ })).toBeInTheDocument();
     expect(screen.queryByText(/Section 1/i)).not.toBeInTheDocument();
   });
 
@@ -140,7 +160,7 @@ describe('Section 1 product flow', () => {
     expect(screen.queryByText(/Select a starting point/i)).not.toBeInTheDocument();
   });
 
-  it('renders only required agent registration fields', async () => {
+  it('keeps agent registration behind one focused action', async () => {
     vi.mocked(getOrgBySlug).mockResolvedValueOnce({
       id: 'org_acme',
       name: 'Acme Agent Ops',
@@ -149,14 +169,17 @@ describe('Section 1 product flow', () => {
       settings: {},
       status: 'active',
     });
-    vi.mocked(listAgents).mockResolvedValueOnce([]);
+    vi.mocked(listAgentsPage).mockResolvedValueOnce({
+      agents: [],
+      pagination: { limit: 25, offset: 0, total: 0 },
+    });
+    vi.mocked(listTeams).mockResolvedValueOnce([]);
 
     render(await AgentsPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
 
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Agent name')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Authorize a new agent')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add agent' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Agent name')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Description')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Labels')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Environment')).not.toBeInTheDocument();
@@ -173,16 +196,94 @@ describe('Section 1 product flow', () => {
       status: 'active',
     });
     vi.mocked(listAgents).mockResolvedValueOnce([]);
+    vi.mocked(listApprovals).mockResolvedValueOnce({ approvals: [] });
+    vi.mocked(listAuditEvents).mockResolvedValueOnce({ events: [] });
 
     render(await OverviewPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
 
-    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Operational posture, without the noise.' })).toBeInTheDocument();
     expect(screen.getAllByText('Acme Agent Ops').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open agents' })).toHaveAttribute(
-      'href',
-      '/app/acme-agent-ops/agents',
-    );
-    expect(screen.getByRole('link', { name: 'Add agent' })).toHaveAttribute('href', '/app/acme-agent-ops/agents');
+    expect(screen.getByRole('button', { name: /Switch to dark theme/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Open registry' })[0]).toHaveAttribute('href', '/app/acme-agent-ops/agents');
+  });
+
+  it('shows only evidence-backed overview metrics and recent organization evidence', async () => {
+    vi.mocked(getOrgBySlug).mockResolvedValueOnce({
+      id: 'org_acme',
+      name: 'Acme Agent Ops',
+      slug: 'acme-agent-ops',
+      default_team_id: 'team_default',
+      settings: {},
+      status: 'active',
+    });
+    vi.mocked(listAgents).mockResolvedValueOnce([
+      {
+        id: 'agt_research',
+        name: 'Research agent',
+        status: 'active',
+        labels: ['research'],
+        team: { id: 'team_default', name: 'Default' },
+        connection_health: 'healthy',
+        policy_coverage: 2,
+        wallet_refs_count: 0,
+        last_activity_at: '2026-07-12T10:00:00.000Z',
+      },
+    ]);
+    vi.mocked(listApprovals).mockResolvedValueOnce({
+      approvals: [{
+        id: 'apv_pending', org_id: 'org_acme', agent_id: 'agt_research', connection_id: 'conn_1',
+        decision_id: 'pdec_1', status: 'pending', action_id: 'payment.x402.authorize', target_type: 'agent',
+        target_id: 'agt_research', context: {}, context_hash: 'hash', requested_by: 'conn_1', approved_by: null,
+        approved_at: null, denied_by: null, denied_at: null, consumed_at: null,
+        expires_at: '2026-07-12T12:00:00.000Z', note: '', created_at: '2026-07-12T10:00:00.000Z',
+        updated_at: '2026-07-12T10:00:00.000Z',
+      }],
+    });
+    vi.mocked(listAuditEvents).mockResolvedValueOnce({
+      events: [{
+        id: 'aud_1', orgId: 'org_acme', sequence: 1, idempotencyKey: null, eventType: 'agent.registered',
+        occurredAt: '2026-07-12T09:00:00.000Z', recordedAt: '2026-07-12T09:00:00.000Z', actorType: 'user',
+        actorId: 'usr_owner', action: 'agent.registered', outcome: 'success', reasonCode: null, resourceType: 'agent',
+        resourceId: 'agt_research', eventDomain: 'identity', eventCategory: 'configuration', severity: 'info', tags: [],
+        relatedAgentId: 'agt_research', relatedTeamId: null, relatedConnectionId: null, relatedWalletRefId: null,
+        relatedPolicyId: null, relatedWalletId: null, requestId: null, sourceSection: 'section_1', sourceSystem: 'identity',
+        sourceRef: null, policyRef: null, decisionRef: null, approvalRef: null, retentionClass: 'standard',
+        redactionState: 'none', canonicalBodyHash: 'body_hash', previousHash: null, eventHash: 'event_hash',
+      }],
+    });
+
+    render(await OverviewPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
+
+    expect(screen.getByText('Active agents').nextElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Pending approvals').nextElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Research agent')).toBeInTheDocument();
+    expect(screen.getByText('Agent registered')).toBeInTheDocument();
+    expect(screen.queryByText(/connected now/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the newest registered agent first', async () => {
+    vi.mocked(getOrgBySlug).mockResolvedValueOnce({
+      id: 'org_acme', name: 'Acme Agent Ops', slug: 'acme-agent-ops', default_team_id: 'team_default', settings: {}, status: 'active',
+    });
+    vi.mocked(listAgents).mockResolvedValueOnce([
+      {
+        id: 'agt_old', name: 'Older agent', status: 'active', labels: [], team: { id: 'team_default', name: 'Default' },
+        connection_health: 'healthy', policy_coverage: 0, wallet_refs_count: 0, last_activity_at: null,
+      },
+      {
+        id: 'agt_new', name: 'Newer agent', status: 'active', labels: [], team: { id: 'team_default', name: 'Default' },
+        connection_health: 'healthy', policy_coverage: 0, wallet_refs_count: 0, last_activity_at: null,
+      },
+    ]);
+    vi.mocked(listApprovals).mockResolvedValueOnce({ approvals: [] });
+    vi.mocked(listAuditEvents).mockResolvedValueOnce({ events: [] });
+
+    render(await OverviewPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
+
+    const agentLinks = screen.getAllByRole('link').filter((link) => link.classList.contains('canonical-overview-agent-cell'));
+    expect(agentLinks.map((link) => link.textContent)).toEqual([
+      expect.stringContaining('Newer agent'),
+      expect.stringContaining('Older agent'),
+    ]);
   });
 });

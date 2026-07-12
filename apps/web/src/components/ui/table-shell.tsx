@@ -14,6 +14,7 @@ export function TableShell({ children, className, maxHeight = 560 }: TableShellP
         'overflow-hidden rounded-xl bg-[var(--bg-panel)] ring-1 ring-[var(--border-subtle)]',
         className,
       )}
+      data-slot="table-shell"
     >
       <div
         className="table-shell-scroll overflow-auto"

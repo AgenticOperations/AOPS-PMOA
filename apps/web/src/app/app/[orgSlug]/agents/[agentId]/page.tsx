@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
 import { AgentDetailShell } from '@/components/agents/AgentDetailShell';
@@ -62,9 +61,6 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
 
   return (
     <ConsoleShell active="agents" org={org}>
-      <Link className="back-link" href={`/app/${org.slug}/agents`}>
-        Back to agents
-      </Link>
       <AgentDetailShell
         activity={detail.activity}
         activityFeed={activityFeed}

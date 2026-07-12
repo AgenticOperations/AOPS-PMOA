@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { IconArrowRight } from '@tabler/icons-react';
 import {
   Sheet,
   SheetBody,
@@ -10,9 +11,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DataTablePager } from '@/components/ui/data-table-pager';
 import type {
-  BlockedOperationRecord,
-  McpSessionRecord,
   OperationalAction,
   OperationalDecisionRecord,
   OperationsAgentOption,
@@ -20,14 +20,13 @@ import type {
   RateLimitUtilizationRecord,
   ToolCatalogRecord,
 } from '@/lib/operations-types';
+import { formatUtcDateTime } from '@/lib/date-format';
 
 type OperationsWorkbenchProps = {
   readonly agents: readonly OperationsAgentOption[];
   readonly archiveToolAction?: ((formData: FormData) => Promise<void>) | undefined;
-  readonly blocked: readonly BlockedOperationRecord[];
   readonly decisions: readonly OperationalDecisionRecord[];
   readonly disableRateLimitAction?: ((formData: FormData) => Promise<void>) | undefined;
-  readonly sessions: readonly McpSessionRecord[];
   readonly tools: readonly ToolCatalogRecord[];
   readonly importAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly rateLimits: readonly RateLimitUtilizationRecord[];
@@ -40,8 +39,11 @@ type DetailState =
   | { readonly kind: 'tool'; readonly id: string }
   | { readonly kind: 'rate-limit'; readonly id: string }
   | { readonly kind: 'decision'; readonly id: string }
-  | { readonly kind: 'session'; readonly id: string }
   | null;
+
+type OperationsTab = 'tools' | 'limits' | 'decisions';
+
+const TABLE_PAGE_SIZE = 10;
 
 const actionOptions: Array<{ readonly label: string; readonly value: OperationalAction }> = [
   { label: 'HTTP request', value: 'runtime.http.request' },
@@ -81,20 +83,7 @@ function operationLabel(operation: Pick<OperationalDecisionRecord, 'action' | 'r
 }
 
 function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString();
-}
-
-function sessionState(session: McpSessionRecord): 'live' | 'idle' | 'offline' {
-  const ageMs = Date.now() - new Date(session.last_seen_at).getTime();
-  if (ageMs <= 2 * 60 * 1000) return 'live';
-  if (ageMs <= 30 * 60 * 1000) return 'idle';
-  return 'offline';
-}
-
-function sessionStateLabel(value: ReturnType<typeof sessionState>): string {
-  if (value === 'live') return 'Live';
-  if (value === 'idle') return 'Idle';
-  return 'Offline';
+  return formatUtcDateTime(value);
 }
 
 function utilizationPercent(limit: RateLimitUtilizationRecord): number {
@@ -111,10 +100,8 @@ function jsonPreview(value: Record<string, unknown>): string {
 export function OperationsWorkbench({
   agents,
   archiveToolAction,
-  blocked,
   decisions,
   disableRateLimitAction,
-  sessions,
   tools,
   importAction,
   rateLimits,
@@ -123,6 +110,11 @@ export function OperationsWorkbench({
   updateToolAction,
 }: OperationsWorkbenchProps) {
   const [detail, setDetail] = useState<DetailState>(null);
+  const [confirmLifecycle, setConfirmLifecycle] = useState<'archive-tool' | 'disable-limit' | null>(null);
+  const [createMode, setCreateMode] = useState<'tool' | 'rate-limit' | null>(null);
+  const [activeTab, setActiveTab] = useState<OperationsTab>('tools');
+  const [query, setQuery] = useState('');
+  const [tablePage, setTablePage] = useState(1);
   const [agentFilter, setAgentFilter] = useState('all');
   const [actionFilter, setActionFilter] = useState('all');
   const [decisionFilter, setDecisionFilter] = useState('all');
@@ -130,72 +122,111 @@ export function OperationsWorkbench({
   const filteredDecisions = useMemo(
     () =>
       decisions.filter((decision) => {
+        const searchText = [
+          operationLabel(decision),
+          decision.action,
+          decision.reasonCode,
+          agentName(agents, decision.agent_id),
+        ].join(' ').toLowerCase();
+        if (query.trim().length > 0 && !searchText.includes(query.trim().toLowerCase())) return false;
         if (agentFilter !== 'all' && decision.agent_id !== agentFilter) return false;
         if (actionFilter !== 'all' && decision.action !== actionFilter) return false;
         if (decisionFilter !== 'all' && decision.decision !== decisionFilter) return false;
         return true;
       }),
-    [actionFilter, agentFilter, decisionFilter, decisions],
+    [actionFilter, agentFilter, agents, decisionFilter, decisions, query],
   );
 
-  const activeTools = tools.filter((tool) => tool.status === 'active').length;
-  const activeLimits = rateLimits.filter((limit) => limit.status === 'active').length;
-  const liveSessions = sessions.filter((session) => sessionState(session) === 'live').length;
+  const filteredTools = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (normalized.length === 0) return tools;
+    return tools.filter((tool) => [tool.name, tool.display_name, tool.category, tool.description]
+      .join(' ')
+      .toLowerCase()
+      .includes(normalized));
+  }, [query, tools]);
+
+  const filteredLimits = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (normalized.length === 0) return rateLimits;
+    return rateLimits.filter((limit) => [
+      agentName(agents, limit.target_id),
+      formatAction(limit.action),
+      limit.bucket,
+      limit.status,
+    ].join(' ').toLowerCase().includes(normalized));
+  }, [agents, query, rateLimits]);
+
+  const currentTotal = activeTab === 'tools'
+    ? filteredTools.length
+    : activeTab === 'limits'
+      ? filteredLimits.length
+      : filteredDecisions.length;
+  const safePage = Math.min(Math.max(1, tablePage), Math.max(1, Math.ceil(currentTotal / TABLE_PAGE_SIZE)));
+  const pageStart = (safePage - 1) * TABLE_PAGE_SIZE;
+  const pagedTools = filteredTools.slice(pageStart, pageStart + TABLE_PAGE_SIZE);
+  const pagedLimits = filteredLimits.slice(pageStart, pageStart + TABLE_PAGE_SIZE);
+  const pagedDecisions = filteredDecisions.slice(pageStart, pageStart + TABLE_PAGE_SIZE);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [actionFilter, activeTab, agentFilter, decisionFilter, query]);
+
   const selectedTool = detail?.kind === 'tool' ? tools.find((tool) => tool.id === detail.id) : undefined;
   const selectedLimit = detail?.kind === 'rate-limit' ? rateLimits.find((limit) => limit.id === detail.id) : undefined;
   const selectedDecision = detail?.kind === 'decision' ? decisions.find((decision) => decision.id === detail.id) : undefined;
-  const selectedSession = detail?.kind === 'session' ? sessions.find((session) => session.id === detail.id) : undefined;
+  const closeDetail = () => {
+    setDetail(null);
+    setConfirmLifecycle(null);
+  };
 
   return (
     <div className="ops-page operations-workbench">
-      <header className="ops-page-header operations-header">
-        <div>
-          <h1>Operations</h1>
-          <p>Manage the operational surfaces agents call through agentOps.</p>
-        </div>
-      </header>
-
-      <section className="ops-surface operations-command-strip" aria-label="Operations summary">
-        <div>
-          <span>Active tools</span>
-          <strong>{activeTools}</strong>
-        </div>
-        <div>
-          <span>Active limits</span>
-          <strong>{activeLimits}</strong>
-        </div>
-        <div>
-          <span>Recent decisions</span>
-          <strong>{decisions.length}</strong>
-        </div>
-        <div>
-          <span>Live sessions</span>
-          <strong>{liveSessions}</strong>
-        </div>
-      </section>
-
-      <Tabs defaultValue="tools">
+      <Tabs
+        defaultValue="tools"
+        onValueChange={(value) => setActiveTab(value as OperationsTab)}
+        value={activeTab}
+      >
         <div className="operations-tab-bar">
           <TabsList>
             <TabsTrigger value="tools">Tool catalog</TabsTrigger>
             <TabsTrigger value="limits">Rate limits</TabsTrigger>
             <TabsTrigger value="decisions">Decisions</TabsTrigger>
-            <TabsTrigger value="sessions">Sessions</TabsTrigger>
           </TabsList>
         </div>
 
+        <header className="ops-page-header operations-header">
+          <div>
+            <p className="operations-eyebrow">Runtime / operations</p>
+            <h1>Operations</h1>
+            <p>Manage tools, request limits, and persisted runtime decisions without mixing their workflows.</p>
+          </div>
+          {activeTab === 'tools' ? (
+            <button className="console-primary-button" onClick={() => setCreateMode('tool')} type="button">Import tool</button>
+          ) : activeTab === 'limits' ? (
+            <button className="console-primary-button" disabled={agents.length === 0} onClick={() => setCreateMode('rate-limit')} type="button">Create limit</button>
+          ) : null}
+        </header>
+
         <TabsContent value="tools">
-          <div className="operations-grid operations-grid-tools">
-            <section className="ops-surface" aria-labelledby="tool-catalog-title">
+          <section className="ops-surface" aria-labelledby="tool-catalog-title">
+              <div className="operations-toolbar">
+                <label>
+                  <span>Search tools</span>
+                  <input onChange={(event) => setQuery(event.target.value)} placeholder="Search tools, categories, or risk" value={query} />
+                </label>
+              </div>
               <div className="ops-surface-heading">
                 <div>
                   <h2 id="tool-catalog-title">Tool catalog</h2>
                   <p>Imported tools become named operational policy surfaces.</p>
                 </div>
-                <span className="ops-count-pill">{tools.length} tool{tools.length === 1 ? '' : 's'}</span>
+                <div className="operations-heading-actions">
+                  <span className="ops-count-pill">{filteredTools.length} tool{filteredTools.length === 1 ? '' : 's'}</span>
+                </div>
               </div>
 
-              {tools.length === 0 ? (
+              {filteredTools.length === 0 ? (
                 <div className="ops-empty-state">
                   <h3>No tools imported</h3>
                   <p>Import a tool when an agent should route that operation through agentOps.</p>
@@ -209,7 +240,7 @@ export function OperationsWorkbench({
                     <span role="columnheader">Status</span>
                     <span role="columnheader">Details</span>
                   </div>
-                  {tools.map((tool) => (
+                  {pagedTools.map((tool) => (
                     <article className="operations-table-row" key={tool.id} role="row">
                       <div role="cell">
                         <strong>{tool.display_name}</strong>
@@ -223,78 +254,45 @@ export function OperationsWorkbench({
                       <span className={`ops-state-pill ops-state-${tool.status}`} role="cell">
                         {formatDecision(tool.status)}
                       </span>
-                      <button className="ops-row-open" onClick={() => setDetail({ kind: 'tool', id: tool.id })} type="button">
-                        Inspect {tool.name}
+                      <button aria-label={`Inspect ${tool.name}`} className="ops-row-open" onClick={() => setDetail({ kind: 'tool', id: tool.id })} type="button">
+                        <IconArrowRight aria-hidden="true" size={13} stroke={1.8} />
                       </button>
                     </article>
                   ))}
                 </div>
               )}
-            </section>
-
-            <section className="ops-surface operations-action-card" aria-labelledby="import-tool-title">
-              <div className="ops-surface-heading">
-                <div>
-                  <h2 id="import-tool-title">Import tool</h2>
-                  <p>Add one managed tool surface.</p>
-                </div>
-              </div>
-
-              <form action={importAction} className="operations-form">
-                <label>
-                  <span>Tool name</span>
-                  <input name="name" placeholder="browser.search" required />
-                </label>
-                <label>
-                  <span>Display name</span>
-                  <input name="displayName" placeholder="Browser search" />
-                </label>
-                <div className="operations-form-grid">
-                  <label>
-                    <span>Category</span>
-                    <input name="category" placeholder="browser" />
-                  </label>
-                  <label>
-                    <span>Risk</span>
-                    <select defaultValue="medium" name="riskLevel">
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                      <option value="critical">Critical</option>
-                    </select>
-                  </label>
-                </div>
-                <label>
-                  <span>Description</span>
-                  <textarea name="description" placeholder="Managed search tool" rows={3} />
-                </label>
-                <button className="button-primary" type="submit">
-                  Import tool
-                </button>
-              </form>
-            </section>
-          </div>
+              {filteredTools.length > 0 ? (
+                <DataTablePager itemLabel="tools" onPageChange={setTablePage} page={safePage} pageSize={TABLE_PAGE_SIZE} total={filteredTools.length} />
+              ) : null}
+          </section>
         </TabsContent>
 
         <TabsContent value="limits">
-          <div className="operations-grid operations-grid-limits">
-            <section className="ops-surface" aria-labelledby="rate-limits-title">
+          <section className="ops-surface" aria-labelledby="rate-limits-title">
+              <div className="operations-toolbar">
+                <label>
+                  <span>Search rate limits</span>
+                  <input onChange={(event) => setQuery(event.target.value)} placeholder="Search agents, actions, or buckets" value={query} />
+                </label>
+              </div>
               <div className="ops-surface-heading">
                 <div>
                   <h2 id="rate-limits-title">Rate limits</h2>
                   <p>Runtime counters for repeated API and tool checks.</p>
                 </div>
-                <span className="ops-count-pill">{rateLimits.length} limit{rateLimits.length === 1 ? '' : 's'}</span>
+                <div className="operations-heading-actions">
+                  <span className="ops-count-pill">{filteredLimits.length} limit{filteredLimits.length === 1 ? '' : 's'}</span>
+                </div>
               </div>
 
-              {rateLimits.length === 0 ? (
+              {filteredLimits.length === 0 ? (
                 <div className="ops-empty-state">
                   <h3>No rate limits</h3>
                   <p>Create a limit to throttle repeated agent actions.</p>
                 </div>
               ) : (
                 <div className="operations-limit-list" aria-label="Rate limits">
-                  {rateLimits.map((limit) => {
+                  {pagedLimits.map((limit) => {
                     const percent = utilizationPercent(limit);
                     return (
                       <article className="operations-limit-row" key={limit.id}>
@@ -318,70 +316,19 @@ export function OperationsWorkbench({
                   })}
                 </div>
               )}
-            </section>
-
-            <section className="ops-surface operations-action-card" aria-labelledby="limit-title">
-              <div className="ops-surface-heading">
-                <div>
-                  <h2 id="limit-title">Create limit</h2>
-                  <p>Throttle one action for one agent.</p>
-                </div>
-              </div>
-
-              <form action={rateLimitAction} className="operations-form">
-                <label>
-                  <span>Agent</span>
-                  <select name="targetId" required>
-                    {agents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Action</span>
-                  <select defaultValue="runtime.http.request" name="action">
-                    {actionOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>Bucket</span>
-                  <input name="bucket" placeholder="default" />
-                </label>
-                <div className="operations-form-grid">
-                  <label>
-                    <span>Limit</span>
-                    <input defaultValue="20" min="1" name="limit" required type="number" />
-                  </label>
-                  <label>
-                    <span>Window seconds</span>
-                    <input defaultValue="60" min="1" name="windowSeconds" required type="number" />
-                  </label>
-                </div>
-                <button className="button-secondary" disabled={agents.length === 0} type="submit">
-                  Create limit
-                </button>
-              </form>
-            </section>
-          </div>
+              {filteredLimits.length > 0 ? (
+                <DataTablePager itemLabel="rate limits" onPageChange={setTablePage} page={safePage} pageSize={TABLE_PAGE_SIZE} total={filteredLimits.length} />
+              ) : null}
+          </section>
         </TabsContent>
 
         <TabsContent value="decisions">
           <section className="ops-surface" aria-labelledby="operation-decisions-title">
-            <div className="ops-surface-heading">
-              <div>
-                <h2 id="operation-decisions-title">Decisions</h2>
-                <p>Recent operational checks across allow, observe, approval, deny, and rate-limit outcomes.</p>
-              </div>
-              <span className="ops-count-pill">{filteredDecisions.length} shown</span>
-            </div>
-
             <div className="operations-filter-bar" aria-label="Decision filters">
+              <label className="operations-search-field">
+                <span>Search</span>
+                <input onChange={(event) => setQuery(event.target.value)} placeholder="Search agents, actions, or resources" value={query} />
+              </label>
               <label>
                 <span>Agent</span>
                 <select value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)}>
@@ -417,6 +364,14 @@ export function OperationsWorkbench({
               </label>
             </div>
 
+            <div className="ops-surface-heading">
+              <div>
+                <h2 id="operation-decisions-title">Runtime decisions</h2>
+                <p>Allowed, denied, observed, approval-gated, and rate-limited operations.</p>
+              </div>
+              <span className="ops-count-pill">{filteredDecisions.length} shown</span>
+            </div>
+
             {filteredDecisions.length === 0 ? (
               <div className="ops-empty-state">
                 <h3>No operation decisions</h3>
@@ -431,7 +386,7 @@ export function OperationsWorkbench({
                   <span role="columnheader">When</span>
                   <span role="columnheader">Details</span>
                 </div>
-                {filteredDecisions.map((decision) => (
+                {pagedDecisions.map((decision) => (
                   <article className="operations-table-row" key={decision.id} role="row">
                     <div role="cell">
                       <strong>{operationLabel(decision)}</strong>
@@ -443,101 +398,64 @@ export function OperationsWorkbench({
                       {formatDecision(decision.decision)}
                     </span>
                     <time dateTime={decision.created_at}>{formatDateTime(decision.created_at)}</time>
-                    <button className="ops-row-open" onClick={() => setDetail({ kind: 'decision', id: decision.id })} type="button">
-                      Inspect {operationLabel(decision)}
+                    <button aria-label={`Inspect ${operationLabel(decision)}`} className="ops-row-open" onClick={() => setDetail({ kind: 'decision', id: decision.id })} type="button">
+                      <IconArrowRight aria-hidden="true" size={13} stroke={1.8} />
                     </button>
                   </article>
                 ))}
-              </div>
-            )}
-          </section>
-
-          {blocked.length > 0 ? (
-            <section className="ops-surface operations-blocked-strip" aria-labelledby="blocked-actions-title">
-              <div className="ops-surface-heading">
-                <div>
-                  <h2 id="blocked-actions-title">Blocked actions</h2>
-                  <p>Denied and rate-limited checks are highlighted for operator review.</p>
                 </div>
-                <span className="ops-count-pill">{blocked.length} block{blocked.length === 1 ? '' : 's'}</span>
-              </div>
-              <div className="ops-list" aria-label="Blocked actions">
-                {blocked.slice(0, 5).map((operation) => (
-                  <article className="ops-approval-row operations-block-row" key={operation.id}>
-                    <div className="ops-approval-main">
-                      <span className="ops-row-title">{operationLabel(operation)}</span>
-                      <span>{formatAction(operation.action)} · {agentName(agents, operation.agent_id)}</span>
-                    </div>
-                    <div className="ops-approval-actions">
-                      <span className={`ops-state-pill ops-state-${operation.decision}`}>
-                        {formatDecision(operation.decision)}
-                      </span>
-                      <span>{operation.reasonCode}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="sessions">
-          <section className="ops-surface" aria-labelledby="mcp-sessions-title">
-            <div className="ops-surface-heading">
-              <div>
-                <h2 id="mcp-sessions-title">MCP sessions</h2>
-                <p>Observed model-context sessions for runtime credentials.</p>
-              </div>
-              <span className="ops-count-pill">{sessions.length} session{sessions.length === 1 ? '' : 's'}</span>
-            </div>
-
-            {sessions.length === 0 ? (
-              <div className="ops-empty-state">
-                <h3>No MCP sessions observed</h3>
-                <p>Sessions appear after an agent connects through the standalone MCP service.</p>
-              </div>
-            ) : (
-              <div className="operations-table operations-session-table" role="table" aria-label="MCP sessions">
-                <div className="operations-table-head" role="row">
-                  <span role="columnheader">Session</span>
-                  <span role="columnheader">Agent</span>
-                  <span role="columnheader">State</span>
-                  <span role="columnheader">Last seen</span>
-                  <span role="columnheader">Details</span>
-                </div>
-                {sessions.map((session) => {
-                  const state = sessionState(session);
-                  return (
-                    <article className="operations-table-row" key={session.id} role="row">
-                      <div role="cell">
-                        <strong>{session.id}</strong>
-                        <span>{session.protocol}</span>
-                      </div>
-                      <span role="cell">{agentName(agents, session.agent_id)}</span>
-                      <span className={`ops-state-pill ops-state-${state}`} role="cell">
-                        {sessionStateLabel(state)}
-                      </span>
-                      <time dateTime={session.last_seen_at}>{formatDateTime(session.last_seen_at)}</time>
-                      <button className="ops-row-open" onClick={() => setDetail({ kind: 'session', id: session.id })} type="button">
-                        Inspect {session.id}
-                      </button>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+              )}
+              {filteredDecisions.length > 0 ? (
+                <DataTablePager itemLabel="runtime decisions" onPageChange={setTablePage} page={safePage} pageSize={TABLE_PAGE_SIZE} total={filteredDecisions.length} />
+              ) : null}
           </section>
         </TabsContent>
+
       </Tabs>
 
-      <Sheet labelledBy="operations-detail-title" onOpenChange={(open) => !open && setDetail(null)} open={detail !== null}>
+      <Sheet labelledBy="operations-create-title" onOpenChange={(open) => !open && setCreateMode(null)} open={createMode !== null} panelClassName="operations-drawer">
+        <SheetHeader>
+          <div>
+            <SheetTitle id="operations-create-title">{createMode === 'tool' ? 'Import tool' : 'Create rate limit'}</SheetTitle>
+            <SheetDescription>{createMode === 'tool' ? 'Add one named tool surface agents can route through agentOps.' : 'Throttle one managed action for one agent.'}</SheetDescription>
+          </div>
+          <SheetCloseButton ariaLabel="Close" onClick={() => setCreateMode(null)} />
+        </SheetHeader>
+        <SheetBody>
+          {createMode === 'tool' ? (
+            <form action={importAction} className="operations-form">
+              <label><span>Tool name</span><input name="name" placeholder="browser.search" required /></label>
+              <label><span>Display name</span><input name="displayName" placeholder="Browser search" /></label>
+              <div className="operations-form-grid">
+                <label><span>Category</span><input name="category" placeholder="browser" /></label>
+                <label><span>Risk</span><select defaultValue="medium" name="riskLevel"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+              </div>
+              <label><span>Description</span><textarea name="description" placeholder="Managed search tool" rows={3} /></label>
+              <button className="console-primary-button" type="submit">Import tool</button>
+            </form>
+          ) : null}
+          {createMode === 'rate-limit' ? (
+            <form action={rateLimitAction} className="operations-form">
+              <label><span>Agent</span><select name="targetId" required>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+              <label><span>Action</span><select defaultValue="runtime.http.request" name="action">{actionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+              <label><span>Bucket</span><input name="bucket" placeholder="default" /></label>
+              <div className="operations-form-grid">
+                <label><span>Limit</span><input defaultValue="20" min="1" name="limit" required type="number" /></label>
+                <label><span>Window seconds</span><input defaultValue="60" min="1" name="windowSeconds" required type="number" /></label>
+              </div>
+              <button className="console-primary-button" type="submit">Create limit</button>
+            </form>
+          ) : null}
+        </SheetBody>
+      </Sheet>
+
+      <Sheet labelledBy="operations-detail-title" onOpenChange={(open) => !open && closeDetail()} open={detail !== null} panelClassName="operations-drawer">
         <SheetHeader>
           <div>
             <SheetTitle id="operations-detail-title">
               {selectedTool?.display_name ??
                 (selectedLimit === undefined ? undefined : `${agentName(agents, selectedLimit.target_id)} limit`) ??
                 (selectedDecision === undefined ? undefined : operationLabel(selectedDecision)) ??
-                selectedSession?.id ??
                 'Operations detail'}
             </SheetTitle>
             <SheetDescription>
@@ -547,12 +465,10 @@ export function OperationsWorkbench({
                   ? 'Edit or disable this runtime rate limit.'
                   : selectedDecision !== undefined
                     ? 'Review the persisted operation decision context.'
-                    : selectedSession !== undefined
-                      ? 'Review the last observed MCP session state.'
-                      : 'Review the selected operations record.'}
+                    : 'Review the selected operations record.'}
             </SheetDescription>
           </div>
-          <SheetCloseButton onClick={() => setDetail(null)} />
+          <SheetCloseButton ariaLabel="Close" onClick={closeDetail} />
         </SheetHeader>
         <SheetBody>
           {selectedTool !== undefined ? (
@@ -602,12 +518,7 @@ export function OperationsWorkbench({
                   Save tool
                 </button>
               </form>
-              <form action={archiveToolAction}>
-                <input name="toolId" type="hidden" value={selectedTool.id} />
-                <button className="button-secondary" disabled={selectedTool.status === 'archived'} type="submit">
-                  Archive tool
-                </button>
-              </form>
+              {selectedTool.status === 'archived' ? <p className="operations-lifecycle-note">This tool is archived and remains available only as historical operational evidence.</p> : confirmLifecycle === 'archive-tool' ? <form action={archiveToolAction} className="operations-lifecycle-confirm"><input name="toolId" type="hidden" value={selectedTool.id} /><div><strong>Archive this tool?</strong><p>New managed calls can no longer target it. Existing decisions and evidence remain available.</p></div><div><button className="button-secondary" onClick={() => setConfirmLifecycle(null)} type="button">Keep tool</button><button className="button-danger" disabled={archiveToolAction === undefined} type="submit">Confirm archive</button></div></form> : <button className="button-secondary operations-lifecycle-trigger" disabled={archiveToolAction === undefined} onClick={() => setConfirmLifecycle('archive-tool')} type="button">Archive tool</button>}
               <pre className="operations-context-block">{jsonPreview(selectedTool.metadata)}</pre>
             </div>
           ) : null}
@@ -664,12 +575,7 @@ export function OperationsWorkbench({
                   Save limit
                 </button>
               </form>
-              <form action={disableRateLimitAction}>
-                <input name="rateLimitId" type="hidden" value={selectedLimit.id} />
-                <button className="button-secondary" disabled={selectedLimit.status === 'disabled'} type="submit">
-                  Disable limit
-                </button>
-              </form>
+              {selectedLimit.status === 'disabled' ? <p className="operations-lifecycle-note">This rate limit is disabled. Set its status to Active and save to restore enforcement.</p> : confirmLifecycle === 'disable-limit' ? <form action={disableRateLimitAction} className="operations-lifecycle-confirm"><input name="rateLimitId" type="hidden" value={selectedLimit.id} /><div><strong>Disable this limit?</strong><p>Requests stop consuming this counter until the rate limit is reactivated.</p></div><div><button className="button-secondary" onClick={() => setConfirmLifecycle(null)} type="button">Keep active</button><button className="button-danger" disabled={disableRateLimitAction === undefined} type="submit">Confirm disable</button></div></form> : <button className="button-secondary operations-lifecycle-trigger" disabled={disableRateLimitAction === undefined} onClick={() => setConfirmLifecycle('disable-limit')} type="button">Disable limit</button>}
             </div>
           ) : null}
 
@@ -706,36 +612,6 @@ export function OperationsWorkbench({
             </div>
           ) : null}
 
-          {selectedSession !== undefined ? (
-            <div className="operations-detail-stack">
-              <dl className="operations-detail-grid">
-                <div>
-                  <dt>Agent</dt>
-                  <dd>{agentName(agents, selectedSession.agent_id)}</dd>
-                </div>
-                <div>
-                  <dt>Connection</dt>
-                  <dd>{selectedSession.connection_id}</dd>
-                </div>
-                <div>
-                  <dt>Protocol</dt>
-                  <dd>{selectedSession.protocol}</dd>
-                </div>
-                <div>
-                  <dt>State</dt>
-                  <dd>{sessionStateLabel(sessionState(selectedSession))}</dd>
-                </div>
-                <div>
-                  <dt>Created</dt>
-                  <dd>{formatDateTime(selectedSession.created_at)}</dd>
-                </div>
-                <div>
-                  <dt>Last seen</dt>
-                  <dd>{formatDateTime(selectedSession.last_seen_at)}</dd>
-                </div>
-              </dl>
-            </div>
-          ) : null}
         </SheetBody>
       </Sheet>
     </div>

@@ -1,5 +1,6 @@
 'use client';
 
+import { IconMoon, IconSun } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 
 type Theme = 'light' | 'dark';
@@ -53,15 +54,17 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
 
   return (
     <button
-      aria-label={`Switch to ${nextTheme} theme`}
+      aria-label={`${theme === 'dark' ? 'Dark' : 'Light'} theme. Switch to ${nextTheme} theme`}
       className={classes}
       onClick={toggleTheme}
+      title={`Switch to ${nextTheme} theme`}
       type="button"
     >
-      <span aria-hidden="true" className="theme-toggle-track">
-        <span className="theme-toggle-knob" />
-      </span>
-      <span className="theme-toggle-label">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+      {theme === 'dark' ? (
+        <IconMoon aria-hidden="true" size={16} stroke={1.8} />
+      ) : (
+        <IconSun aria-hidden="true" size={16} stroke={1.8} />
+      )}
     </button>
   );
 }
