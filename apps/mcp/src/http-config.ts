@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 export type HostedMcpConfig = {
   readonly apiBaseUrl: string;
   readonly host: string;
@@ -21,6 +23,10 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 const DEFAULT_MAX_IN_FLIGHT = 100;
 const DEFAULT_SHUTDOWN_GRACE_MS = 10_000;
+const MAX_TIMEOUT_MS = 300_000;
+const MAX_BODY_BYTES = 10_485_760;
+const MAX_IN_FLIGHT = 10_000;
+const MAX_SHUTDOWN_GRACE_MS = 300_000;
 
 function requiredString(value: string | undefined, name: string, fallback: string): string {
   if (value === undefined) return fallback;
@@ -40,6 +46,12 @@ function hasRawUserInfo(value: string): boolean {
 
 function hasRawQueryOrHash(value: string): boolean {
   return value.includes('?') || value.includes('#');
+}
+
+function readNodeEnvironment(value: string | undefined): 'development' | 'test' | 'production' {
+  if (value === undefined || value === '') return 'development';
+  if (value === 'development' || value === 'test' || value === 'production') return value;
+  throw new Error('NODE_ENV must be development, test, or production.');
 }
 
 function parseApiBaseUrl(value: string | undefined): string {
@@ -72,10 +84,9 @@ function parsePositiveInteger(
   maximum = Number.MAX_SAFE_INTEGER,
 ): number {
   if (value === undefined) return fallback;
-  const trimmed = value.trim();
-  const parsed = Number(trimmed);
+  const parsed = Number(value);
   if (
-    trimmed.length === 0 ||
+    !/^[0-9]+$/.test(value) ||
     !Number.isFinite(parsed) ||
     !Number.isSafeInteger(parsed) ||
     parsed <= 0 ||
@@ -115,46 +126,78 @@ function parsePublicUrl(value: string, production: boolean): string {
 
 function splitAllowlist(value: string, name: string): string[] {
   const tokens = value.split(',').map((token) => token.trim());
-  if (tokens.length === 0 || tokens.some((token) => token.length === 0)) {
-    throw new Error(`${name} must contain a non-empty comma-separated list.`);
+  const emptyIndex = tokens.findIndex((token) => token.length === 0);
+  if (tokens.length === 0 || emptyIndex !== -1) {
+    throw new Error(`${name} contains an empty token at index ${String(Math.max(emptyIndex, 0) + 1)}.`);
   }
   return tokens;
 }
 
-function validateAllowedHost(token: string): void {
-  if (/\s/.test(token) || /[\\/?#@%]/.test(token) || token.includes('://')) {
-    throw new Error(`MCP_ALLOWED_HOSTS contains an invalid host token: ${token}`);
+function invalidAllowlistToken(name: string, index: number): never {
+  throw new Error(`${name} contains an invalid token at index ${String(index + 1)}.`);
+}
+
+function normalizePort(value: string | undefined, index: number): string {
+  if (value === undefined) return '';
+  if (!/^[0-9]+$/.test(value)) invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port <= 0 || port > 65_535) {
+    invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+  }
+  return `:${String(port)}`;
+}
+
+function normalizeAllowedHost(token: string, index: number): string {
+  if (/\s/.test(token)) invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+
+  if (token.startsWith('[') || token.includes(']')) {
+    const match = /^\[([^\]]+)\](?::(.*))?$/.exec(token);
+    if (match === null) invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+    const address = match[1];
+    if (address === undefined || isIP(address) !== 6) {
+      invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+    }
+    const normalizedHost = new URL(`http://[${address}]/`).hostname.toLowerCase();
+    return `${normalizedHost}${normalizePort(match[2], index)}`;
   }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(`http://${token}/`);
-  } catch {
-    throw new Error(`MCP_ALLOWED_HOSTS contains an invalid host token: ${token}`);
+  const colonIndex = token.indexOf(':');
+  if (colonIndex !== token.lastIndexOf(':')) invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+  const host = (colonIndex === -1 ? token : token.slice(0, colonIndex)).toLowerCase();
+  const port = normalizePort(colonIndex === -1 ? undefined : token.slice(colonIndex + 1), index);
+  if (host.length === 0) invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
+
+  if (isIP(host) === 4) return `${host}${port}`;
+  const labels = host.split('.');
+  const legacyNumericHost = labels.every((label) => /^(?:[0-9]+|0x[0-9a-f]+)$/i.test(label));
+  if (legacyNumericHost || host.length > 253) {
+    invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
   }
   if (
-    parsed.hostname.length === 0 ||
-    parsed.username.length > 0 ||
-    parsed.password.length > 0 ||
-    (parsed.port.length > 0 && (Number(parsed.port) <= 0 || Number(parsed.port) > 65_535))
+    labels.some(
+      (label) =>
+        label.length === 0 ||
+        label.length > 63 ||
+        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    )
   ) {
-    throw new Error(`MCP_ALLOWED_HOSTS contains an invalid host token: ${token}`);
+    invalidAllowlistToken('MCP_ALLOWED_HOSTS', index);
   }
+  return `${host}${port}`;
 }
 
 function parseAllowedHosts(value: string): readonly string[] {
-  const hosts = splitAllowlist(value, 'MCP_ALLOWED_HOSTS');
-  for (const host of hosts) validateAllowedHost(host);
+  const hosts = splitAllowlist(value, 'MCP_ALLOWED_HOSTS').map(normalizeAllowedHost);
   return [...new Set(hosts)];
 }
 
 function parseAllowedOrigins(value: string): readonly string[] {
-  const origins = splitAllowlist(value, 'MCP_ALLOWED_ORIGINS').map((origin) => {
+  const origins = splitAllowlist(value, 'MCP_ALLOWED_ORIGINS').map((origin, index) => {
     let parsed: URL;
     try {
       parsed = new URL(origin);
     } catch {
-      throw new Error(`MCP_ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
+      invalidAllowlistToken('MCP_ALLOWED_ORIGINS', index);
     }
     if (
       (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
@@ -164,7 +207,7 @@ function parseAllowedOrigins(value: string): readonly string[] {
       parsed.pathname !== '/' ||
       hasRawQueryOrHash(origin)
     ) {
-      throw new Error(`MCP_ALLOWED_ORIGINS contains an invalid origin: ${origin}`);
+      invalidAllowlistToken('MCP_ALLOWED_ORIGINS', index);
     }
     return parsed.origin;
   });
@@ -180,10 +223,10 @@ function productionValue(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 export function readHostedMcpEnv(env: NodeJS.ProcessEnv = process.env): HostedMcpConfig {
-  const production = env.NODE_ENV === 'production';
-  if (env.AGENTOPS_MCP_CREDENTIAL?.trim()) {
+  if (Object.prototype.hasOwnProperty.call(env, 'AGENTOPS_MCP_CREDENTIAL')) {
     throw new Error('AGENTOPS_MCP_CREDENTIAL is forbidden for the hosted MCP service.');
   }
+  const production = readNodeEnvironment(env.NODE_ENV) === 'production';
 
   const publicUrlValue = production
     ? productionValue(env, 'MCP_PUBLIC_URL')
@@ -207,21 +250,25 @@ export function readHostedMcpEnv(env: NodeJS.ProcessEnv = process.env): HostedMc
       env.AGENTOPS_MCP_TIMEOUT_MS,
       'AGENTOPS_MCP_TIMEOUT_MS',
       DEFAULT_TIMEOUT_MS,
+      MAX_TIMEOUT_MS,
     ),
     maxBodyBytes: parsePositiveInteger(
       env.MCP_MAX_BODY_BYTES,
       'MCP_MAX_BODY_BYTES',
       DEFAULT_MAX_BODY_BYTES,
+      MAX_BODY_BYTES,
     ),
     maxInFlight: parsePositiveInteger(
       env.MCP_MAX_IN_FLIGHT,
       'MCP_MAX_IN_FLIGHT',
       DEFAULT_MAX_IN_FLIGHT,
+      MAX_IN_FLIGHT,
     ),
     shutdownGraceMs: parsePositiveInteger(
       env.MCP_SHUTDOWN_GRACE_MS,
       'MCP_SHUTDOWN_GRACE_MS',
       DEFAULT_SHUTDOWN_GRACE_MS,
+      MAX_SHUTDOWN_GRACE_MS,
     ),
   };
 }

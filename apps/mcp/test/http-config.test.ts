@@ -47,6 +47,47 @@ describe('readHostedMcpEnv', () => {
     });
   });
 
+  it('accepts a complete valid production configuration', () => {
+    expect(
+      readHostedMcpEnv({
+        NODE_ENV: 'production',
+        AGENTOPS_API_BASE_URL: 'https://api.example.test/',
+        MCP_HOST: '0.0.0.0',
+        MCP_PORT: '8070',
+        MCP_PUBLIC_URL: 'https://mcp.example.test/mcp',
+        MCP_ALLOWED_HOSTS:
+          'MCP.EXAMPLE.TEST:443,mcp.example.test:0443,127.0.0.1:8070,[2001:0DB8:0:0:0:0:0:1]:8443',
+        MCP_ALLOWED_ORIGINS: 'https://console.example.test/,https://admin.example.test',
+        AGENTOPS_MCP_TIMEOUT_MS: '300000',
+        MCP_MAX_BODY_BYTES: '10485760',
+        MCP_MAX_IN_FLIGHT: '10000',
+        MCP_SHUTDOWN_GRACE_MS: '300000',
+      }),
+    ).toEqual({
+      apiBaseUrl: 'https://api.example.test',
+      host: '0.0.0.0',
+      port: 8070,
+      publicUrl: 'https://mcp.example.test/mcp',
+      allowedHosts: [
+        'mcp.example.test:443',
+        '127.0.0.1:8070',
+        '[2001:db8::1]:8443',
+      ],
+      allowedOrigins: ['https://console.example.test', 'https://admin.example.test'],
+      timeoutMs: 300000,
+      maxBodyBytes: 10485760,
+      maxInFlight: 10000,
+      shutdownGraceMs: 300000,
+    });
+  });
+
+  it.each(['prod', 'production ', ' development', 'staging', 'TEST', ' '])(
+    'rejects unsupported NODE_ENV value %j',
+    (nodeEnv) => {
+      expect(() => readHostedMcpEnv({ NODE_ENV: nodeEnv })).toThrow('NODE_ENV');
+    },
+  );
+
   it.each(['development', 'production'])('forbids a hosted global credential in %s', (nodeEnv) => {
     expect(() =>
       readHostedMcpEnv({
@@ -55,6 +96,18 @@ describe('readHostedMcpEnv', () => {
       }),
     ).toThrow('AGENTOPS_MCP_CREDENTIAL is forbidden');
   });
+
+  it.each([undefined, '', '   '])(
+    'forbids AGENTOPS_MCP_CREDENTIAL when the key is present with value %j',
+    (credential) => {
+      expect(() =>
+        readHostedMcpEnv({
+          NODE_ENV: 'development',
+          AGENTOPS_MCP_CREDENTIAL: credential,
+        }),
+      ).toThrow('AGENTOPS_MCP_CREDENTIAL is forbidden');
+    },
+  );
 
   it('requires an explicit secure public URL and allowlists in production', () => {
     expect(() => readHostedMcpEnv({ NODE_ENV: 'production' })).toThrow(
@@ -110,10 +163,41 @@ describe('readHostedMcpEnv', () => {
     'mcp example.test',
     'mcp.example.test:0',
     'mcp.example.test:65536',
+    '*.example.test',
+    'example.test:',
+    '.example.test',
+    'example.test.',
+    'example..test',
+    '-example.test',
+    'example-.test',
+    'example_test',
+    'example;test',
+    '2001:db8::1',
+    '[not-ipv6]',
+    '[::1]:',
+    '0x7f000001',
+    '0x7f.0.0.1',
+    '2130706433',
+    '127.000.0.1',
+    '999.999.999.999',
     'mcp.example.test,,localhost:8070',
     '   ',
   ])('rejects invalid MCP_ALLOWED_HOSTS value %s', (allowedHosts) => {
     expect(() => readHostedMcpEnv({ MCP_ALLOWED_HOSTS: allowedHosts })).toThrow('MCP_ALLOWED_HOSTS');
+  });
+
+  it('normalizes and deduplicates valid host tokens', () => {
+    expect(
+      readHostedMcpEnv({
+        MCP_ALLOWED_HOSTS:
+          'LOCALHOST:08070,localhost:8070,EXAMPLE.COM:443,127.0.0.1:08070,[2001:0DB8:0:0:0:0:0:1]:8443',
+      }).allowedHosts,
+    ).toEqual([
+      'localhost:8070',
+      'example.com:443',
+      '127.0.0.1:8070',
+      '[2001:db8::1]:8443',
+    ]);
   });
 
   it.each([
@@ -134,17 +218,43 @@ describe('readHostedMcpEnv', () => {
     );
   });
 
+  it('does not leak credential-bearing invalid origins in errors', () => {
+    let caught: unknown;
+    try {
+      readHostedMcpEnv({ MCP_ALLOWED_ORIGINS: 'https://agent:do-not-leak@console.example.test' });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toContain('MCP_ALLOWED_ORIGINS');
+    expect((caught as Error).message).not.toContain('do-not-leak');
+    expect((caught as Error).message).not.toContain('agent');
+  });
+
   it.each([
     ['MCP_PORT', '0'],
     ['MCP_PORT', '65536'],
     ['MCP_PORT', '1.5'],
     ['MCP_PORT', 'Infinity'],
+    ['MCP_PORT', '1e3'],
+    ['MCP_PORT', '0x1f90'],
+    ['MCP_PORT', '+8070'],
+    ['MCP_PORT', ' 8070'],
     ['AGENTOPS_MCP_TIMEOUT_MS', '-1'],
     ['AGENTOPS_MCP_TIMEOUT_MS', '1.5'],
+    ['AGENTOPS_MCP_TIMEOUT_MS', '300001'],
+    ['AGENTOPS_MCP_TIMEOUT_MS', '1e4'],
     ['MCP_MAX_BODY_BYTES', '0'],
     ['MCP_MAX_BODY_BYTES', 'NaN'],
+    ['MCP_MAX_BODY_BYTES', '10485761'],
+    ['MCP_MAX_BODY_BYTES', '0x100000'],
     ['MCP_MAX_IN_FLIGHT', '-3'],
     ['MCP_MAX_IN_FLIGHT', ''],
+    ['MCP_MAX_IN_FLIGHT', '10001'],
+    ['MCP_MAX_IN_FLIGHT', '+100'],
+    ['MCP_SHUTDOWN_GRACE_MS', '300001'],
+    ['MCP_SHUTDOWN_GRACE_MS', '1e4'],
     ['MCP_SHUTDOWN_GRACE_MS', '9007199254740992'],
   ])('rejects invalid numeric value %s=%s', (name, value) => {
     expect(() => readHostedMcpEnv({ [name]: value })).toThrow(name);
