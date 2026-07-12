@@ -13,7 +13,7 @@ vi.mock('@/lib/mcp-verification', async (importOriginal) => ({
 }));
 
 const mcpEndpoint = 'https://mcp.agentops.test/mcp';
-const boundaryInstruction = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Actions sent outside AOPS are not governed by this connection.';
+const boundaryInstruction = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Call the matching check tool first, follow approval requirements, and record the final outcome. Actions sent outside AOPS are not governed by this connection.';
 
 describe('ConnectionPanel', () => {
   beforeEach(() => {

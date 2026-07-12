@@ -22,7 +22,7 @@ type VerificationState =
   | { readonly state: 'verified'; readonly result: McpVerificationResult }
   | { readonly state: 'failed'; readonly message: string };
 
-const BOUNDARY_INSTRUCTION = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Actions sent outside AOPS are not governed by this connection.';
+const BOUNDARY_INSTRUCTION = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Call the matching check tool first, follow approval requirements, and record the final outcome. Actions sent outside AOPS are not governed by this connection.';
 
 export function CredentialMcpSetup({ mcpEndpoint, secret, title }: CredentialMcpSetupProps) {
   const [copyStatus, setCopyStatus] = useState('');
