@@ -21,6 +21,7 @@ export type McpVerificationErrorCode =
   | 'service_unavailable'
   | 'network_error'
   | 'timeout'
+  | 'response_too_large'
   | 'protocol_error';
 
 export class McpVerificationError extends Error {
@@ -38,6 +39,7 @@ export class McpVerificationError extends Error {
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 60_000;
 const MAX_CREDENTIAL_LENGTH = 4_096;
+const MAX_RESPONSE_BYTES = 1_048_576;
 
 const REQUIRED_TOOLS = new Set([
   'agentops.onboard',
@@ -58,6 +60,7 @@ const SAFE_MESSAGES: Readonly<Record<McpVerificationErrorCode, string>> = {
   service_unavailable: 'The MCP service is temporarily unavailable.',
   network_error: 'Could not reach the MCP service.',
   timeout: 'The MCP verification timed out. Try again.',
+  response_too_large: 'The MCP service response was too large.',
   protocol_error: 'The MCP service returned an invalid response.',
 };
 
@@ -137,6 +140,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasOwnNonBlankString<Key extends string>(
+  value: Record<string, unknown>,
+  key: Key,
+): value is Record<string, unknown> & Record<Key, string> {
+  return Object.hasOwn(value, key) && typeof value[key] === 'string' && value[key].trim() !== '';
+}
+
 function mapHttpError(status: number): McpVerificationError {
   if (status === 401) return verificationError('invalid_credential', status);
   if (status === 403) return verificationError('origin_not_allowed', status);
@@ -150,13 +166,101 @@ function requireJsonResponse(response: Response): void {
   if (mediaType !== 'application/json') throw verificationError('protocol_error', response.status);
 }
 
-async function readJson(response: Response): Promise<Record<string, unknown>> {
+async function readBoundedText(response: Response, signal: AbortSignal): Promise<string> {
+  const contentLength = response.headers.get('content-length');
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) throw verificationError('protocol_error', response.status);
+    const declaredBytes = Number(contentLength);
+    if (!Number.isSafeInteger(declaredBytes)) throw verificationError('protocol_error', response.status);
+    if (declaredBytes > MAX_RESPONSE_BYTES) {
+      try {
+        await response.body?.cancel();
+      } catch {
+        // The fixed verifier error below is safe regardless of cancellation behavior.
+      }
+      throw verificationError('response_too_large', response.status);
+    }
+  }
+
+  if (response.body === null) return '';
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+  let completed = false;
+
+  try {
+    while (true) {
+      if (signal.aborted) throw verificationError('timeout', null);
+
+      let removeAbortListener = () => {};
+      const aborted = new Promise<never>((_resolve, reject) => {
+        const onAbort = () => {
+          void reader.cancel().catch(() => undefined);
+          reject(verificationError('timeout', null));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+      });
+
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await Promise.race([reader.read(), aborted]);
+      } finally {
+        removeAbortListener();
+      }
+      if (signal.aborted) throw verificationError('timeout', null);
+      if (chunk.done) {
+        completed = true;
+        break;
+      }
+      if (!ArrayBuffer.isView(chunk.value) || chunk.value.BYTES_PER_ELEMENT !== 1) {
+        throw verificationError('protocol_error', response.status);
+      }
+
+      bytesRead += chunk.value.byteLength;
+      if (bytesRead > MAX_RESPONSE_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The bounded failure remains safe even when the stream cannot be cancelled.
+        }
+        throw verificationError('response_too_large', response.status);
+      }
+      chunks.push(decoder.decode(chunk.value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join('');
+  } catch (error) {
+    if (signal.aborted) throw verificationError('timeout', null);
+    if (error instanceof McpVerificationError) throw error;
+    throw verificationError('protocol_error', response.status);
+  } finally {
+    if (!completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Never surface a raw stream cancellation error.
+      }
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may still be settling after an abort; it owns no reusable state.
+    }
+  }
+}
+
+async function readJson(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {
   requireJsonResponse(response);
   try {
-    const body: unknown = await response.json();
-    if (!isRecord(body)) throw verificationError('protocol_error', response.status);
+    const text = await readBoundedText(response, signal);
+    const body: unknown = JSON.parse(text);
+    if (!isPlainObject(body)) throw verificationError('protocol_error', response.status);
     return body;
   } catch (error) {
+    if (signal.aborted) throw verificationError('timeout', null);
     if (error instanceof McpVerificationError) throw error;
     throw verificationError('protocol_error', response.status);
   }
@@ -166,13 +270,17 @@ async function post(context: RequestContext, body: Record<string, unknown>): Pro
   try {
     return await context.fetchImpl(context.endpoint, {
       body: JSON.stringify(body),
+      cache: 'no-store',
+      credentials: 'omit',
       headers: {
+        // MCP requires both media types in Accept; hosted AOPS must answer JSON and this verifier never parses SSE.
         accept: 'application/json, text/event-stream',
         authorization: `Bearer ${context.credential}`,
         'content-type': 'application/json',
       },
       method: 'POST',
       redirect: 'error',
+      referrerPolicy: 'no-referrer',
       signal: context.signal,
     });
   } catch {
@@ -190,7 +298,7 @@ async function rpc(
   const response = await post(context, { id, jsonrpc: '2.0', method, params });
   if (!response.ok) throw mapHttpError(response.status);
 
-  const body = await readJson(response);
+  const body = await readJson(response, context.signal);
   if (
     body.jsonrpc !== '2.0'
     || body.id !== id
@@ -208,49 +316,66 @@ async function notify(context: RequestContext, method: string): Promise<void> {
   if (!response.ok) throw mapHttpError(response.status);
   if (response.status !== 202) throw verificationError('protocol_error', response.status);
 
-  const text = await response.text();
+  const text = await readBoundedText(response, context.signal);
   if (text !== '') throw verificationError('protocol_error', response.status);
+}
+
+function assertInitializeResult(result: Record<string, unknown>): void {
+  const capabilities = result.capabilities;
+  const serverInfo = result.serverInfo;
+  if (
+    !hasOwnNonBlankString(result, 'protocolVersion')
+    || !Object.hasOwn(result, 'capabilities')
+    || !isPlainObject(capabilities)
+    || !Object.hasOwn(result, 'serverInfo')
+    || !isPlainObject(serverInfo)
+    || !hasOwnNonBlankString(serverInfo, 'name')
+    || !hasOwnNonBlankString(serverInfo, 'version')
+  ) {
+    throw verificationError('protocol_error', null);
+  }
 }
 
 function readTools(result: Record<string, unknown>): { readonly toolCount: number } {
   if (!Array.isArray(result.tools)) throw verificationError('protocol_error', null);
 
   const names = result.tools.map((tool) => {
-    if (!isRecord(tool) || typeof tool.name !== 'string' || tool.name.trim() === '') {
+    if (
+      !isPlainObject(tool)
+      || !hasOwnNonBlankString(tool, 'name')
+      || !Object.hasOwn(tool, 'inputSchema')
+      || !isPlainObject(tool.inputSchema)
+      || !Object.hasOwn(tool.inputSchema, 'type')
+      || tool.inputSchema.type !== 'object'
+    ) {
       throw verificationError('protocol_error', null);
     }
-    return tool.name;
+    return tool.name as string;
   });
 
   const available = new Set(names);
+  if (available.size !== names.length) throw verificationError('protocol_error', null);
   for (const required of REQUIRED_TOOLS) {
     if (!available.has(required)) {
       throw verificationError('protocol_error', null, 'The MCP service did not provide the required tools.');
     }
   }
-  return { toolCount: names.length };
+  return { toolCount: available.size };
 }
 
-function isValidMcpContentItem(item: unknown): item is Record<string, unknown> {
-  if (!isRecord(item) || typeof item.type !== 'string') return false;
-  if (item.type === 'text') return typeof item.text === 'string';
-  if (item.type === 'image' || item.type === 'audio') {
-    return typeof item.data === 'string' && typeof item.mimeType === 'string';
-  }
-  if (item.type === 'resource') {
-    if (!isRecord(item.resource) || typeof item.resource.uri !== 'string') return false;
-    return typeof item.resource.text === 'string' || typeof item.resource.blob === 'string';
-  }
-  if (item.type === 'resource_link') {
-    return typeof item.name === 'string' && typeof item.uri === 'string';
-  }
-  return false;
+function isValidAopsTextContent(item: unknown): item is Record<string, unknown> & { readonly text: string } {
+  return isPlainObject(item)
+    && Object.hasOwn(item, 'type')
+    && item.type === 'text'
+    && Object.hasOwn(item, 'text')
+    && typeof item.text === 'string';
 }
 
 function parseOnboardContent(result: Record<string, unknown>): Record<string, unknown> {
   if (
     !Array.isArray(result.content)
-    || !result.content.every(isValidMcpContentItem)
+    || result.content.length === 0
+    || !result.content.every(isValidAopsTextContent)
     || (Object.hasOwn(result, 'isError') && typeof result.isError !== 'boolean')
   ) {
     throw verificationError('protocol_error', null);
@@ -261,16 +386,16 @@ function parseOnboardContent(result: Record<string, unknown>): Record<string, un
   }
 
   if (Object.hasOwn(result, 'structuredContent')) {
-    if (!isRecord(result.structuredContent)) throw verificationError('protocol_error', null);
+    if (!isPlainObject(result.structuredContent)) throw verificationError('protocol_error', null);
     return result.structuredContent;
   }
 
-  const firstText = result.content.find((item) => isRecord(item) && item.type === 'text' && typeof item.text === 'string');
-  if (!isRecord(firstText) || typeof firstText.text !== 'string') throw verificationError('protocol_error', null);
+  const firstText = result.content[0];
+  if (!isValidAopsTextContent(firstText)) throw verificationError('protocol_error', null);
 
   try {
     const parsed: unknown = JSON.parse(firstText.text);
-    if (!isRecord(parsed)) throw verificationError('protocol_error', null);
+    if (!isPlainObject(parsed)) throw verificationError('protocol_error', null);
     return parsed;
   } catch (error) {
     if (error instanceof McpVerificationError) throw error;
@@ -288,12 +413,13 @@ function readVerifiedIdentity(
   const contractVersion = identity.contractVersion;
 
   if (
-    !isRecord(agent)
-    || typeof agent.name !== 'string'
-    || agent.name.trim() === ''
-    || !isRecord(connection)
-    || typeof connection.id !== 'string'
-    || connection.id.trim() === ''
+    !Object.hasOwn(identity, 'agent')
+    || !isPlainObject(agent)
+    || !hasOwnNonBlankString(agent, 'name')
+    || !Object.hasOwn(identity, 'connection')
+    || !isPlainObject(connection)
+    || !hasOwnNonBlankString(connection, 'id')
+    || !Object.hasOwn(identity, 'contractVersion')
     || typeof contractVersion !== 'string'
     || contractVersion.trim() === ''
   ) {
@@ -316,12 +442,17 @@ export async function verifyHostedMcp(input: VerifyHostedMcpInput): Promise<McpV
   const context: RequestContext = { ...validated, signal: controller.signal };
 
   try {
-    await rpc(context, 1, 'initialize', INITIALIZE_PARAMS);
+    const initialized = await rpc(context, 1, 'initialize', INITIALIZE_PARAMS);
+    assertInitializeResult(initialized);
     await notify(context, 'notifications/initialized');
     const listed = await rpc(context, 2, 'tools/list', {});
     const { toolCount } = readTools(listed);
     const onboarded = await rpc(context, 3, 'tools/call', { arguments: {}, name: 'agentops.onboard' });
     return readVerifiedIdentity(toolCount, onboarded);
+  } catch (error) {
+    if (controller.signal.aborted) throw verificationError('timeout', null);
+    if (error instanceof McpVerificationError) throw error;
+    throw verificationError('protocol_error', null);
   } finally {
     globalThis.clearTimeout(timeout);
   }
