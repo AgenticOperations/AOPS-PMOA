@@ -131,12 +131,14 @@ describe('verifyHostedMcp', () => {
     });
   });
 
-  it('accepts a 202 initialized notification with a whitespace-only body', async () => {
+  it('rejects a 202 initialized notification with a whitespace-only body', async () => {
     const { fetchImpl } = successFetch({
       notificationResponse: new Response('  \n', { status: 202 }),
     });
 
-    await expect(verifyHostedMcp({ credential, endpoint, fetchImpl })).resolves.toMatchObject({ status: 'verified' });
+    const error = await captureError({ credential, endpoint, fetchImpl });
+
+    expect(error).toMatchObject({ code: 'protocol_error', status: 202 });
   });
 
   it.each([

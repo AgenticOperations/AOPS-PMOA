@@ -209,7 +209,7 @@ async function notify(context: RequestContext, method: string): Promise<void> {
   if (response.status !== 202) throw verificationError('protocol_error', response.status);
 
   const text = await response.text();
-  if (text.trim() !== '') throw verificationError('protocol_error', response.status);
+  if (text !== '') throw verificationError('protocol_error', response.status);
 }
 
 function readTools(result: Record<string, unknown>): { readonly toolCount: number } {
