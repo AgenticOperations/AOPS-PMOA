@@ -74,6 +74,7 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
   ]);
   const onboardingByKey = new Map(onboardingStates.map((state) => [state.flow_key, state]));
   const activeMembers = members.filter((member) => member.status !== 'removed');
+  const activeOwnerCount = activeMembers.filter((member) => member.role === 'owner').length;
   const activeTeams = teams.filter((team) => team.archived_at === null);
 
   return (
@@ -134,7 +135,9 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {activeMembers.map((member) => (
+                        {activeMembers.map((member) => {
+                          const isSoleOwner = member.role === 'owner' && activeOwnerCount === 1;
+                          return (
                           <TableRow key={member.id}>
                             <TableCell>
                               <div className="settings-primary-cell">
@@ -147,10 +150,18 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
                               <StatusBadge status={member.status} />
                             </TableCell>
                             <TableCell>
-                              <div className="settings-row-actions">
+                              {isSoleOwner ? (
+                                <Badge variant="outline">Sole owner</Badge>
+                              ) : (
+                                <div className="settings-row-actions">
                                 <form action={updateMemberRoleAction.bind(null, org.id, org.slug)} className="settings-inline-form">
                                   <input name="memberId" type="hidden" value={member.id} />
-                                  <select defaultValue={member.role} name="role" aria-label={`Role for ${member.email}`}>
+                                  <select
+                                    aria-label={`Role for ${member.email}`}
+                                    defaultValue={member.role}
+                                    key={`${member.id}:${member.role}`}
+                                    name="role"
+                                  >
                                     {ROLE_OPTIONS.map((role) => (
                                       <option key={role} value={role}>{formatRole(role)}</option>
                                     ))}
@@ -161,10 +172,12 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
                                   <input name="memberId" type="hidden" value={member.id} />
                                   <button className="button-secondary" type="submit">Remove</button>
                                 </form>
-                              </div>
+                                </div>
+                              )}
                             </TableCell>
                           </TableRow>
-                        ))}
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </TableShell>
@@ -244,18 +257,22 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
                               <StatusBadge status={team.archived_at === null ? 'active' : 'archived'} />
                             </TableCell>
                             <TableCell>
-                              <div className="settings-row-actions">
+                              {team.archived_at !== null ? (
+                                <Badge variant="outline">Archived</Badge>
+                              ) : (
+                                <div className="settings-row-actions">
                                 <form action={updateTeamAction.bind(null, org.id, org.slug)} className="settings-inline-form settings-team-form">
                                   <input name="teamId" type="hidden" value={team.id} />
                                   <input aria-label={`Name for ${team.name}`} defaultValue={team.name} name="name" required />
                                   <input aria-label={`Description for ${team.name}`} defaultValue={team.description} name="description" />
-                                  <button className="button-secondary" disabled={team.archived_at !== null} type="submit">Save</button>
+                                  <button className="button-secondary" type="submit">Save</button>
                                 </form>
                                 <form action={archiveTeamAction.bind(null, org.id, org.slug)}>
                                   <input name="teamId" type="hidden" value={team.id} />
-                                  <button className="button-secondary" disabled={team.is_default || team.archived_at !== null} type="submit">Archive</button>
+                                  <button className="button-secondary" disabled={team.is_default} type="submit">Archive</button>
                                 </form>
-                              </div>
+                                </div>
+                              )}
                             </TableCell>
                           </TableRow>
                         ))}

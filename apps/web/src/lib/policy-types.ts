@@ -5,6 +5,11 @@ export type PolicyDraft = {
   readonly description: string;
   readonly category: 'management' | 'operational' | 'capability';
   readonly status: 'draft' | 'validated' | 'activated' | 'discarded';
+  readonly revision_policy_id?: string | null;
+  readonly revision_base_version?: number | null;
+  readonly revision_mode?: 'restore' | 'revision' | null;
+  readonly revision_restore_bindings?: PolicyRestoreBinding[] | undefined;
+  readonly statements?: PolicyStatement[] | undefined;
   readonly updated_at: string;
 };
 
@@ -14,16 +19,19 @@ export type PolicyVersion = {
   readonly name: string;
   readonly description: string;
   readonly category: 'management' | 'operational' | 'capability';
-  readonly status: 'active' | 'archived';
+  readonly status: 'active' | 'archived' | 'superseded';
   readonly statements?: PolicyStatement[] | undefined;
   readonly binding_target_types: Array<'agent' | 'connection' | 'org' | 'team'>;
   readonly bindings: PolicyBinding[];
   readonly bindings_count: number;
+  readonly archived_by?: string | null;
+  readonly archived_at?: string | null;
   readonly created_at: string;
 };
 
 export type PolicyStatement = {
   readonly id?: string | undefined;
+  readonly audit?: 'detailed' | 'standard' | undefined;
   readonly decision?: string | undefined;
   readonly actions?: string[] | undefined;
   readonly actor?: {
@@ -39,10 +47,14 @@ export type PolicyStatement = {
     } | undefined;
     readonly payment?: {
       readonly minAmount?: string | number | undefined;
+      readonly maxAmount?: string | number | undefined;
       readonly assets?: string[] | undefined;
+      readonly networks?: string[] | undefined;
+      readonly recipients?: string[] | undefined;
     } | undefined;
     readonly tool?: {
       readonly names?: string[] | undefined;
+      readonly riskLevels?: string[] | undefined;
     } | undefined;
   } | undefined;
 };
@@ -116,10 +128,20 @@ export type PolicyActionRecord = {
 
 export type PolicyBinding = {
   readonly id: string;
+  readonly policy_id?: string | undefined;
+  readonly policy_version?: number | undefined;
   readonly target_id: string;
   readonly target_type: 'agent' | 'connection' | 'org' | 'team';
   readonly status: 'active' | 'removed';
   readonly created_at: string;
+  readonly removed_by?: string | null;
+  readonly removed_at?: string | null;
+  readonly removed_reason?: string | null;
+};
+
+export type PolicyRestoreBinding = {
+  readonly target_id: string;
+  readonly target_type: 'agent' | 'connection' | 'org' | 'team';
 };
 
 export type PolicyLibrary = {

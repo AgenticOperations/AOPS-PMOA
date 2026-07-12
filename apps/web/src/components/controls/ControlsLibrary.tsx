@@ -1,14 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { AuditEventRecord } from '@/lib/audit-types';
 import type {
   PolicyActionRecord,
-  PolicyDecisionRecord,
   PolicyDraft,
   PolicySimulationRecord,
   PolicyStatement,
   PolicyVersion,
 } from '@/lib/policy-types';
+import { Sheet } from '@/components/ui/sheet';
 import { PolicyDraftBuilder } from './PolicyDraftBuilder';
 
 type BindTargetType = 'agent' | 'connection' | 'org' | 'team';
@@ -24,20 +25,20 @@ type ControlsLibraryProps = {
   readonly orgSlug: string;
   readonly drafts: PolicyDraft[];
   readonly policies: PolicyVersion[];
-  readonly policyDecisions?: readonly PolicyDecisionRecord[] | undefined;
+  readonly activityEvents?: readonly AuditEventRecord[] | undefined;
   readonly policyActions?: readonly PolicyActionRecord[] | undefined;
   readonly simulations?: readonly PolicySimulationRecord[] | undefined;
   readonly bindTargets?: readonly BindTarget[] | undefined;
   readonly createAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly validateAction?: ((draftId: string) => Promise<void>) | undefined;
   readonly activateAction?: ((draftId: string) => Promise<void>) | undefined;
-  readonly bindAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly activateRevisionAction?: ((draftId: string) => Promise<void>) | undefined;
   readonly updateDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly discardDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly simulateDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
-  readonly removeBindingAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly archivePolicyAction?: ((formData: FormData) => Promise<void>) | undefined;
-  readonly createVersionAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly createRevisionDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly createRestoreDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
 };
 
 type DrawerState =
@@ -46,13 +47,8 @@ type DrawerState =
   | { readonly kind: 'detail'; readonly policyKey: string }
   | { readonly kind: 'draft'; readonly draftId: string };
 
-type TableView = 'active' | 'drafts' | 'bindings' | 'decisions';
-
-type BindingRow = {
-  readonly id: string;
-  readonly policy: PolicyVersion;
-  readonly binding: PolicyVersion['bindings'][number];
-};
+type TableView = 'library' | 'drafts' | 'activity';
+type PolicyDetailTab = 'details' | 'conditions' | 'evidence' | 'lifecycle' | 'usage';
 
 const fallbackActionLabels: Record<string, string> = {
   'runtime.http.request': 'HTTP/API request',
@@ -68,6 +64,14 @@ const fallbackActionLabels: Record<string, string> = {
 
 function policyKey(policy: PolicyVersion): string {
   return `${policy.id}:${policy.version}`;
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(/[_\s.]+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function formatTargetType(type: BindTargetType): string {
@@ -105,8 +109,21 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(value));
 }
 
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat('en', {
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+  }).format(new Date(value));
+}
+
 function primaryStatement(policy: PolicyVersion): PolicyStatement | undefined {
   return policy.statements?.[0];
+}
+
+function primaryDraftStatement(draft: PolicyDraft | undefined): PolicyStatement | undefined {
+  return draft?.statements?.[0];
 }
 
 function actionLabel(actionId: string, policyActions: readonly PolicyActionRecord[]): string {
@@ -117,26 +134,6 @@ function statementAction(statement: PolicyStatement | undefined, policyActions: 
   const action = statement?.actions?.[0];
   if (action === undefined) return 'Policy rule';
   return actionLabel(action, policyActions);
-}
-
-function categoryForAction(actionId: string): PolicyVersion['category'] {
-  if (actionId.startsWith('management.')) return 'management';
-  if (actionId.startsWith('payment.') || actionId.startsWith('runtime.') || actionId.startsWith('tool.')) {
-    return 'operational';
-  }
-  return 'capability';
-}
-
-function bindingLabel(
-  binding: PolicyVersion['bindings'][number],
-  bindTargets: readonly BindTarget[],
-): string {
-  const target = bindTargets.find((candidate) => candidate.type === binding.target_type && candidate.id === binding.target_id);
-  return `${target?.label ?? binding.target_id} · ${formatTargetType(binding.target_type)}`;
-}
-
-function allowedBindTargets(policy: PolicyVersion, bindTargets: readonly BindTarget[]): BindTarget[] {
-  return bindTargets.filter((target) => policy.binding_target_types.includes(target.type));
 }
 
 function groupedTargets(targets: readonly BindTarget[]): Array<{ readonly type: BindTargetType; readonly targets: BindTarget[] }> {
@@ -174,7 +171,7 @@ function firstConditionSummary(statement: PolicyStatement | undefined): string {
     pieces.push(`actor role: ${statement.actor.roles.join(', ')}`);
   }
 
-  return pieces.length > 0 ? pieces.join(' · ') : 'No extra condition fields';
+  return pieces.length > 0 ? pieces.join(' · ') : 'No optional conditions';
 }
 
 function policySummary(policy: PolicyVersion, policyActions: readonly PolicyActionRecord[]): string {
@@ -191,16 +188,17 @@ function policySummary(policy: PolicyVersion, policyActions: readonly PolicyActi
 }
 
 function statusClass(status: string): string {
-  if (status === 'active' || status === 'activated') return 'status-active';
+  if (status === 'active' || status === 'activated' || status === 'success') return 'status-active';
   if (status === 'validated') return 'status-validated';
   if (status === 'draft') return 'status-draft-neutral';
+  if (status === 'error' || status === 'denied') return 'status-revoked';
+  if (status === 'pending') return 'status-draft';
   return `status-${status}`;
 }
 
 function matchesPolicySearch(
   policy: PolicyVersion,
   query: string,
-  bindTargets: readonly BindTarget[],
   policyActions: readonly PolicyActionRecord[],
 ): boolean {
   if (query.length === 0) return true;
@@ -209,7 +207,6 @@ function matchesPolicySearch(
     policy.description,
     policy.category,
     policySummary(policy, policyActions),
-    ...policy.bindings.map((binding) => bindingLabel(binding, bindTargets)),
   ]
     .join(' ')
     .toLowerCase();
@@ -221,35 +218,28 @@ function matchesDraftSearch(draft: PolicyDraft, query: string): boolean {
   return [draft.name, draft.description, draft.category, draft.status].join(' ').toLowerCase().includes(query.toLowerCase());
 }
 
-function matchesBindingSearch(row: BindingRow, query: string, bindTargets: readonly BindTarget[]): boolean {
-  if (query.length === 0) return true;
-  return [
-    row.policy.name,
-    row.policy.description,
-    row.policy.category,
-    bindingLabel(row.binding, bindTargets),
-    row.binding.target_id,
-  ]
-    .join(' ')
-    .toLowerCase()
-    .includes(query.toLowerCase());
+function eventLabel(event: AuditEventRecord): string {
+  const resource = event.resourceType === null ? null : `${titleCase(event.resourceType)}${event.resourceId === null ? '' : ` · ${event.resourceId}`}`;
+  return resource ?? event.sourceSystem ?? event.eventType;
 }
 
-function matchesDecisionSearch(
-  decision: PolicyDecisionRecord,
-  query: string,
-  policyActions: readonly PolicyActionRecord[],
-): boolean {
+function isControlLifecycleEvent(event: AuditEventRecord): boolean {
+  if (event.eventDomain !== 'policy') return false;
+  if (event.decisionRef !== null || event.resourceType === 'policy_decision') return false;
+  return !event.eventType.startsWith('policy.decision.') && !event.action.startsWith('policy.decision.');
+}
+
+function matchesActivitySearch(event: AuditEventRecord, query: string): boolean {
   if (query.length === 0) return true;
   return [
-    decision.id,
-    actionLabel(decision.action_id, policyActions),
-    decision.action_id,
-    decision.decision,
-    decision.reason_code,
-    decision.explanation,
-    decision.target_id ?? '',
-    decision.actor_id ?? '',
+    event.action,
+    event.eventType,
+    event.reasonCode ?? '',
+    event.resourceType ?? '',
+    event.resourceId ?? '',
+    event.policyRef ?? '',
+    event.sourceSystem ?? '',
+    event.tags.join(' '),
   ]
     .join(' ')
     .toLowerCase()
@@ -261,106 +251,84 @@ export function ControlsLibrary({
   orgSlug: _orgSlug,
   drafts,
   policies,
-  policyDecisions = [],
+  activityEvents = [],
   policyActions = [],
   simulations = [],
   bindTargets = [],
   createAction,
   validateAction,
   activateAction,
-  bindAction,
+  activateRevisionAction,
   updateDraftAction,
   discardDraftAction,
   simulateDraftAction,
-  removeBindingAction,
   archivePolicyAction,
-  createVersionAction,
+  createRevisionDraftAction,
+  createRestoreDraftAction,
 }: ControlsLibraryProps) {
   const [drawer, setDrawer] = useState<DrawerState>({ kind: 'closed' });
-  const [tableView, setTableView] = useState<TableView>('active');
+  const [tableView, setTableView] = useState<TableView>('library');
+  const [detailTab, setDetailTab] = useState<PolicyDetailTab>('details');
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | PolicyVersion['category']>('all');
-  const [targetFilter, setTargetFilter] = useState<'all' | BindTargetType | 'unbound'>('all');
-  const [simulationAction, setSimulationAction] = useState(policyActions[0]?.action_id ?? 'runtime.http.request');
+  const [confirmDiscardDraftId, setConfirmDiscardDraftId] = useState<string | null>(null);
+  const [confirmArchivePolicyId, setConfirmArchivePolicyId] = useState<string | null>(null);
 
   const filteredPolicies = useMemo(
     () =>
       policies.filter((policy) => {
         const categoryMatch = categoryFilter === 'all' || policy.category === categoryFilter;
-        const searchMatch = matchesPolicySearch(policy, query.trim(), bindTargets, policyActions);
-        const targetMatch =
-          targetFilter === 'all' ||
-          (targetFilter === 'unbound'
-            ? policy.bindings.length === 0
-            : policy.bindings.some((binding) => binding.target_type === targetFilter));
-        return categoryMatch && searchMatch && targetMatch;
+        const searchMatch = matchesPolicySearch(policy, query.trim(), policyActions);
+        return categoryMatch && searchMatch;
       }),
-    [bindTargets, categoryFilter, policies, policyActions, query, targetFilter],
+    [categoryFilter, policies, policyActions, query],
   );
   const openDrafts = useMemo(
     () =>
       drafts.filter((draft) => {
+        const lifecycleMatch = draft.status === 'draft' || draft.status === 'validated';
         const categoryMatch = categoryFilter === 'all' || draft.category === categoryFilter;
         const searchMatch = matchesDraftSearch(draft, query.trim());
-        return categoryMatch && searchMatch;
+        return lifecycleMatch && categoryMatch && searchMatch;
       }),
     [categoryFilter, drafts, query],
   );
-  const bindingRows = useMemo<BindingRow[]>(
+  const policyActivity = useMemo(
     () =>
-      policies.flatMap((policy) =>
-        policy.bindings
-          .filter((binding) => binding.status === 'active')
-          .map((binding) => ({
-            id: `${policy.id}:${policy.version}:${binding.id}`,
-            policy,
-            binding,
-          })),
-      ),
-    [policies],
+      activityEvents
+        .filter(isControlLifecycleEvent)
+        .filter((event) => matchesActivitySearch(event, query.trim())),
+    [activityEvents, query],
   );
-  const filteredBindings = useMemo(
-    () =>
-      bindingRows.filter((row) => {
-        const categoryMatch = categoryFilter === 'all' || row.policy.category === categoryFilter;
-        const searchMatch = matchesBindingSearch(row, query.trim(), bindTargets);
-        const targetMatch =
-          targetFilter === 'all' ||
-          (targetFilter !== 'unbound' && row.binding.target_type === targetFilter);
-        return categoryMatch && searchMatch && targetMatch;
-      }),
-    [bindTargets, bindingRows, categoryFilter, query, targetFilter],
-  );
-  const filteredDecisions = useMemo(
-    () =>
-      policyDecisions.filter((decision) => {
-        const categoryMatch = categoryFilter === 'all' || categoryForAction(decision.action_id) === categoryFilter;
-        const searchMatch = matchesDecisionSearch(decision, query.trim(), policyActions);
-        const targetMatch =
-          targetFilter === 'all' ||
-          (targetFilter !== 'unbound' && decision.target_type === targetFilter);
-        return categoryMatch && searchMatch && targetMatch;
-      }),
-    [categoryFilter, policyActions, policyDecisions, query, targetFilter],
-  );
-  const simulationPolicyAction = useMemo(
-    () => policyActions.find((action) => action.action_id === simulationAction) ?? policyActions[0],
-    [policyActions, simulationAction],
-  );
-
   const detailPolicy =
     drawer.kind === 'detail'
       ? policies.find((policy) => policyKey(policy) === drawer.policyKey)
       : undefined;
   const detailDraft = drawer.kind === 'draft' ? drafts.find((draft) => draft.id === drawer.draftId) : undefined;
+  const detailDraftStatement = primaryDraftStatement(detailDraft);
+  const simulationAction = detailDraftStatement?.actions?.[0] ?? 'runtime.http.request';
+  const simulationPolicyAction =
+    policyActions.find((action) => action.action_id === simulationAction) ?? policyActions[0];
+
+  useEffect(() => {
+    if (drawer.kind !== 'draft') return;
+    const selectedDraft = drafts.find((draft) => draft.id === drawer.draftId);
+    if (selectedDraft !== undefined && selectedDraft.status !== 'draft' && selectedDraft.status !== 'validated') {
+      setDrawer({ kind: 'closed' });
+      setConfirmDiscardDraftId(null);
+      return;
+    }
+  }, [drafts, drawer]);
   const detailStatement = detailPolicy === undefined ? undefined : primaryStatement(detailPolicy);
-  const detailPolicyDecisions =
+  const detailPolicyActivity =
     detailPolicy === undefined
       ? []
-      : policyDecisions.filter((decision) =>
-          decision.matched.some(
-            (match) => match.policyId === detailPolicy.id && match.policyVersion === detailPolicy.version,
-          ),
+      : policyActivity.filter(
+          (event) =>
+            event.relatedPolicyId === detailPolicy.id ||
+            event.resourceId === detailPolicy.id ||
+            event.policyRef === `${detailPolicy.id}:v${detailPolicy.version}` ||
+            event.policyRef === detailPolicy.id,
         );
   const detailPolicySimulations =
     detailPolicy === undefined
@@ -370,103 +338,79 @@ export function ControlsLibrary({
             (match) => match.policyId === detailPolicy.id && match.policyVersion === detailPolicy.version,
           ),
         );
-  const selectedTargets = detailPolicy === undefined ? [] : allowedBindTargets(detailPolicy, bindTargets);
-  const targetGroups = groupedTargets(selectedTargets);
+  const detailActionId = detailStatement?.actions?.[0];
+  const detailActionRecord =
+    detailActionId === undefined ? undefined : policyActions.find((action) => action.action_id === detailActionId);
+  const detailSupportsResource = detailActionRecord?.condition_groups.includes('resource') ?? false;
+  const detailSupportsPayment = detailActionRecord?.condition_groups.includes('payment') ?? false;
+  const detailSupportsTool = detailActionRecord?.condition_groups.includes('tool') ?? false;
   const visibleDrafts = openDrafts.filter((draft) => draft.status !== 'activated' && draft.status !== 'discarded');
   const drawerOpen = drawer.kind !== 'closed';
   const activeCount = policies.length;
   const draftCount = visibleDrafts.length;
-  const bindingCount = bindingRows.length;
-  const decisionCount = policyDecisions.length;
+  const activityCount = policyActivity.length;
   const viewMeta: Record<TableView, { readonly title: string; readonly description: string; readonly count: string }> = {
-    active: {
+    library: {
       title: 'Policy library',
-      description: 'Active reusable rules that can be bound to workspaces, teams, agents, or credentials.',
+      description: 'Active reusable rules. Open a policy to inspect its effect, conditions, evidence, or archive state.',
       count: `${activeCount} active`,
     },
     drafts: {
-      title: 'Draft policies',
-      description: 'Drafts do not enforce until they are validated, activated, and bound.',
+      title: 'Drafts',
+      description: 'Policies being prepared. Drafts do not enforce until validated and activated.',
       count: `${draftCount} draft${draftCount === 1 ? '' : 's'}`,
     },
-    bindings: {
-      title: 'Policy bindings',
-      description: 'Where active policies are attached today.',
-      count: `${bindingCount} binding${bindingCount === 1 ? '' : 's'}`,
-    },
-    decisions: {
-      title: 'Decision history',
-      description: 'Recent policy checks from runtime API, MCP, and operator actions.',
-      count: `${decisionCount} decision${decisionCount === 1 ? '' : 's'}`,
+    activity: {
+      title: 'Change log',
+      description: 'Policy creation, validation, activation, archive, and simulation audit records only.',
+      count: `${activityCount} event${activityCount === 1 ? '' : 's'}`,
     },
   };
   const currentMeta = viewMeta[tableView];
+  const closeDrawer = () => {
+    setDrawer({ kind: 'closed' });
+    setConfirmArchivePolicyId(null);
+    setConfirmDiscardDraftId(null);
+  };
+  const isRevisionDraft = (draft: PolicyDraft) => draft.revision_policy_id !== undefined && draft.revision_policy_id !== null;
+  const activationActionForDraft = (draft: PolicyDraft) => (isRevisionDraft(draft) ? activateRevisionAction : activateAction);
 
   return (
     <div className="controls-console">
       <div className="controls-page" aria-hidden={drawerOpen}>
         <header className="controls-page-header">
           <div>
+            <span className="controls-page-kicker">Policy workbench</span>
             <h1>Controls</h1>
-            <p>Author, bind, and inspect policy rules across managed agents.</p>
+            <p>Create reusable rules, validate drafts, and keep the policy library clean.</p>
           </div>
-          <div className="controls-header-actions">
-            <button
-              aria-label="Drafts"
-              aria-pressed={tableView === 'drafts'}
-              className={`controls-secondary-action ${tableView === 'drafts' ? 'controls-action-active' : ''}`}
-              onClick={() => setTableView((current) => (current === 'drafts' ? 'active' : 'drafts'))}
-              type="button"
-            >
-              Drafts
-              <span aria-hidden="true">{draftCount}</span>
-            </button>
-            <button className="controls-primary-action" onClick={() => setDrawer({ kind: 'create' })} type="button">
-              New policy
-            </button>
-          </div>
+          <button className="controls-primary-action" onClick={() => setDrawer({ kind: 'create' })} type="button">
+            New policy
+          </button>
         </header>
 
-        <div className="controls-metric-grid" aria-label="Policy control summary">
-          <div className="controls-metric-tile">
-            <span>Active policies</span>
-            <strong>{activeCount}</strong>
-          </div>
-          <div className="controls-metric-tile">
-            <span>Drafts</span>
-            <strong>{draftCount}</strong>
-          </div>
-          <div className="controls-metric-tile">
-            <span>Bindings</span>
-            <strong>{bindingCount}</strong>
-          </div>
-          <div className="controls-metric-tile">
-            <span>Recorded decisions</span>
-            <strong>{decisionCount}</strong>
-          </div>
-        </div>
-
-        <section className="controls-library-shell">
+        <section className="controls-library-shell" aria-labelledby="policy-library-title">
           <div className="controls-library-core">
-            <div className="controls-view-tabs" role="tablist" aria-label="Controls views">
-              {([
-                ['active', 'Policy library', activeCount],
-                ['drafts', 'Drafts', draftCount],
-                ['bindings', 'Bindings', bindingCount],
-                ['decisions', 'Decisions', decisionCount],
-              ] as const).map(([view, label, count]) => (
-                <button
-                  aria-selected={tableView === view}
-                  className={tableView === view ? 'controls-view-tab active' : 'controls-view-tab'}
-                  key={view}
-                  onClick={() => setTableView(view)}
-                  role="tab"
-                  type="button"
-                >
-                  <span>{label}</span>
-                  <strong>{count}</strong>
-                </button>
-              ))}
+            <div className="controls-workbench-top">
+              <nav className="controls-view-tabs" aria-label="Controls sections">
+                {([
+                  ['library', 'Library', activeCount],
+                  ['drafts', 'Drafts', draftCount],
+                  ['activity', 'Change log', activityCount],
+                ] as const).map(([view, label, count]) => (
+                  <button
+                    aria-label={label}
+                    aria-current={tableView === view ? 'page' : undefined}
+                    className={tableView === view ? 'controls-view-tab active' : 'controls-view-tab'}
+                    key={view}
+                    onClick={() => setTableView(view)}
+                    type="button"
+                  >
+                    <span>{label}</span>
+                    <strong>{count}</strong>
+                  </button>
+                ))}
+              </nav>
             </div>
 
             <div className="controls-library-heading">
@@ -474,7 +418,7 @@ export function ControlsLibrary({
                 <h2 id="policy-library-title">{currentMeta.title}</h2>
                 <p>{currentMeta.description}</p>
               </div>
-              <span className="controls-count-pill">{currentMeta.count}</span>
+              <span className="controls-muted-count">{currentMeta.count}</span>
             </div>
 
             <div className="controls-toolbar" aria-label="Policy filters">
@@ -483,7 +427,7 @@ export function ControlsLibrary({
                 <input
                   aria-label="Search policies"
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search policies, targets, decisions"
+                  placeholder={tableView === 'activity' ? 'Search policy changes' : 'Search policies'}
                   value={query}
                 />
               </label>
@@ -491,6 +435,7 @@ export function ControlsLibrary({
                 <span>Category</span>
                 <select
                   aria-label="Filter by category"
+                  disabled={tableView === 'activity'}
                   onChange={(event) => setCategoryFilter(event.target.value as typeof categoryFilter)}
                   value={categoryFilter}
                 >
@@ -500,28 +445,12 @@ export function ControlsLibrary({
                   <option value="capability">Capability</option>
                 </select>
               </label>
-              <label>
-                <span>Target</span>
-                <select
-                  aria-label="Filter by target"
-                  disabled={tableView === 'drafts'}
-                  onChange={(event) => setTargetFilter(event.target.value as typeof targetFilter)}
-                  value={targetFilter}
-                >
-                  <option value="all">All targets</option>
-                  <option value="agent">Agent</option>
-                  <option value="connection">Credential</option>
-                  <option value="team">Team</option>
-                  <option value="org">Workspace</option>
-                  <option value="unbound">No binding</option>
-                </select>
-              </label>
             </div>
 
-            {tableView === 'active' && filteredPolicies.length === 0 ? (
+            {tableView === 'library' && filteredPolicies.length === 0 ? (
               <div className="controls-empty-state">
                 <h3>No policies match this view</h3>
-                <p>Clear the filters or create a policy draft.</p>
+                <p>Clear the filters or start a new policy draft.</p>
                 <button className="button-secondary" onClick={() => setDrawer({ kind: 'create' })} type="button">
                   New policy
                 </button>
@@ -530,171 +459,133 @@ export function ControlsLibrary({
 
             {tableView === 'drafts' && visibleDrafts.length === 0 ? (
               <div className="controls-empty-state">
-                <h3>No draft policies match this view</h3>
-                <p>Draft policies appear here before activation.</p>
+                <h3>No draft policies</h3>
+                <p>Create a draft, validate it, then activate it before assigning it from an agent, team, or credential surface.</p>
                 <button className="button-secondary" onClick={() => setDrawer({ kind: 'create' })} type="button">
                   New policy
                 </button>
               </div>
             ) : null}
 
-            {tableView === 'bindings' && filteredBindings.length === 0 ? (
+            {tableView === 'activity' && policyActivity.length === 0 ? (
               <div className="controls-empty-state">
-                <h3>No bindings match this view</h3>
-                <p>Open an active policy and bind it to a workspace, team, agent, or credential.</p>
+                <h3>No policy changes yet</h3>
+                <p>Policy lifecycle events appear here after drafts, activations, archive actions, or simulations are recorded.</p>
               </div>
             ) : null}
 
-            {tableView === 'decisions' && filteredDecisions.length === 0 ? (
-              <div className="controls-empty-state">
-                <h3>No decision history matches this view</h3>
-                <p>Policy checks appear after runtime API, MCP, or operator actions request a decision.</p>
-              </div>
-            ) : null}
-
-            {tableView === 'active' && filteredPolicies.length > 0 ? (
-              <div className="controls-policy-table" role="list" aria-label="Active policies">
-                <div className="controls-policy-table-head" aria-hidden="true">
-                  <span>Policy</span>
-                  <span>Decision</span>
-                  <span>Surface</span>
-                  <span>Binding</span>
-                  <span>Open</span>
+            {tableView === 'library' && filteredPolicies.length > 0 ? (
+              <div className="controls-policy-table" role="table" aria-label="Active policies">
+                <div className="controls-policy-table-head controls-policy-grid" role="row">
+                  <span role="columnheader">Policy</span>
+                  <span role="columnheader">Decision</span>
+                  <span role="columnheader">Surface</span>
+                  <span role="columnheader">Assigned</span>
+                  <span role="columnheader">Open</span>
                 </div>
                 {filteredPolicies.map((policy) => {
                   const statement = primaryStatement(policy);
                   return (
-                    <div className="controls-policy-item" key={policyKey(policy)} role="listitem">
-                      <button
-                        aria-label={`Open ${policy.name}`}
-                        className="controls-policy-row"
-                        onClick={() => setDrawer({ kind: 'detail', policyKey: policyKey(policy) })}
-                        type="button"
-                      >
-                        <span className="controls-policy-name">
-                          <span className="controls-policy-title">{policy.name}</span>
-                          <span>{policy.description || policySummary(policy, policyActions)}</span>
-                        </span>
-                        <span className={`controls-decision-badge decision-${statement?.decision ?? 'policy'}`}>
-                          {formatDecision(statement?.decision)}
-                        </span>
-                        <span className="controls-neutral-badge">
-                          {statement === undefined ? formatCategory(policy.category) : statementAction(statement, policyActions)}
-                        </span>
-                        <span className="controls-neutral-badge">
-                          {policy.bindings_count} binding{policy.bindings_count === 1 ? '' : 's'}
-                        </span>
-                        <span className="controls-row-open">Open</span>
-                      </button>
-                    </div>
+                    <button
+                      aria-label={`Open ${policy.name}`}
+                      className="controls-policy-row controls-policy-grid"
+                      key={policyKey(policy)}
+                      onClick={() => {
+                        setDetailTab('details');
+                        setDrawer({ kind: 'detail', policyKey: policyKey(policy) });
+                      }}
+                      type="button"
+                    >
+                      <span className="controls-policy-name" role="cell">
+                        <span className="controls-policy-title">{policy.name}</span>
+                        <span>{policy.description || policySummary(policy, policyActions)}</span>
+                      </span>
+                      <span className={`controls-decision-badge decision-${statement?.decision ?? 'policy'}`} role="cell">
+                        {formatDecision(statement?.decision)}
+                      </span>
+                      <span className="controls-neutral-badge" role="cell">
+                        {statement === undefined ? formatCategory(policy.category) : statementAction(statement, policyActions)}
+                      </span>
+                      <span className="controls-neutral-badge" role="cell">
+                        {policy.bindings_count} assigned
+                      </span>
+                      <span className="controls-row-open" role="cell">Open</span>
+                    </button>
                   );
                 })}
               </div>
             ) : null}
 
             {tableView === 'drafts' && visibleDrafts.length > 0 ? (
-              <div className="controls-policy-table" role="list" aria-label="Draft policies">
-                <div className="controls-policy-table-head controls-policy-table-head-drafts" aria-hidden="true">
-                  <span>Draft</span>
-                  <span>Status</span>
-                  <span>Type</span>
-                  <span>Enforcement</span>
-                  <span>Actions</span>
+              <div className="controls-policy-table" role="table" aria-label="Draft policies">
+                <div className="controls-policy-table-head controls-drafts-grid" role="row">
+                  <span role="columnheader">Draft</span>
+                  <span role="columnheader">Status</span>
+                  <span role="columnheader">Type</span>
+                  <span role="columnheader">Enforcement</span>
+                  <span role="columnheader">Actions</span>
                 </div>
-                {visibleDrafts.map((draft) => (
-                  <div className="controls-policy-item" key={draft.id} role="listitem">
-                    <div className="controls-policy-row controls-policy-row-static controls-policy-row-draft">
-                      <button
-                        aria-label={`Open draft ${draft.name}`}
-                        className="controls-policy-name controls-policy-name-button"
-                        onClick={() => setDrawer({ kind: 'draft', draftId: draft.id })}
-                        type="button"
-                      >
-                        <span className="controls-policy-title">{draft.name}</span>
-                        <span>{draft.description || formatCategory(draft.category)}</span>
-                      </button>
-                      <span className={`status-badge ${statusClass(draft.status)}`}>{formatDraftStatus(draft.status)}</span>
-                      <span className="controls-neutral-badge">{formatCategory(draft.category)}</span>
-                      <span className="controls-neutral-badge">Not enforcing</span>
-                      <span className="controls-row-actions">
-                        {draft.status === 'draft' && validateAction !== undefined ? (
-                          <form action={validateAction.bind(null, draft.id)}>
-                            <button aria-label={`Validate ${draft.name}`} className="button-secondary" type="submit">
-                              Validate
-                            </button>
-                          </form>
-                        ) : null}
-                        {draft.status === 'validated' && activateAction !== undefined ? (
-                          <form action={activateAction.bind(null, draft.id)}>
-                            <button aria-label={`Activate ${draft.name}`} className="button-primary" type="submit">
-                              Activate
-                            </button>
-                          </form>
-                        ) : null}
-                        <button className="button-secondary" onClick={() => setDrawer({ kind: 'draft', draftId: draft.id })} type="button">
-                          Open
-                        </button>
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            {tableView === 'bindings' && filteredBindings.length > 0 ? (
-              <div className="controls-policy-table" role="list" aria-label="Policy bindings">
-                <div className="controls-policy-table-head" aria-hidden="true">
-                  <span>Policy</span>
-                  <span>Target</span>
-                  <span>Type</span>
-                  <span>Created</span>
-                  <span>Open</span>
-                </div>
-                {filteredBindings.map((row) => (
-                  <div className="controls-policy-item" key={row.id} role="listitem">
+                {visibleDrafts.map((draft) => {
+                  const draftActivationAction = activationActionForDraft(draft);
+                  return (
+                  <div className="controls-policy-row controls-policy-row-static controls-drafts-grid" key={draft.id} role="row">
                     <button
-                      aria-label={`Open binding ${row.policy.name}`}
-                      className="controls-policy-row"
-                      onClick={() => setDrawer({ kind: 'detail', policyKey: policyKey(row.policy) })}
+                      aria-label={`Open draft ${draft.name}`}
+                      className="controls-policy-name controls-policy-name-button"
+                      onClick={() => setDrawer({ kind: 'draft', draftId: draft.id })}
+                      role="cell"
                       type="button"
                     >
-                      <span className="controls-policy-name">
-                        <span className="controls-policy-title">{row.policy.name}</span>
-                        <span>{row.policy.description || policySummary(row.policy, policyActions)}</span>
-                      </span>
-                      <span className="controls-neutral-badge">{bindingLabel(row.binding, bindTargets)}</span>
-                      <span className="controls-neutral-badge">{formatTargetType(row.binding.target_type)}</span>
-                      <span>{formatDate(row.binding.created_at)}</span>
-                      <span className="controls-row-open">Open</span>
+                      <span className="controls-policy-title">{draft.name}</span>
+                      <span>{draft.description || formatCategory(draft.category)}</span>
                     </button>
+                    <span className={`status-badge ${statusClass(draft.status)}`} role="cell">{formatDraftStatus(draft.status)}</span>
+                    <span className="controls-neutral-badge" role="cell">{formatCategory(draft.category)}</span>
+                    <span className="controls-neutral-badge" role="cell">Not enforcing</span>
+                    <span className="controls-row-actions" role="cell">
+                      {draft.status === 'draft' && validateAction !== undefined ? (
+                        <form action={validateAction.bind(null, draft.id)}>
+                          <button aria-label={`Validate ${draft.name}`} className="button-secondary" type="submit">
+                            Validate
+                          </button>
+                        </form>
+                      ) : null}
+                      {draft.status === 'validated' && draftActivationAction !== undefined ? (
+                        <form action={draftActivationAction.bind(null, draft.id)}>
+                          <button aria-label={`Activate ${draft.name}`} className="button-primary" type="submit">
+                            {isRevisionDraft(draft) ? 'Activate revision' : 'Activate'}
+                          </button>
+                        </form>
+                      ) : null}
+                      <button className="button-secondary" onClick={() => setDrawer({ kind: 'draft', draftId: draft.id })} type="button">
+                        Open
+                      </button>
+                    </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
 
-            {tableView === 'decisions' && filteredDecisions.length > 0 ? (
-              <div className="controls-policy-table" role="list" aria-label="Policy decision history">
-                <div className="controls-policy-table-head" aria-hidden="true">
-                  <span>Decision</span>
-                  <span>Action</span>
-                  <span>Target</span>
-                  <span>Reason</span>
-                  <span>Time</span>
+            {tableView === 'activity' && policyActivity.length > 0 ? (
+              <div className="controls-policy-table" role="table" aria-label="Policy change log">
+                <div className="controls-policy-table-head controls-activity-grid" role="row">
+                  <span role="columnheader">Change</span>
+                  <span role="columnheader">Policy</span>
+                  <span role="columnheader">Outcome</span>
+                  <span role="columnheader">Recorded</span>
+                  <span role="columnheader">Evidence</span>
                 </div>
-                {filteredDecisions.map((decision) => (
-                  <div className="controls-policy-item" key={decision.id} role="listitem">
-                    <div className="controls-policy-row controls-policy-row-static">
-                      <span className="controls-policy-name">
-                        <span className="controls-policy-title">{formatDecision(decision.decision)}</span>
-                        <span>{decision.explanation}</span>
-                      </span>
-                      <span className="controls-neutral-badge">{actionLabel(decision.action_id, policyActions)}</span>
-                      <span className="controls-neutral-badge">
-                        {formatTargetType(decision.target_type)}{decision.target_id === null ? '' : ` · ${decision.target_id}`}
-                      </span>
-                      <span className={`controls-decision-badge decision-${decision.decision}`}>{decision.reason_code}</span>
-                      <span>{formatDate(decision.created_at)}</span>
-                    </div>
+                {policyActivity.slice(0, 30).map((event) => (
+                  <div className="controls-policy-row controls-policy-row-static controls-activity-grid" key={event.id} role="row">
+                    <span className="controls-policy-name" role="cell">
+                      <span className="controls-policy-title">{titleCase(event.action)}</span>
+                      <span>{event.reasonCode ?? event.eventType}</span>
+                    </span>
+                    <span className="controls-neutral-badge" role="cell">{eventLabel(event)}</span>
+                    <span className={`status-badge ${statusClass(event.outcome)}`} role="cell">{event.outcome}</span>
+                    <time dateTime={event.recordedAt} role="cell">{formatDateTime(event.recordedAt)}</time>
+                    <code className="controls-hash-cell" role="cell">{event.eventHash.slice(0, 18)}...</code>
                   </div>
                 ))}
               </div>
@@ -703,50 +594,52 @@ export function ControlsLibrary({
         </section>
       </div>
 
-      <section
-        aria-labelledby="create-policy-title"
-        aria-modal="true"
-        className="controls-work-drawer"
-        hidden={drawer.kind !== 'create'}
-        role="dialog"
+      <Sheet
+        labelledBy="create-policy-title"
+        onOpenChange={(open) => {
+          if (!open) closeDrawer();
+        }}
+        open={drawer.kind === 'create'}
+        panelClassName="controls-work-drawer"
       >
         <header className="controls-drawer-header">
           <div>
+            <span className="controls-page-kicker">New policy draft</span>
             <h1 id="create-policy-title">Create policy</h1>
-            <p>Build a reusable rule. It will not enforce until activated and bound.</p>
+            <p>Pick one action surface, set only the conditions that can match it, then save a draft for validation.</p>
           </div>
-          <button className="button-secondary" onClick={() => setDrawer({ kind: 'closed' })} type="button">
+          <button className="button-secondary" onClick={closeDrawer} type="button">
             Close
           </button>
         </header>
         <div className="controls-drawer-body">
           <main className="controls-drawer-main">
-            <section className="controls-form-surface controls-create-surface">
-              <div className="controls-form-heading">
-                <h2>Policy draft</h2>
-                <p>Choose one action surface. The form only shows fields that match that action.</p>
-              </div>
-              <PolicyDraftBuilder actions={policyActions} createAction={createAction} />
-            </section>
+            <PolicyDraftBuilder actions={policyActions} createAction={createAction} />
           </main>
         </div>
-      </section>
+      </Sheet>
 
-      <section
-        aria-labelledby="draft-policy-title"
-        aria-modal="true"
-        className="controls-work-drawer"
-        hidden={drawer.kind !== 'draft' || detailDraft === undefined}
-        role="dialog"
+      <Sheet
+        labelledBy="draft-policy-title"
+        onOpenChange={(open) => {
+          if (!open) closeDrawer();
+        }}
+        open={drawer.kind === 'draft' && detailDraft !== undefined}
+        panelClassName="controls-work-drawer"
       >
         {detailDraft === undefined ? null : (
+          (() => {
+            const detailDraftActivationAction = activationActionForDraft(detailDraft);
+            const detailDraftEditable = detailDraft.status === 'draft' || detailDraft.status === 'validated';
+            return (
           <>
             <header className="controls-drawer-header">
               <div>
+                <span className="controls-page-kicker">Draft policy</span>
                 <h1 id="draft-policy-title">{detailDraft.name}</h1>
                 <p>Drafts are editable. They do not enforce until validation, activation, and binding complete.</p>
               </div>
-              <button className="button-secondary" onClick={() => setDrawer({ kind: 'closed' })} type="button">
+              <button className="button-secondary" onClick={closeDrawer} type="button">
                 Close
               </button>
             </header>
@@ -755,8 +648,8 @@ export function ControlsLibrary({
                 <div className="controls-detail-grid">
                   <section className="controls-form-surface">
                     <div className="controls-form-heading">
-                      <h2>Draft details</h2>
-                      <p>Basic policy object metadata.</p>
+                      <h2>Draft state</h2>
+                      <p>Current lifecycle and classification.</p>
                     </div>
                     <dl className="controls-definition-grid">
                       <div>
@@ -775,60 +668,72 @@ export function ControlsLibrary({
                         <dt>Enforcement</dt>
                         <dd>Not enforcing</dd>
                       </div>
+                      <div>
+                        <dt>Action</dt>
+                        <dd>{statementAction(detailDraftStatement, policyActions)}</dd>
+                      </div>
+                      <div>
+                        <dt>Decision</dt>
+                        <dd>{formatDecision(detailDraftStatement?.decision)}</dd>
+                      </div>
+                      <div>
+                        <dt>Actor role</dt>
+                        <dd>{detailDraftStatement?.actor?.roles?.join(', ') ?? 'Any role'}</dd>
+                      </div>
+                      <div>
+                        <dt>Target scope</dt>
+                        <dd>{detailDraftStatement?.target?.types?.map(formatTargetType).join(', ') ?? 'Any supported target'}</dd>
+                      </div>
+                      {detailDraftStatement?.conditions?.resource?.categories?.length ? (
+                        <div>
+                          <dt>Resource</dt>
+                          <dd>{detailDraftStatement.conditions.resource.categories.join(', ')}</dd>
+                        </div>
+                      ) : null}
+                      {detailDraftStatement?.conditions?.payment?.minAmount !== undefined ? (
+                        <div>
+                          <dt>Payment</dt>
+                          <dd>
+                            {detailDraftStatement.conditions.payment.minAmount}{' '}
+                            {detailDraftStatement.conditions.payment.assets?.join(', ') ?? 'Any asset'}
+                          </dd>
+                        </div>
+                      ) : null}
                     </dl>
                   </section>
 
-                  <section className="controls-form-surface" aria-label={`${detailDraft.name} edit`}>
+                  {detailDraftEditable ? (
+                  <section className="controls-form-surface controls-draft-editor" aria-label={`${detailDraft.name} edit`}>
                     <div className="controls-form-heading">
                       <h2>Edit draft</h2>
-                      <p>Rename or recategorize the draft before validation.</p>
+                      <p>Change the complete enforcement rule, then validate the resulting snapshot before activation.</p>
                     </div>
-                    <form action={updateDraftAction} className="controls-bind-form">
-                      <input name="draftId" type="hidden" value={detailDraft.id} />
-                      <label>
-                        <span>Name</span>
-                        <input defaultValue={detailDraft.name} name="name" required />
-                      </label>
-                      <label>
-                        <span>Description</span>
-                        <input defaultValue={detailDraft.description} name="description" />
-                      </label>
-                      <label>
-                        <span>Category</span>
-                        <select defaultValue={detailDraft.category} name="category">
-                          <option value="operational">Operational</option>
-                          <option value="management">Management</option>
-                          <option value="capability">Capability</option>
-                        </select>
-                      </label>
-                      <button className="button-secondary" disabled={updateDraftAction === undefined} type="submit">
-                        Save draft
-                      </button>
-                    </form>
+                    <PolicyDraftBuilder
+                      actions={policyActions}
+                      initialDraft={detailDraft}
+                      key={detailDraft.id}
+                      submitAction={updateDraftAction}
+                      submitLabel="Save draft changes"
+                    />
                   </section>
+                  ) : null}
 
+                  {detailDraftEditable ? (
                   <section className="controls-form-surface" aria-label={`${detailDraft.name} dry run`}>
                     <div className="controls-form-heading">
                       <h2>Simulation</h2>
-                      <p>Dry runs evaluate this draft without recording an enforcement decision.</p>
+                      <p>Dry runs evaluate this draft without recording a live agent decision.</p>
                     </div>
                     <form action={simulateDraftAction} className="controls-bind-form">
                       <input name="draftId" type="hidden" value={detailDraft.id} />
                       <label>
                         <span>Action</span>
-                        <select
-                          name="action"
-                          onChange={(event) => setSimulationAction(event.target.value)}
-                          required
-                          value={simulationAction}
-                        >
-                          {policyActions.map((action) => (
-                            <option key={action.action_id} value={action.action_id}>
-                              {action.label}
-                            </option>
-                          ))}
-                        </select>
+                        <input
+                          readOnly
+                          value={simulationPolicyAction?.label ?? simulationAction}
+                        />
                       </label>
+                      <input name="action" type="hidden" value={simulationAction} />
                       <label>
                         <span>Target</span>
                         <select name="targetKey" required defaultValue="">
@@ -844,8 +749,23 @@ export function ControlsLibrary({
                           ))}
                         </select>
                       </label>
+                      <label>
+                        <span>Actor role</span>
+                        <select name="actorRole" defaultValue={detailDraftStatement?.actor?.roles?.[0] ?? 'member'}>
+                          <option value="owner">Owner</option>
+                          <option value="admin">Admin</option>
+                          <option value="operator">Operator</option>
+                          <option value="auditor">Auditor</option>
+                          <option value="viewer">Viewer</option>
+                          <option value="member">Member</option>
+                        </select>
+                      </label>
                       {simulationPolicyAction !== undefined && actionHasConditionGroup(simulationPolicyAction, 'resource') ? (
                         <>
+                          <label>
+                            <span>Resource URL</span>
+                            <input name="resourceUrl" placeholder="https://api.example.com/data" type="url" />
+                          </label>
                           <label>
                             <span>Resource category</span>
                             <input name="resourceCategory" placeholder="weather" />
@@ -866,13 +786,27 @@ export function ControlsLibrary({
                             <span>Payment asset</span>
                             <input name="paymentAsset" placeholder="USDC" />
                           </label>
+                          <label>
+                            <span>Payment network</span>
+                            <input name="paymentNetwork" placeholder="eip155:84532" />
+                          </label>
+                          <label>
+                            <span>Payment recipient</span>
+                            <input name="paymentRecipient" placeholder="0x..." />
+                          </label>
                         </>
                       ) : null}
                       {simulationPolicyAction !== undefined && actionHasConditionGroup(simulationPolicyAction, 'tool') ? (
-                        <label>
-                          <span>Tool name</span>
-                          <input name="toolName" placeholder="browser.search" />
-                        </label>
+                        <>
+                          <label>
+                            <span>Tool name</span>
+                            <input name="toolName" placeholder="browser.search" />
+                          </label>
+                          <label>
+                            <span>Tool risk level</span>
+                            <input name="toolRiskLevel" placeholder="high" />
+                          </label>
+                        </>
                       ) : null}
                       <button className="button-secondary" disabled={simulateDraftAction === undefined} type="submit">
                         Run dry run
@@ -902,6 +836,7 @@ export function ControlsLibrary({
                       </ol>
                     )}
                   </section>
+                  ) : null}
 
                   <section className="controls-form-surface" aria-label={`${detailDraft.name} lifecycle`}>
                     <div className="controls-form-heading">
@@ -916,20 +851,35 @@ export function ControlsLibrary({
                           </button>
                         </form>
                       ) : null}
-                      {detailDraft.status === 'validated' && activateAction !== undefined ? (
-                        <form action={activateAction.bind(null, detailDraft.id)}>
+                      {detailDraft.status === 'validated' && detailDraftActivationAction !== undefined ? (
+                        <form action={detailDraftActivationAction.bind(null, detailDraft.id)}>
                           <button aria-label={`Activate ${detailDraft.name}`} className="button-primary" type="submit">
-                            Activate draft
+                            {isRevisionDraft(detailDraft) ? 'Activate revision' : 'Activate draft'}
                           </button>
                         </form>
                       ) : null}
-                      {detailDraft.status !== 'discarded' && discardDraftAction !== undefined ? (
-                        <form action={discardDraftAction}>
-                          <input name="draftId" type="hidden" value={detailDraft.id} />
-                          <button aria-label={`Discard ${detailDraft.name}`} className="button-secondary" type="submit">
+                      {(detailDraft.status === 'draft' || detailDraft.status === 'validated') && discardDraftAction !== undefined ? (
+                        confirmDiscardDraftId === detailDraft.id ? (
+                          <form action={discardDraftAction} className="controls-confirm-row">
+                            <input name="draftId" type="hidden" value={detailDraft.id} />
+                            <span>This discards only the draft. Active policies are not changed.</span>
+                            <button aria-label={`Confirm discard ${detailDraft.name}`} className="button-secondary danger" type="submit">
+                              Confirm discard
+                            </button>
+                            <button className="button-secondary" onClick={() => setConfirmDiscardDraftId(null)} type="button">
+                              Cancel
+                            </button>
+                          </form>
+                        ) : (
+                          <button
+                            aria-label={`Discard ${detailDraft.name}`}
+                            className="button-secondary"
+                            onClick={() => setConfirmDiscardDraftId(detailDraft.id)}
+                            type="button"
+                          >
                             Discard draft
                           </button>
-                        </form>
+                        )
                       ) : null}
                     </div>
                   </section>
@@ -937,195 +887,321 @@ export function ControlsLibrary({
               </main>
             </div>
           </>
+            );
+          })()
         )}
-      </section>
+      </Sheet>
 
-      <section
-        aria-labelledby="policy-detail-title"
-        aria-modal="true"
-        className="controls-work-drawer"
-        hidden={drawer.kind !== 'detail' || detailPolicy === undefined}
-        role="dialog"
+      <Sheet
+        labelledBy="policy-detail-title"
+        onOpenChange={(open) => {
+          if (!open) closeDrawer();
+        }}
+        open={drawer.kind === 'detail' && detailPolicy !== undefined}
+        panelClassName="controls-work-drawer"
       >
         {detailPolicy === undefined ? null : (
           <>
             <header className="controls-drawer-header">
               <div>
+                <span className="controls-page-kicker">{detailPolicy.status === 'archived' ? 'Archived policy' : 'Policy'}</span>
                 <h1 id="policy-detail-title">{detailPolicy.name}</h1>
                 <p>{detailPolicy.description || policySummary(detailPolicy, policyActions)}</p>
               </div>
-              <button className="button-secondary" onClick={() => setDrawer({ kind: 'closed' })} type="button">
+              <button className="button-secondary" onClick={closeDrawer} type="button">
                 Close
               </button>
             </header>
             <div className="controls-drawer-body">
               <main className="controls-drawer-main">
-                <div className="controls-detail-grid">
-                  <section className="controls-form-surface">
-                    <div className="controls-form-heading">
-                      <h2>Effect</h2>
-                      <p>Readable policy behavior for operators.</p>
-                    </div>
-                    <div className="controls-effect-box">{policySummary(detailPolicy, policyActions)}</div>
-                    <dl className="controls-definition-grid">
-                      <div>
-                        <dt>Decision</dt>
-                        <dd>{formatDecision(detailStatement?.decision)}</dd>
-                      </div>
-                      <div>
-                        <dt>Surface</dt>
-                        <dd>{detailStatement === undefined ? formatCategory(detailPolicy.category) : statementAction(detailStatement, policyActions)}</dd>
-                      </div>
-                      <div>
-                        <dt>Conditions</dt>
-                        <dd>{firstConditionSummary(detailStatement)}</dd>
-                      </div>
-                      <div>
-                        <dt>Created</dt>
-                        <dd>{formatDate(detailPolicy.created_at)}</dd>
-                      </div>
-                    </dl>
-                  </section>
+                <div className="controls-detail-workbench">
+                  <nav className="controls-detail-tabs" aria-label="Policy detail sections">
+                    {([
+                      ['details', 'Details'],
+                      ['conditions', 'Conditions'],
+                      ['evidence', 'Evidence'],
+                      ['usage', 'Usage'],
+                      ['lifecycle', 'Lifecycle'],
+                    ] as const).map(([tab, label]) => (
+                      <button
+                        aria-current={detailTab === tab ? 'page' : undefined}
+                        className={detailTab === tab ? 'controls-detail-tab active' : 'controls-detail-tab'}
+                        key={tab}
+                        onClick={() => setDetailTab(tab)}
+                        type="button"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </nav>
 
-                  <section className="controls-form-surface" aria-label={`${detailPolicy.name} bindings`}>
-                    <div className="controls-form-heading">
-                      <h2>Bound targets</h2>
-                      <p>Attach this active policy to a workspace, team, agent, or credential.</p>
-                    </div>
-                    {detailPolicy.bindings.length === 0 ? (
-                      <div className="controls-side-empty flush">
-                        <h3>No targets yet</h3>
-                        <p>This policy is active but not enforcing until it has a binding.</p>
+                  {detailTab === 'details' ? (
+                    <section className="controls-form-surface controls-detail-panel">
+                      <div className="controls-form-heading">
+                        <h2>Details</h2>
+                        <p>What this reusable policy does before it is assigned from an agent, team, credential, or workspace surface.</p>
                       </div>
-                    ) : (
-                      <div aria-label="Current bindings" className="controls-bound-list">
-                        {detailPolicy.bindings.map((binding) => (
-                          <div className="controls-bound-row" key={binding.id}>
+                      <div className="controls-effect-box">{policySummary(detailPolicy, policyActions)}</div>
+                      <dl className="controls-definition-grid">
+                        <div>
+                          <dt>Decision</dt>
+                          <dd>{formatDecision(detailStatement?.decision)}</dd>
+                        </div>
+                        <div>
+                          <dt>Surface</dt>
+                          <dd>{detailStatement === undefined ? formatCategory(detailPolicy.category) : statementAction(detailStatement, policyActions)}</dd>
+                        </div>
+                        <div>
+                          <dt>Category</dt>
+                          <dd>{formatCategory(detailPolicy.category)}</dd>
+                        </div>
+                        <div>
+                          <dt>Version</dt>
+                          <dd>v{detailPolicy.version}</dd>
+                        </div>
+                        <div>
+                          <dt>Assignment scopes</dt>
+                          <dd>{detailPolicy.binding_target_types.map(formatTargetType).join(', ')}</dd>
+                        </div>
+                        <div>
+                          <dt>Created</dt>
+                          <dd>{formatDate(detailPolicy.created_at)}</dd>
+                        </div>
+                      </dl>
+                      <p className="controls-detail-note">
+                        Assignments are managed where the target lives. Open an agent, team, workspace, or credential surface to attach or remove this policy.
+                      </p>
+                    </section>
+                  ) : null}
+
+                  {detailTab === 'conditions' ? (
+                    <section className="controls-form-surface controls-detail-panel">
+                      <div className="controls-form-heading">
+                        <h2>Conditions</h2>
+                        <p>The exact fields this policy can match. Empty groups mean this policy is controlled by action and assignment scope.</p>
+                      </div>
+                      <dl className="controls-condition-list">
+                        <div>
+                          <dt>Action</dt>
+                          <dd>{detailStatement === undefined ? 'Policy rule' : statementAction(detailStatement, policyActions)}</dd>
+                        </div>
+                        <div>
+                          <dt>Actor role</dt>
+                          <dd>{detailStatement?.actor?.roles?.join(', ') ?? 'Any role'}</dd>
+                        </div>
+                        {detailSupportsResource ? (
+                          <>
                             <div>
-                              <strong>{bindingLabel(binding, bindTargets)}</strong>
-                              <span>{formatDate(binding.created_at)}</span>
+                              <dt>Resource category</dt>
+                              <dd>{detailStatement?.conditions?.resource?.categories?.join(', ') ?? 'Any category'}</dd>
                             </div>
-                            <div className="controls-row-actions">
-                              <span className="controls-neutral-badge">{formatTargetType(binding.target_type)}</span>
-                              {removeBindingAction === undefined ? null : (
-                                <form action={removeBindingAction}>
-                                  <input name="policyId" type="hidden" value={detailPolicy.id} />
-                                  <input name="bindingId" type="hidden" value={binding.id} />
-                                  <button className="button-secondary" type="submit">Remove</button>
-                                </form>
-                              )}
+                            <div>
+                              <dt>Resource domain</dt>
+                              <dd>{detailStatement?.conditions?.resource?.domains?.join(', ') ?? 'Any domain'}</dd>
                             </div>
+                          </>
+                        ) : null}
+                        {detailSupportsPayment ? (
+                          <>
+                            <div>
+                              <dt>Payment minimum</dt>
+                              <dd>{detailStatement?.conditions?.payment?.minAmount ?? 'No minimum'}</dd>
+                            </div>
+                            <div>
+                              <dt>Payment asset</dt>
+                              <dd>{detailStatement?.conditions?.payment?.assets?.join(', ') ?? 'Any supported asset'}</dd>
+                            </div>
+                          </>
+                        ) : null}
+                        {detailSupportsTool ? (
+                          <div>
+                            <dt>Tool name</dt>
+                            <dd>{detailStatement?.conditions?.tool?.names?.join(', ') ?? 'Any managed tool'}</dd>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        ) : null}
+                        {!detailSupportsResource && !detailSupportsPayment && !detailSupportsTool ? (
+                          <div>
+                            <dt>Additional conditions</dt>
+                            <dd>No condition fields apply to this action surface.</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                    </section>
+                  ) : null}
 
-                    <form action={bindAction} className="controls-bind-form">
-                      <input name="policyId" type="hidden" value={detailPolicy.id} />
-                      <input name="policyVersion" type="hidden" value={detailPolicy.version} />
-                      <label>
-                        <span>Bind target</span>
-                        <select name="targetKey" required defaultValue="">
-                          <option value="" disabled>
-                            Select target
-                          </option>
-                          {targetGroups.map((group) => (
-                            <optgroup key={group.type} label={formatTargetType(group.type)}>
-                              {group.targets.map((target) => (
-                                <option key={`${target.type}:${target.id}`} value={`${target.type}:${target.id}`}>
-                                  {target.label} · {formatTargetType(target.type)}
-                                </option>
-                              ))}
-                            </optgroup>
+                  {detailTab === 'evidence' ? (
+                    <section className="controls-form-surface controls-detail-panel" aria-label={`${detailPolicy.name} evidence`}>
+                      <div className="controls-form-heading">
+                        <h2>Evidence</h2>
+                        <p>Policy lifecycle records and draft simulations. Live agent decisions stay on agent activity surfaces.</p>
+                      </div>
+                      {detailPolicyActivity.length === 0 && detailPolicySimulations.length === 0 ? (
+                        <div className="controls-side-empty flush">
+                          <h3>No policy evidence yet</h3>
+                          <p>Policy events and dry runs appear here after this policy is changed or simulated.</p>
+                        </div>
+                      ) : (
+                        <div className="controls-bound-list">
+                          {detailPolicyActivity.slice(0, 8).map((event) => (
+                            <div className="controls-bound-row" key={event.id}>
+                              <div>
+                                <strong>{titleCase(event.action)}</strong>
+                                <span>{formatDateTime(event.recordedAt)}</span>
+                              </div>
+                              <span className={`status-badge ${statusClass(event.outcome)}`}>{event.outcome}</span>
+                            </div>
                           ))}
-                        </select>
-                      </label>
-                      <button className="button-primary" disabled={bindAction === undefined || selectedTargets.length === 0} type="submit">
-                        Bind target
-                      </button>
-                    </form>
-                  </section>
-
-                  <section className="controls-form-surface" aria-label={`${detailPolicy.name} evidence`}>
-                    <div className="controls-form-heading">
-                      <h2>Evidence</h2>
-                      <p>Recent enforcement decisions and dry runs matched to this policy version.</p>
-                    </div>
-                    {detailPolicyDecisions.length === 0 && detailPolicySimulations.length === 0 ? (
-                      <div className="controls-side-empty flush">
-                        <h3>No evidence yet</h3>
-                        <p>Decisions and simulations appear here after runtime/API/MCP checks or draft dry runs match this policy.</p>
-                      </div>
-                    ) : (
-                      <div className="controls-bound-list">
-                        {detailPolicyDecisions.slice(0, 5).map((decision) => (
-                          <div className="controls-bound-row" key={decision.id}>
-                            <div>
-                              <strong>{formatDecision(decision.decision)}</strong>
-                              <span>{actionLabel(decision.action_id, policyActions)}</span>
+                          {detailPolicySimulations.slice(0, 8).map((simulation) => (
+                            <div className="controls-bound-row" key={simulation.id}>
+                              <div>
+                                <strong>Dry run: {formatDecision(simulation.result.decision)}</strong>
+                                <span>{actionLabel(simulation.request.action, policyActions)}</span>
+                              </div>
+                              <span className={`controls-decision-badge decision-${simulation.result.decision}`}>
+                                {simulation.result.reasonCode}
+                              </span>
                             </div>
-                            <span className={`controls-decision-badge decision-${decision.decision}`}>
-                              {decision.reason_code}
-                            </span>
-                          </div>
-                        ))}
-                        {detailPolicySimulations.slice(0, 5).map((simulation) => (
-                          <div className="controls-bound-row" key={simulation.id}>
-                            <div>
-                              <strong>Dry run: {formatDecision(simulation.result.decision)}</strong>
-                              <span>{actionLabel(simulation.request.action, policyActions)}</span>
-                            </div>
-                            <span className={`controls-decision-badge decision-${simulation.result.decision}`}>
-                              {simulation.result.reasonCode}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </section>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  ) : null}
 
-                  <section className="controls-form-surface" aria-label={`${detailPolicy.name} lifecycle`}>
-                    <div className="controls-form-heading">
-                      <h2>Lifecycle</h2>
-                      <p>Archive policies that should stop enforcing, or create a replacement version from this policy.</p>
-                    </div>
-                    <form action={createVersionAction} className="controls-bind-form">
-                      <input name="policyId" type="hidden" value={detailPolicy.id} />
-                      <label>
-                        <span>Version name</span>
-                        <input defaultValue={detailPolicy.name} name="name" />
-                      </label>
-                      <label>
-                        <span>Description</span>
-                        <input defaultValue={detailPolicy.description} name="description" />
-                      </label>
-                      <label>
-                        <span>Category</span>
-                        <select defaultValue={detailPolicy.category} name="category">
-                          <option value="operational">Operational</option>
-                          <option value="management">Management</option>
-                          <option value="capability">Capability</option>
-                        </select>
-                      </label>
-                      <input name="changeReason" type="hidden" value="New version from Controls." />
-                      <button className="button-secondary" disabled={createVersionAction === undefined} type="submit">
-                        Create version
-                      </button>
-                    </form>
-                    <form action={archivePolicyAction} className="controls-bind-form">
-                      <input name="policyId" type="hidden" value={detailPolicy.id} />
-                      <input name="changeReason" type="hidden" value="Archived from Controls." />
-                      <button className="button-secondary" disabled={archivePolicyAction === undefined} type="submit">
-                        Archive policy
-                      </button>
-                    </form>
-                  </section>
+                  {detailTab === 'usage' ? (
+                    <section className="controls-form-surface controls-detail-panel" aria-label={`${detailPolicy.name} usage`}>
+                      <div className="controls-form-heading">
+                        <h2>Usage</h2>
+                        <p>Current assignments are shown for impact review. Attach or remove policies from the workspace, team, agent, or credential page.</p>
+                      </div>
+                      {detailPolicy.bindings.length === 0 ? (
+                        <div className="controls-side-empty flush">
+                          <h3>No active assignments</h3>
+                          <p>This policy is not currently enforcing for any target.</p>
+                        </div>
+                      ) : (
+                        <ol className="controls-bound-list">
+                          {detailPolicy.bindings.map((binding) => (
+                            <li className="controls-bound-row" key={binding.id}>
+                              <div>
+                                <strong>{formatTargetType(binding.target_type)}</strong>
+                                <span>{binding.target_id}</span>
+                              </div>
+                              <span className={`status-badge ${statusClass(binding.status)}`}>{binding.status}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
+                  ) : null}
+
+                  {detailTab === 'lifecycle' ? (
+                    <section className="controls-form-surface controls-detail-panel" aria-label={`${detailPolicy.name} lifecycle`}>
+                      <div className="controls-form-heading">
+                        <h2>Lifecycle</h2>
+                        <p>Revisions create a new immutable enforcement snapshot. Archive stops enforcement while retaining audit history.</p>
+                      </div>
+                      <dl className="controls-definition-grid">
+                        <div>
+                          <dt>Status</dt>
+                          <dd>{detailPolicy.status}</dd>
+                        </div>
+                        <div>
+                          <dt>Active assignments</dt>
+                          <dd>{detailPolicy.bindings_count}</dd>
+                        </div>
+                        {detailPolicy.archived_at !== undefined && detailPolicy.archived_at !== null ? (
+                          <div>
+                            <dt>Archived</dt>
+                            <dd>{formatDate(detailPolicy.archived_at)}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                      {detailPolicy.status === 'active' ? (
+                        <>
+                          <form action={createRevisionDraftAction} className="controls-danger-zone neutral">
+                            <input name="policyId" type="hidden" value={detailPolicy.id} />
+                            <div>
+                              <strong>Create revision draft</strong>
+                              <span>Edit this policy through a draft. Existing assignments migrate only after the revision is validated and activated.</span>
+                            </div>
+                            <button className="button-secondary" disabled={createRevisionDraftAction === undefined} type="submit">
+                              Create revision
+                            </button>
+                          </form>
+
+                          {confirmArchivePolicyId === detailPolicy.id ? (
+                            <form action={archivePolicyAction} className="controls-danger-zone">
+                              <input name="policyId" type="hidden" value={detailPolicy.id} />
+                              <input name="changeReason" type="hidden" value="Archived from Controls." />
+                              <div>
+                                <strong>Confirm archive</strong>
+                                <span>This removes {detailPolicy.bindings_count} active assignment{detailPolicy.bindings_count === 1 ? '' : 's'} and stops enforcement.</span>
+                              </div>
+                              <button className="button-secondary danger" disabled={archivePolicyAction === undefined} type="submit">
+                                Confirm archive
+                              </button>
+                              <button className="button-secondary" onClick={() => setConfirmArchivePolicyId(null)} type="button">
+                                Cancel
+                              </button>
+                            </form>
+                          ) : (
+                            <div className="controls-danger-zone">
+                              <div>
+                                <strong>Archive policy</strong>
+                                <span>This is not deletion. The policy and its evidence remain in history.</span>
+                              </div>
+                              <button className="button-secondary" onClick={() => setConfirmArchivePolicyId(detailPolicy.id)} type="button">
+                                Archive
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      ) : null}
+
+                      {detailPolicy.status === 'archived' ? (
+                        <form action={createRestoreDraftAction} className="controls-danger-zone neutral">
+                          <input name="policyId" type="hidden" value={detailPolicy.id} />
+                          <div>
+                            <strong>Restore as revision</strong>
+                            <span>Create a restore draft from the archived version. Previous assignments stay detached unless you select them below.</span>
+                            {detailPolicy.bindings.length > 0 ? (
+                              <fieldset className="controls-restore-targets">
+                                <legend>Assignments to restore</legend>
+                                {detailPolicy.bindings.map((binding) => {
+                                  const target = bindTargets.find(
+                                    (candidate) => candidate.type === binding.target_type && candidate.id === binding.target_id,
+                                  );
+                                  return (
+                                    <label key={binding.id}>
+                                      <input
+                                        name="restoreTargetKey"
+                                        type="checkbox"
+                                        value={`${binding.target_type}:${binding.target_id}`}
+                                      />
+                                      <span>
+                                        {target?.label ?? binding.target_id} · {formatTargetType(binding.target_type)}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </fieldset>
+                            ) : (
+                              <span>No previous assignments are available. The restored revision will remain unattached.</span>
+                            )}
+                          </div>
+                          <button className="button-secondary" disabled={createRestoreDraftAction === undefined} type="submit">
+                            Create restore draft
+                          </button>
+                        </form>
+                      ) : null}
+                    </section>
+                  ) : null}
                 </div>
               </main>
             </div>
           </>
         )}
-      </section>
+      </Sheet>
     </div>
   );
 }

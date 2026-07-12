@@ -112,6 +112,20 @@ function renderDetail(activeTab: AgentDetailTab = 'overview') {
           },
         },
       ]}
+      availablePolicies={[
+        {
+          id: 'pol_tool_limit',
+          version: 1,
+          name: 'Limit risky tools',
+          description: 'Observe risky tool calls.',
+          category: 'operational',
+          status: 'active',
+          binding_target_types: ['agent'],
+          bindings: [],
+          bindings_count: 0,
+          created_at: '2026-07-07T00:00:00.000Z',
+        },
+      ]}
       allowedActions={[
         {
           action: 'tool.call',
@@ -134,6 +148,10 @@ function renderDetail(activeTab: AgentDetailTab = 'overview') {
           created_at: '2026-07-07T16:29:23.055Z',
         },
       ]}
+      actions={{
+        bindPolicy: async () => {},
+        removePolicyBinding: async () => {},
+      }}
     />,
   );
 }
@@ -191,6 +209,10 @@ describe('AgentDetailShell', () => {
     expect(screen.getByText('Approve paid market data')).toBeInTheDocument();
     expect(screen.getByText('Direct')).toBeInTheDocument();
     expect(screen.getByText('Workspace')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Attach policy' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Limit risky tools · v1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    expect(screen.getByText('Inherited policies')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Operational access' })).toBeInTheDocument();
     expect(screen.getByText('browser.search')).toBeInTheDocument();
     expect(screen.getByText('Deny browser search')).toBeInTheDocument();

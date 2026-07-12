@@ -1,15 +1,14 @@
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
-import { OrgAuditPanel } from '@/components/audit/OrgAuditPanel';
 import { ControlsLibrary } from '@/components/controls/ControlsLibrary';
 import {
   activatePolicyDraftAction,
+  activatePolicyRevisionDraftAction,
   archivePolicyAction,
-  bindPolicyAction,
   createPolicyDraftAction,
-  createPolicyVersionAction,
+  createPolicyRestoreDraftAction,
+  createPolicyRevisionDraftAction,
   discardPolicyDraftAction,
-  removePolicyBindingAction,
   simulatePolicyDraftAction,
   updatePolicyDraftAction,
   validatePolicyDraftAction,
@@ -18,7 +17,6 @@ import { getOrgBySlug, listAgents, listConnections, listTeams } from '@/lib/serv
 import { listAuditEvents } from '@/lib/server/audit-client';
 import {
   listPolicyActions,
-  listPolicyDecisions,
   listPolicyLibrary,
   listPolicySimulations,
 } from '@/lib/server/policy-client';
@@ -38,25 +36,26 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
     redirect('/auth');
   }
 
-  const [library, policyActions, simulations, policyDecisions, teams, agents, auditEvents] = await Promise.all([
+  const [library, policyActions, simulations, teams, agents, auditEvents] = await Promise.all([
     listPolicyLibrary(org.id),
     listPolicyActions(org.id),
     listPolicySimulations(org.id),
-    listPolicyDecisions(org.id),
     listTeams(org.id),
     listAgents(org.id),
     listAuditEvents(org.id, 30),
   ]);
+  const activeTeams = teams.filter((team) => team.archived_at === null);
+  const activeAgents = agents.filter((agent) => agent.status !== 'deactivated');
   const connectionGroups = await Promise.all(
-    agents.map(async (agent) => ({
+    activeAgents.map(async (agent) => ({
       agent,
-      connections: await listConnections(org.id, agent.id),
+      connections: (await listConnections(org.id, agent.id)).filter((connection) => connection.status === 'active'),
     })),
   );
   const bindTargets = [
     { id: org.id, label: org.name, type: 'org' as const },
-    ...teams.map((team) => ({ id: team.id, label: team.name, type: 'team' as const })),
-    ...agents.map((agent) => ({ id: agent.id, label: agent.name, type: 'agent' as const })),
+    ...activeTeams.map((team) => ({ id: team.id, label: team.name, type: 'team' as const })),
+    ...activeAgents.map((agent) => ({ id: agent.id, label: agent.name, type: 'agent' as const })),
     ...connectionGroups.flatMap(({ agent, connections }) =>
       connections.map((connection) => ({
         id: connection.id,
@@ -70,29 +69,23 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
     <ConsoleShell active="controls" org={org}>
       <ControlsLibrary
         activateAction={activatePolicyDraftAction.bind(null, org.id, org.slug)}
+        activateRevisionAction={activatePolicyRevisionDraftAction.bind(null, org.id, org.slug)}
         archivePolicyAction={archivePolicyAction.bind(null, org.id, org.slug)}
-        bindAction={bindPolicyAction.bind(null, org.id, org.slug)}
         createAction={createPolicyDraftAction.bind(null, org.id, org.slug)}
-        createVersionAction={createPolicyVersionAction.bind(null, org.id, org.slug)}
+        createRestoreDraftAction={createPolicyRestoreDraftAction.bind(null, org.id, org.slug)}
+        createRevisionDraftAction={createPolicyRevisionDraftAction.bind(null, org.id, org.slug)}
         discardDraftAction={discardPolicyDraftAction.bind(null, org.id, org.slug)}
         drafts={library.drafts}
+        activityEvents={auditEvents.events}
         policyActions={policyActions}
-        policyDecisions={policyDecisions}
         simulations={simulations}
         bindTargets={bindTargets}
         orgId={org.id}
         orgSlug={org.slug}
         policies={library.policies}
-        removeBindingAction={removePolicyBindingAction.bind(null, org.id, org.slug)}
         simulateDraftAction={simulatePolicyDraftAction.bind(null, org.id, org.slug)}
         updateDraftAction={updatePolicyDraftAction.bind(null, org.id, org.slug)}
         validateAction={validatePolicyDraftAction.bind(null, org.id, org.slug)}
-      />
-      <OrgAuditPanel
-        description="Policy drafts, activations, bindings, simulations, and enforcement decisions recorded in the hash-chained audit stream."
-        domains={['policy']}
-        events={auditEvents.events}
-        title="Control activity"
       />
     </ConsoleShell>
   );

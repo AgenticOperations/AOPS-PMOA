@@ -44,11 +44,18 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
     listRateLimits(org.id),
     listAuditEvents(org.id, 30),
   ]);
+  const activeAgents = agents.filter((agent) => agent.status !== 'deactivated');
+  const operationAuditEvents = auditEvents.events.filter(
+    (event) =>
+      event.action.startsWith('operation.') ||
+      event.action.startsWith('tool.') ||
+      event.action.startsWith('rate_limit.'),
+  );
 
   return (
     <ConsoleShell active="operations" org={org}>
       <OperationsWorkbench
-        agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
+        agents={activeAgents.map((agent) => ({ id: agent.id, name: agent.name }))}
         archiveToolAction={archiveToolAction.bind(null, org.id, org.slug)}
         blocked={blocked}
         decisions={decisions}
@@ -64,7 +71,7 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
       <OrgAuditPanel
         description="Tool catalog changes, runtime operation checks, rate-limit decisions, and blocked actions from the audit stream."
         domains={['system', 'policy']}
-        events={auditEvents.events}
+        events={operationAuditEvents}
         title="Operations activity"
       />
     </ConsoleShell>

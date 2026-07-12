@@ -3,6 +3,10 @@ import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
 import { AgentDetailShell } from '@/components/agents/AgentDetailShell';
 import {
+  bindAgentPolicyAction,
+  removeAgentPolicyBindingAction,
+} from '../../../../actions/policy';
+import {
   activateAgentAction,
   attachWalletRefFromFormAction,
   createConnectionFromFormAction,
@@ -16,7 +20,7 @@ import {
 } from '../../../../actions/identity-spine';
 import { getAgentActivityFeed, getAgentDetail, getOrgBySlug, listTeams } from '@/lib/server/identity-spine-client';
 import { listAgentAllowedActions, listBlockedOperations } from '@/lib/server/operations-client';
-import { listAgentPolicies } from '@/lib/server/policy-client';
+import { listAgentPolicies, listPolicyLibrary } from '@/lib/server/policy-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,10 +50,11 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
     redirect('/auth');
   }
 
-  const [detail, activityFeed, policyLibrary, allowedActions, blockedOperations, teams] = await Promise.all([
+  const [detail, activityFeed, agentPolicies, policyLibrary, allowedActions, blockedOperations, teams] = await Promise.all([
     getAgentDetail(org.id, agentId),
     getAgentActivityFeed(org.id, agentId),
     listAgentPolicies(org.id, agentId),
+    listPolicyLibrary(org.id),
     listAgentAllowedActions(org.id, agentId),
     listBlockedOperations(org.id, { agentId, limit: 12 }),
     listTeams(org.id),
@@ -70,10 +75,11 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
         blockedOperations={blockedOperations}
         connections={detail.connections}
         walletRefs={detail.walletRefs}
-        teams={teams}
+        teams={teams.filter((team) => team.archived_at === null)}
         orgId={org.id}
         orgSlug={org.slug}
-        policies={policyLibrary.policies}
+        availablePolicies={policyLibrary.policies}
+        policies={agentPolicies.policies}
         actions={{
           pause: pauseAgentAction.bind(null, org.id, org.slug, agentId),
           activate: activateAgentAction.bind(null, org.id, org.slug, agentId),
@@ -85,6 +91,8 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
           attachWalletRef: attachWalletRefFromFormAction,
           detachWalletRef: detachWalletRefFromFormAction,
           updateAgent: updateAgentAction.bind(null, org.id, org.slug, agentId),
+          bindPolicy: bindAgentPolicyAction.bind(null, org.id, org.slug, agentId),
+          removePolicyBinding: removeAgentPolicyBindingAction.bind(null, org.id, org.slug, agentId),
         }}
       />
     </ConsoleShell>

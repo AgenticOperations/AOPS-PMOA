@@ -27,6 +27,19 @@ export type CircleProviderHealth = {
   readonly provider: 'circle';
 };
 
+export type CircleConnectionRecord = {
+  readonly challengeId?: string | undefined;
+  readonly email: string;
+  readonly expiresAt: string | null;
+  readonly status: 'disconnected' | 'otp_pending' | 'connected' | 'expired' | 'blocked';
+};
+
+export type CircleConnectionChallenge = {
+  readonly challengeId: string;
+  readonly email: string;
+  readonly status: 'otp_pending';
+};
+
 export type CircleChainCapabilityRecord = {
   readonly chain: PaymentChain;
   readonly circle_blockchain: string;
@@ -263,7 +276,7 @@ export type AgentPaymentAccountRecord = {
   readonly per_request_cap_usdc: string;
   readonly approval_threshold_usdc: string | null;
   readonly dedicated_wallet_required: boolean;
-  readonly allowed_rails: PaymentRail[];
+  readonly allowed_rails: readonly PaymentRail[];
   readonly created_at: string;
   readonly updated_at: string;
 };

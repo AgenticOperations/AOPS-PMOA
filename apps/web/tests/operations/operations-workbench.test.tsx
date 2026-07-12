@@ -3,6 +3,63 @@ import { describe, expect, it } from 'vitest';
 import { OperationsWorkbench } from '../../src/components/operations/OperationsWorkbench.js';
 
 describe('OperationsWorkbench', () => {
+  it('refreshes the open rate-limit editor when persisted status changes', () => {
+    const rateLimit = {
+      id: 'oprl_1',
+      org_id: 'org_1',
+      target_type: 'agent' as const,
+      target_id: 'agt_research',
+      action: 'tool.call' as const,
+      bucket: 'tool:browser.search',
+      limit: 2,
+      window_seconds: 60,
+      status: 'active' as const,
+      created_at: '2026-07-08T08:00:00.000Z',
+      utilization: {
+        current_bucket: '2026-07-08T08:00:00.000Z',
+        current_count: 1,
+        current_window_start: '2026-07-08T08:00:00.000Z',
+      },
+    };
+    const actions = {
+      archiveToolAction: async () => {},
+      disableRateLimitAction: async () => {},
+      importAction: async () => {},
+      rateLimitAction: async () => {},
+      updateRateLimitAction: async () => {},
+      updateToolAction: async () => {},
+    };
+    const { rerender } = render(
+      <OperationsWorkbench
+        agents={[{ id: 'agt_research', name: 'Research agent' }]}
+        blocked={[]}
+        decisions={[]}
+        rateLimits={[rateLimit]}
+        sessions={[]}
+        tools={[]}
+        {...actions}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Rate limits' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure' }));
+    expect(screen.getByLabelText('Status')).toHaveValue('active');
+
+    rerender(
+      <OperationsWorkbench
+        agents={[{ id: 'agt_research', name: 'Research agent' }]}
+        blocked={[]}
+        decisions={[]}
+        rateLimits={[{ ...rateLimit, status: 'disabled' }]}
+        sessions={[]}
+        tools={[]}
+        {...actions}
+      />,
+    );
+
+    expect(screen.getByLabelText('Status')).toHaveValue('disabled');
+  });
+
   it('shows tool catalog and blocked operational actions without finance placeholders', () => {
     render(
       <OperationsWorkbench

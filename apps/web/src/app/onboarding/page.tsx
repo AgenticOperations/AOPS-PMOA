@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export default async function OnboardingPage() {
   const session = await getCurrentSession();
   if (session === null) redirect('/auth');
-  if (session.orgs.length > 0) redirect(`/app/${session.orgs[0]?.slug}/overview`);
+  if (session.orgs.length > 0) redirect(`/onboarding/${session.orgs[0]?.slug}`);
 
   return (
     <AuthEntryShell

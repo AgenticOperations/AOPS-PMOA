@@ -8,8 +8,10 @@ import type {
   PolicyDecisionRecord,
   PolicyDecisionRequest,
   PolicyLibrary,
+  PolicyStatement,
   PolicyVersion,
   PolicySimulationRecord,
+  PolicyRestoreBinding,
 } from '../policy-types';
 
 type ApiErrorBody = {
@@ -89,18 +91,114 @@ export async function simulatePolicyDraft(
   return body.simulation;
 }
 
+type StructuredPolicyDraftInput = {
+  readonly name: string;
+  readonly description?: string | undefined;
+  readonly category?: 'management' | 'operational' | 'capability' | undefined;
+  readonly statementId?: string | undefined;
+  readonly action: string;
+  readonly decision: string;
+  readonly actorRole?: string | undefined;
+  readonly resourceCategory?: string | undefined;
+  readonly resourceDomain?: string | undefined;
+  readonly paymentMinAmount?: string | undefined;
+  readonly paymentMaxAmount?: string | undefined;
+  readonly paymentAsset?: string | undefined;
+  readonly paymentNetwork?: string | undefined;
+  readonly paymentRecipient?: string | undefined;
+  readonly toolName?: string | undefined;
+  readonly toolRiskLevel?: string | undefined;
+};
+
+function csvList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  const values = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return values.length === 0 ? undefined : values;
+}
+
+function policyCategory(input: StructuredPolicyDraftInput): 'management' | 'operational' | 'capability' {
+  if (input.action.startsWith('management.')) return 'management';
+  return input.category === 'capability' ? 'capability' : 'operational';
+}
+
+async function structuredPolicyStatement(
+  orgId: string,
+  input: StructuredPolicyDraftInput,
+): Promise<PolicyStatement & { readonly audit: 'detailed' }> {
+  const actions = await listPolicyActions(orgId);
+  const resourceCategories = csvList(input.resourceCategory);
+  const resourceDomains = csvList(input.resourceDomain);
+  const paymentAssets = csvList(input.paymentAsset);
+  const paymentNetworks = csvList(input.paymentNetwork);
+  const paymentRecipients = csvList(input.paymentRecipient);
+  const toolNames = csvList(input.toolName);
+  const toolRiskLevels = csvList(input.toolRiskLevel);
+  const resource =
+    resourceCategories === undefined && resourceDomains === undefined
+      ? undefined
+      : {
+          ...(resourceCategories === undefined ? {} : { categories: resourceCategories }),
+          ...(resourceDomains === undefined ? {} : { domains: resourceDomains }),
+        };
+  const payment =
+    input.paymentMinAmount === undefined &&
+    input.paymentMaxAmount === undefined &&
+    paymentAssets === undefined &&
+    paymentNetworks === undefined &&
+    paymentRecipients === undefined
+      ? undefined
+      : {
+          ...(input.paymentMinAmount === undefined ? {} : { minAmount: input.paymentMinAmount }),
+          ...(input.paymentMaxAmount === undefined ? {} : { maxAmount: input.paymentMaxAmount }),
+          ...(paymentAssets === undefined ? {} : { assets: paymentAssets }),
+          ...(paymentNetworks === undefined ? {} : { networks: paymentNetworks }),
+          ...(paymentRecipients === undefined ? {} : { recipients: paymentRecipients }),
+        };
+  const tool =
+    toolNames === undefined && toolRiskLevels === undefined
+      ? undefined
+      : {
+          ...(toolNames === undefined ? {} : { names: toolNames }),
+          ...(toolRiskLevels === undefined ? {} : { riskLevels: toolRiskLevels }),
+        };
+  const conditions =
+    resource === undefined && payment === undefined && tool === undefined
+      ? undefined
+      : {
+          ...(resource === undefined ? {} : { resource }),
+          ...(payment === undefined ? {} : { payment }),
+          ...(tool === undefined ? {} : { tool }),
+        };
+  const targetTypes = actions.find((candidate) => candidate.action_id === input.action)?.binding_target_types ?? ['agent'];
+
+  return {
+    id: input.statementId ?? `stmt_${Date.now().toString(36)}`,
+    decision: input.decision,
+    actions: [input.action],
+    actor: input.actorRole === undefined ? undefined : { roles: [input.actorRole] },
+    target: { types: targetTypes },
+    conditions,
+    audit: 'detailed',
+  };
+}
+
 export async function updatePolicyDraft(
   orgId: string,
   draftId: string,
-  input: {
-    readonly name?: string | undefined;
-    readonly description?: string | undefined;
-    readonly category?: 'management' | 'operational' | 'capability' | undefined;
-  },
+  input: StructuredPolicyDraftInput,
 ): Promise<PolicyDraft> {
+  const statement = await structuredPolicyStatement(orgId, input);
   const body = await apiFetch<{ readonly draft: PolicyDraft }>(`/v1/orgs/${orgId}/policy-drafts/${draftId}`, {
     method: 'PATCH',
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description,
+      category: policyCategory(input),
+      statements: [statement],
+    }),
   });
   return body.draft;
 }
@@ -118,57 +216,9 @@ export async function listAgentPolicies(orgId: string, agentId: string): Promise
 
 export async function createPolicyDraft(
   orgId: string,
-  input: {
-    readonly name: string;
-    readonly description?: string | undefined;
-    readonly action: string;
-    readonly decision: string;
-    readonly actorRole?: string | undefined;
-    readonly resourceCategory?: string | undefined;
-    readonly resourceDomain?: string | undefined;
-    readonly paymentMinAmount?: string | undefined;
-    readonly paymentAsset?: string | undefined;
-    readonly toolName?: string | undefined;
-  },
+  input: StructuredPolicyDraftInput,
 ): Promise<void> {
-  function csvList(value: string | undefined): string[] | undefined {
-    if (value === undefined) return undefined;
-    const values = value
-      .split(',')
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    return values.length === 0 ? undefined : values;
-  }
-
-  function targetTypesForAction(action: string): string[] {
-    return actions.find((candidate) => candidate.action_id === action)?.binding_target_types ?? ['agent'];
-  }
-
-  const actions = await listPolicyActions(orgId);
-
-  const resource =
-    input.resourceCategory === undefined && input.resourceDomain === undefined
-      ? undefined
-      : {
-          ...(csvList(input.resourceCategory) === undefined ? {} : { categories: csvList(input.resourceCategory) }),
-          ...(csvList(input.resourceDomain) === undefined ? {} : { domains: csvList(input.resourceDomain) }),
-        };
-  const payment =
-    input.paymentMinAmount === undefined && input.paymentAsset === undefined
-      ? undefined
-      : {
-          ...(input.paymentMinAmount === undefined ? {} : { minAmount: input.paymentMinAmount }),
-          ...(csvList(input.paymentAsset) === undefined ? {} : { assets: csvList(input.paymentAsset) }),
-        };
-  const tool = csvList(input.toolName) === undefined ? undefined : { names: csvList(input.toolName) };
-  const conditions =
-    resource === undefined && payment === undefined && tool === undefined
-      ? undefined
-      : {
-          ...(resource === undefined ? {} : { resource }),
-          ...(payment === undefined ? {} : { payment }),
-          ...(tool === undefined ? {} : { tool }),
-        };
+  const statement = await structuredPolicyStatement(orgId, input);
 
   await apiFetch(`/v1/orgs/${orgId}/policy-drafts`, {
     method: 'POST',
@@ -176,20 +226,8 @@ export async function createPolicyDraft(
       source: 'structured',
       name: input.name,
       description: input.description,
-      category: input.action.startsWith('management.') ? 'management' : 'operational',
-      statements: [
-        {
-          id: `stmt_${Date.now().toString(36)}`,
-          decision: input.decision,
-          actions: [input.action],
-          actor: input.actorRole === undefined ? undefined : { roles: [input.actorRole] },
-          target: {
-            types: targetTypesForAction(input.action),
-          },
-          conditions,
-          audit: 'detailed',
-        },
-      ],
+      category: policyCategory(input),
+      statements: [statement],
     }),
   });
 }
@@ -203,6 +241,49 @@ export async function activatePolicyDraft(orgId: string, draftId: string, change
     method: 'POST',
     body: JSON.stringify({ change_reason: changeReason }),
   });
+}
+
+export async function activatePolicyRevisionDraft(orgId: string, draftId: string, changeReason: string): Promise<void> {
+  await apiFetch(`/v1/orgs/${orgId}/policy-drafts/${draftId}/activate-revision`, {
+    method: 'POST',
+    body: JSON.stringify({ change_reason: changeReason }),
+  });
+}
+
+export async function createPolicyRevisionDraft(
+  orgId: string,
+  policyId: string,
+  input: {
+    readonly name?: string | undefined;
+    readonly description?: string | undefined;
+    readonly category?: 'management' | 'operational' | 'capability' | undefined;
+  },
+): Promise<PolicyDraft> {
+  const body = await apiFetch<{ readonly draft: PolicyDraft }>(
+    `/v1/orgs/${orgId}/policies/${policyId}/revision-drafts`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+  return body.draft;
+}
+
+export async function createPolicyRestoreDraft(
+  orgId: string,
+  policyId: string,
+  input: {
+    readonly restore_bindings?: readonly PolicyRestoreBinding[] | undefined;
+  },
+): Promise<PolicyDraft> {
+  const body = await apiFetch<{ readonly draft: PolicyDraft }>(
+    `/v1/orgs/${orgId}/policies/${policyId}/restore-drafts`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+  return body.draft;
 }
 
 export async function bindPolicy(
@@ -246,9 +327,8 @@ export async function createPolicyVersion(
     readonly change_reason?: string | undefined;
   },
 ): Promise<PolicyVersion> {
-  const body = await apiFetch<{ readonly policy: PolicyVersion }>(`/v1/orgs/${orgId}/policies/${policyId}/versions`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-  return body.policy;
+  void orgId;
+  void policyId;
+  void input;
+  throw new Error('Direct policy version creation is disabled. Create and activate a revision draft instead.');
 }

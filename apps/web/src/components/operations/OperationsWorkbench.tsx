@@ -632,8 +632,13 @@ export function OperationsWorkbench({
                   <dd>{selectedLimit.utilization.current_window_start === null ? 'No counter yet' : formatDateTime(selectedLimit.utilization.current_window_start)}</dd>
                 </div>
               </dl>
-              <form action={updateRateLimitAction} className="operations-form">
+              <form
+                action={updateRateLimitAction}
+                className="operations-form"
+                key={`${selectedLimit.id}:${selectedLimit.bucket}:${selectedLimit.limit}:${selectedLimit.window_seconds}:${selectedLimit.status}`}
+              >
                 <input name="rateLimitId" type="hidden" value={selectedLimit.id} />
+                <input name="action" type="hidden" value={selectedLimit.action} />
                 <label>
                   <span>Bucket</span>
                   <input defaultValue={selectedLimit.bucket} name="bucket" />

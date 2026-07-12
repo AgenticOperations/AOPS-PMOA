@@ -5,7 +5,6 @@ import {
   bridgeExactWalletTopUp,
   cancelLiquidityJob,
   createCircleTreasury,
-  createPaymentSource,
   createTreasury,
   initiateGatewayDeposit,
   reconcileCircleProviderJobs,
@@ -100,18 +99,6 @@ function railField(formData: FormData, key = 'rail'): PaymentRail {
   throw new Error(`${key} is invalid`);
 }
 
-function sourceTypeForRail(rail: PaymentRail): 'direct_exact' | 'gateway' {
-  return rail.startsWith('gateway_') ? 'gateway' : 'direct_exact';
-}
-
-function providerField(formData: FormData, rail: PaymentRail): 'circle_gateway' | 'circle_wallets' | 'manual' | 'simulation' {
-  const value = stringField(formData, 'provider');
-  if (value === 'circle_gateway' || value === 'circle_wallets' || value === 'manual' || value === 'simulation') {
-    return value;
-  }
-  return rail.startsWith('gateway_') ? 'circle_gateway' : 'circle_wallets';
-}
-
 export async function setProviderModeAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await setProviderMode(orgId, { mode: modeField(formData) });
   revalidatePath(paymentsPath(orgSlug));
@@ -178,23 +165,6 @@ export async function createTreasuryAction(orgId: string, orgSlug: string, formD
     chain: chainField(formData),
     label: requiredStringField(formData, 'label'),
     treasury_type: 'gateway',
-  });
-  revalidatePath(paymentsPath(orgSlug));
-}
-
-export async function createGatewaySourceAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
-  const rail = railField(formData);
-  const provider = providerField(formData, rail);
-  await createPaymentSource(orgId, {
-    account_type: rail.startsWith('gateway_') ? 'virtual' : 'sca',
-    address: stringField(formData, 'address') || null,
-    chain: chainField(formData),
-    external_wallet_id: stringField(formData, 'externalWalletId') || null,
-    label: requiredStringField(formData, 'label'),
-    provider,
-    rail,
-    simulated_balance_usdc: provider === 'simulation' ? moneyField(formData, 'simulatedBalance') : undefined,
-    source_type: sourceTypeForRail(rail),
   });
   revalidatePath(paymentsPath(orgSlug));
 }

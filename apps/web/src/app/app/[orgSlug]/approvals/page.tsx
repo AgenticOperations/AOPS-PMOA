@@ -435,7 +435,7 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
         </section>
         <OrgAuditPanel
           description="Approval requests, grants, denials, and one-time consumption events recorded in the immutable audit chain."
-          domains={['system']}
+          domains={['policy']}
           emptyText="No approval audit events have been recorded yet."
           events={auditEvents.events.filter((event) => event.action.startsWith('approval.'))}
           title="Approval audit"

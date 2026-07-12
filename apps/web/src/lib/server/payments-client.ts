@@ -2,10 +2,13 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { readWebEnv } from '../env';
 import type {
+  AgentPaymentAccountRecord,
   AgentPaymentSummary,
   CircleChainBalanceRecord,
   CircleChainCapabilityRecord,
   CircleChainWalletRecord,
+  CircleConnectionChallenge,
+  CircleConnectionRecord,
   CircleProviderJobRecord,
   CircleProviderHealth,
   CircleWalletSetRecord,
@@ -106,36 +109,55 @@ export async function listPaymentReservations(orgId: string, limit = 50): Promis
   return body.reservations;
 }
 
-export async function createPaymentSource(
-  orgId: string,
-  input: {
-    readonly chain: PaymentChain;
-    readonly label: string;
-    readonly provider: 'circle_gateway' | 'circle_wallets' | 'manual' | 'simulation';
-    readonly rail: PaymentRail;
-    readonly source_type: 'gateway' | 'direct_exact' | 'dedicated_wallet';
-    readonly account_type?: 'eoa' | 'sca' | 'virtual' | 'unknown' | undefined;
-    readonly address?: string | null | undefined;
-    readonly external_wallet_id?: string | null | undefined;
-    readonly metadata?: Record<string, unknown> | undefined;
-    readonly simulated_balance_usdc?: string | undefined;
-    readonly treasury_id?: string | null | undefined;
-  },
-): Promise<PaymentSourceRecord> {
-  const body = await apiFetch<{ readonly source: PaymentSourceRecord }>(`/v1/orgs/${orgId}/payments/sources`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-  return body.source;
-}
-
 export async function getAgentPayments(orgId: string, agentId: string): Promise<AgentPaymentSummary> {
   return apiFetch<AgentPaymentSummary>(`/v1/orgs/${orgId}/agents/${agentId}/payments`);
+}
+
+export async function listAgentPaymentAccounts(orgId: string): Promise<{
+  readonly accounts: AgentPaymentAccountRecord[];
+  readonly sources: PaymentSourceRecord[];
+}> {
+  return apiFetch<{ readonly accounts: AgentPaymentAccountRecord[]; readonly sources: PaymentSourceRecord[] }>(
+    `/v1/orgs/${orgId}/payments/agent-accounts`,
+  );
 }
 
 export async function getProviderMode(orgId: string): Promise<OrgPaymentModeRecord> {
   const body = await apiFetch<{ readonly mode: OrgPaymentModeRecord }>(`/v1/orgs/${orgId}/payments/provider-mode`);
   return body.mode;
+}
+
+export async function getCircleConnection(orgId: string): Promise<CircleConnectionRecord> {
+  const body = await apiFetch<{ readonly connection: CircleConnectionRecord }>(
+    `/v1/orgs/${orgId}/payments/circle/connection`,
+  );
+  return body.connection;
+}
+
+export async function initializeCircleConnection(
+  orgId: string,
+  input: { readonly email: string },
+): Promise<CircleConnectionChallenge> {
+  return apiFetch<CircleConnectionChallenge>(`/v1/orgs/${orgId}/payments/circle/connection/init`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function completeCircleConnection(
+  orgId: string,
+  input: { readonly challenge_id: string; readonly otp: string },
+): Promise<CircleConnectionRecord> {
+  return apiFetch<CircleConnectionRecord>(`/v1/orgs/${orgId}/payments/circle/connection/complete`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function disconnectCircleConnection(orgId: string): Promise<CircleConnectionRecord> {
+  return apiFetch<CircleConnectionRecord>(`/v1/orgs/${orgId}/payments/circle/connection`, {
+    method: 'DELETE',
+  });
 }
 
 export async function setProviderMode(orgId: string, input: { readonly mode: PaymentMode }): Promise<OrgPaymentModeRecord> {

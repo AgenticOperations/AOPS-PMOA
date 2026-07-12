@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import SettingsPage from '../../src/app/app/[orgSlug]/settings/page.js';
 import {
@@ -81,6 +81,16 @@ const teams = [
     created_at: '2026-07-10T00:00:00.000Z',
     updated_at: '2026-07-10T00:00:00.000Z',
   },
+  {
+    id: 'team_archived',
+    org_id: org.id,
+    name: 'Archived QA',
+    description: 'Archived team',
+    is_default: false,
+    archived_at: '2026-07-11T00:00:00.000Z',
+    created_at: '2026-07-10T00:00:00.000Z',
+    updated_at: '2026-07-11T00:00:00.000Z',
+  },
 ];
 
 function mockSettingsData() {
@@ -117,6 +127,9 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('link', { name: 'Members' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByText('owner@example.test')).toBeInTheDocument();
     expect(screen.queryByText('removed@example.test')).not.toBeInTheDocument();
+    expect(screen.getByText('Sole owner')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Add member' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add member' })).toBeInTheDocument();
   });
@@ -133,6 +146,11 @@ describe('SettingsPage', () => {
 
     expect(screen.getByRole('link', { name: 'Teams' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByText('Default team')).toBeInTheDocument();
+    const archivedRow = screen.getByText('Archived QA').closest('tr');
+    expect(archivedRow).not.toBeNull();
+    expect(within(archivedRow!).getByText('Archived')).toBeInTheDocument();
+    expect(within(archivedRow!).queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(within(archivedRow!).queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Create team' })).toBeInTheDocument();
   });
 

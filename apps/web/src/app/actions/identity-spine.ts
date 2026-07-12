@@ -83,7 +83,7 @@ export async function createOrgAction(formData: FormData): Promise<void> {
   });
 
   revalidatePath('/auth');
-  redirect(`/app/${org.slug}/overview`);
+  redirect(`/onboarding/${org.slug}`);
 }
 
 export async function createAgentAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {

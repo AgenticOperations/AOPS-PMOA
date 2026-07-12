@@ -9,10 +9,11 @@ type SheetProps = {
   readonly labelledBy: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
+  readonly panelClassName?: string | undefined;
   readonly side?: 'right' | 'left';
 };
 
-function Sheet({ children, labelledBy, onOpenChange, open, side = 'right' }: SheetProps) {
+function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side = 'right' }: SheetProps) {
   React.useEffect(() => {
     if (!open) {
       return undefined;
@@ -43,7 +44,7 @@ function Sheet({ children, labelledBy, onOpenChange, open, side = 'right' }: She
       <aside
         aria-labelledby={labelledBy}
         aria-modal="true"
-        className={cn('sheet-panel', side === 'left' && 'sheet-panel-left')}
+        className={cn('sheet-panel', side === 'left' && 'sheet-panel-left', panelClassName)}
         role="dialog"
       >
         {children}

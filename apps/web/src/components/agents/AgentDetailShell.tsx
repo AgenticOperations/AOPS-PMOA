@@ -8,7 +8,7 @@ import type {
   WalletRefRecord,
 } from '@/lib/identity-spine-types';
 import type { AgentAllowedActionRecord, BlockedOperationRecord } from '@/lib/operations-types';
-import type { AgentPolicyAssignment } from '@/lib/policy-types';
+import type { AgentPolicyAssignment, PolicyVersion } from '@/lib/policy-types';
 import { formatConnectionHealth, formatStatus } from './format';
 import { ConnectionPanel } from './ConnectionPanel';
 import { AgentLiveActivity } from './AgentLiveActivity';
@@ -70,6 +70,7 @@ export function AgentDetailShell({
   activityPollUrl,
   teams,
   policies = [],
+  availablePolicies = [],
   allowedActions = [],
   blockedOperations = [],
   actions,
@@ -85,6 +86,7 @@ export function AgentDetailShell({
   readonly activityPollUrl?: string | undefined;
   readonly teams?: readonly TeamRecord[] | undefined;
   readonly policies?: AgentPolicyAssignment[] | undefined;
+  readonly availablePolicies?: PolicyVersion[] | undefined;
   readonly allowedActions?: AgentAllowedActionRecord[] | undefined;
   readonly blockedOperations?: BlockedOperationRecord[] | undefined;
   readonly actions?: {
@@ -98,6 +100,8 @@ export function AgentDetailShell({
     readonly attachWalletRef?: Parameters<typeof WalletRefsPanel>[0]['attachAction'] | undefined;
     readonly detachWalletRef?: Parameters<typeof WalletRefsPanel>[0]['detachAction'] | undefined;
     readonly updateAgent?: ((formData: FormData) => Promise<void>) | undefined;
+    readonly bindPolicy?: ((formData: FormData) => Promise<void>) | undefined;
+    readonly removePolicyBinding?: ((formData: FormData) => Promise<void>) | undefined;
   } | undefined;
 }) {
   const detailPath = `/app/${orgSlug}/agents/${agent.id}`;
@@ -113,6 +117,12 @@ export function AgentDetailShell({
       },
       events: [],
     } satisfies AgentActivityFeed);
+  const directPolicies = policies.filter((policy) => policy.binding.scope === 'direct');
+  const inheritedPolicies = policies.filter((policy) => policy.binding.scope !== 'direct');
+  const directPolicyIds = new Set(directPolicies.map((policy) => policy.id));
+  const assignablePolicies = availablePolicies.filter(
+    (policy) => policy.status === 'active' && policy.binding_target_types.includes('agent') && !directPolicyIds.has(policy.id),
+  );
 
   return (
     <div className="detail-layout">
@@ -275,16 +285,35 @@ export function AgentDetailShell({
                 <p className="eyebrow">Effective controls</p>
                 <h2 id="agent-policies-title">Policies</h2>
               </div>
-              <p>Active policies applied through the workspace, team, agent, or its credentials.</p>
+              <p>Attach direct agent policies here. Workspace, team, and credential policies are inherited read-only context.</p>
             </div>
-            {policies.length === 0 ? (
+            <form action={actions?.bindPolicy} className="agent-policy-bind-form">
+              <label>
+                <span>Policy</span>
+                <select name="policySelection" disabled={assignablePolicies.length === 0 || actions?.bindPolicy === undefined}>
+                  {assignablePolicies.length === 0 ? (
+                    <option value="">No unassigned agent policies</option>
+                  ) : (
+                    assignablePolicies.map((policy) => (
+                      <option key={`${policy.id}:${policy.version}`} value={`${policy.id}:${policy.version}`}>
+                        {policy.name} · v{policy.version}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </label>
+              <button className="button-secondary" disabled={assignablePolicies.length === 0 || actions?.bindPolicy === undefined} type="submit">
+                Attach policy
+              </button>
+            </form>
+            {directPolicies.length === 0 ? (
               <div className="soft-row">
-                <strong>No policies attached.</strong>
-                <span>Bind active policies from Controls to govern this agent.</span>
+                <strong>No direct policies attached.</strong>
+                <span>Attach an active agent-compatible policy to govern this agent directly.</span>
               </div>
             ) : (
               <ol className="policy-assignment-list">
-                {policies.map((policy) => (
+                {directPolicies.map((policy) => (
                   <li key={`${policy.id}:${policy.version}:${policy.binding.id}`}>
                     <div className="activity-event-main">
                       <strong>{policy.name}</strong>
@@ -294,11 +323,40 @@ export function AgentDetailShell({
                       <strong>{formatPolicyScope(policy.binding.scope)}</strong>
                       <span>{policy.binding.target_label}</span>
                       <span>v{policy.version}</span>
+                      {actions?.removePolicyBinding !== undefined ? (
+                        <form action={actions.removePolicyBinding}>
+                          <input name="policyId" type="hidden" value={policy.id} />
+                          <input name="bindingId" type="hidden" value={policy.binding.id} />
+                          <button className="button-secondary" type="submit">
+                            Remove
+                          </button>
+                        </form>
+                      ) : null}
                     </div>
                   </li>
                 ))}
               </ol>
             )}
+            {inheritedPolicies.length > 0 ? (
+              <div className="inherited-policy-block">
+                <h3>Inherited policies</h3>
+                <ol className="policy-assignment-list">
+                  {inheritedPolicies.map((policy) => (
+                    <li key={`${policy.id}:${policy.version}:${policy.binding.id}`}>
+                      <div className="activity-event-main">
+                        <strong>{policy.name}</strong>
+                        <span>{policy.description || 'Inherited policy'}</span>
+                      </div>
+                      <div className="activity-event-meta">
+                        <strong>{formatPolicyScope(policy.binding.scope)}</strong>
+                        <span>{policy.binding.target_label}</span>
+                        <span>v{policy.version}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
           </section>
 
           <section className="section-block operational-access-panel" aria-labelledby="operational-access-title">

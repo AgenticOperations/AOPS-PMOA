@@ -50,6 +50,13 @@ function actionField(formData: FormData): OperationalAction {
   throw new Error('Unsupported operation action');
 }
 
+function rateLimitBucket(action: OperationalAction, formData: FormData): string | undefined {
+  const value = optionalStringField(formData, 'bucket');
+  if (value === undefined || value === 'default') return value;
+  const prefix = action === 'tool.call' ? 'tool:' : 'resource:';
+  return value.startsWith(prefix) ? value : `${prefix}${value}`;
+}
+
 export async function importToolAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await importTools(orgId, [
     {
@@ -64,11 +71,12 @@ export async function importToolAction(orgId: string, orgSlug: string, formData:
 }
 
 export async function createOperationLimitAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  const action = actionField(formData);
   await createRateLimit(orgId, {
     target_type: 'agent',
     target_id: requiredStringField(formData, 'targetId'),
-    action: actionField(formData),
-    bucket: optionalStringField(formData, 'bucket'),
+    action,
+    bucket: rateLimitBucket(action, formData),
     limit: numberField(formData, 'limit'),
     window_seconds: numberField(formData, 'windowSeconds'),
   });
@@ -91,9 +99,10 @@ export async function archiveToolAction(orgId: string, orgSlug: string, formData
 }
 
 export async function updateOperationLimitAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  const action = actionField(formData);
   const status = stringField(formData, 'status') === 'disabled' ? 'disabled' : 'active';
   await updateRateLimit(orgId, requiredStringField(formData, 'rateLimitId'), {
-    bucket: optionalStringField(formData, 'bucket'),
+    bucket: rateLimitBucket(action, formData),
     limit: numberField(formData, 'limit'),
     window_seconds: numberField(formData, 'windowSeconds'),
     status,
