@@ -19,10 +19,10 @@ Without arguments:
   - creates missing env files and asks for required external credentials
   - generates internal Circle worker encryption/authentication secrets
   - starts local Postgres and Redis, installs dependencies, and builds shared packages
-  - starts web (3005), API (8080), and Circle worker (8090)
+  - starts web (3005), Hosted MCP (8070), API (8080), and Circle worker (8090)
 
 --run-only:
-  validates the existing installation and env files, then starts the services.
+  validates the existing installation and env files, then starts the four application services.
   It does not create env files or install/build dependencies.
 EOF
 }
@@ -217,18 +217,21 @@ show_failure_logs() {
 start_application() {
   [[ -d "$ROOT_DIR/node_modules" ]] || fail 'Dependencies are not installed. Run ./setup.sh first.'
   port_available_for_app 3005
+  port_available_for_app 8070
   port_available_for_app 8080
   port_available_for_app 8090
   mkdir -p "$LOG_DIR"
   rm -f "$LOG_DIR"/*.log "$RUNTIME_DIR"/*.pid
   trap shutdown INT TERM EXIT
 
-  log 'Starting API, Circle worker, and web console.'
+  log 'Starting API, Hosted MCP, Circle worker, and web console.'
   start_service api npm run dev:api
+  start_service mcp npm run dev:mcp:http
   start_service circle-worker npm run dev:circle-worker
   start_service web npm --workspace @agentops-pmoa/web run dev -- --port 3005
 
   if ! node "$ROOT_DIR/scripts/wait-for-http.mjs" API http://127.0.0.1:8080/healthz 90000 ||
+     ! node "$ROOT_DIR/scripts/wait-for-http.mjs" 'Hosted MCP' http://127.0.0.1:8070/healthz 90000 ||
      ! node "$ROOT_DIR/scripts/wait-for-http.mjs" 'Circle worker' http://127.0.0.1:8090/healthz 90000 ||
      ! node "$ROOT_DIR/scripts/wait-for-http.mjs" Web http://127.0.0.1:3005/ 90000; then
     show_failure_logs
@@ -238,12 +241,14 @@ start_application() {
   cat <<EOF
 
 agentOps is ready:
-  Web:           http://localhost:3005
-  API:           http://localhost:8080
-  Circle worker: http://127.0.0.1:8090 (private)
-  Logs:          $LOG_DIR
+  Web:               http://localhost:3005
+  Hosted MCP:        http://localhost:8070/mcp
+  Hosted MCP health: http://127.0.0.1:8070/healthz
+  API:               http://localhost:8080
+  Circle worker:     http://127.0.0.1:8090 (private)
+  Logs:              $LOG_DIR
 
-Press Ctrl+C to stop all three application services.
+Press Ctrl+C to stop all four application services.
 EOF
 
   while true; do
