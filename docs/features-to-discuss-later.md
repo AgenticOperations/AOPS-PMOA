@@ -40,3 +40,46 @@ Product boundary:
 - Policies answer "what is this agent allowed to do now?"
 - Approvals answer "does this specific action need a human decision?"
 - Audit answers "what happened, under which identity and decision context?"
+
+## Autonomous Treasury Liquidity Management
+
+Current product boundary:
+
+- Payment requests already select an exact-wallet or Gateway x402 rail.
+- A request with insufficient destination liquidity can create a `liquidity.prepare` job.
+- The existing Circle liquidity worker executes and reconciles cross-chain wallet top-ups and Gateway deposits.
+- Operators can inspect balances, liquidity jobs, route recommendations, and initiate a manual rebalance.
+- Payment access, budgets, transaction caps, approval thresholds, policies, and supported rails remain enforced before funds move.
+
+Why full automation is deferred:
+
+- The current recommendation model is exact-wallet-only and based on a 24-hour demand window.
+- Request-triggered preparation is reactive; it does not proactively maintain Gateway hot balances before a payment arrives.
+- Autonomous execution needs reservations, in-flight balance accounting, deficit-aware transfer amounts, duplicate-job prevention, cooldowns, and organization-level movement limits before it can safely run unattended.
+- A fixed cron over the existing recommendations would magnify overfunding and concurrent-job risks rather than create a reliable treasury controller.
+
+Future architecture:
+
+1. Add a treasury planner above the existing provider-job and worker system.
+2. Run planning periodically and after material payment, balance, or job events.
+3. Maintain low, target, and high watermarks for every enabled exact-wallet and Gateway bucket.
+4. Calculate deficits using available, reserved, and incoming liquidity rather than gross balances.
+5. Reserve source funds and deduplicate destination jobs before creating existing `liquidity.prepare` jobs.
+6. Prefer unified Gateway treasury transfers when the Agent Stack signing path is verified, while retaining the current bridge path as a fallback.
+7. Preserve the existing API, MCP, policy, approval, payment, job, audit, and worker contracts.
+
+Admin configuration surface:
+
+- Place `Treasury automation` under Payments rather than adding another top-level console section.
+- Expose automatic liquidity management on/off, minimum treasury reserve, maximum movement per action, daily movement limit, approval threshold, and allowed networks.
+- Keep scheduler frequency internal; administrators configure financial risk, not worker timing.
+- Put per-chain exact-wallet and Gateway watermarks, maximum hot liquidity, and cooldowns in an Advanced section.
+- Show current automation state, pending movements, reserved liquidity, last planner run, recent automated movements, and blocked or failed preparations.
+
+Safe rollout:
+
+1. Correct deficit calculations and concurrency handling.
+2. Run the planner in observation-only mode and compare recommendations with actual demand.
+3. Enable capped exact-wallet automation on testnet.
+4. Enable capped Gateway hot-bucket preparation on verified testnet rails.
+5. Retain manual rebalance as an emergency operator override.
