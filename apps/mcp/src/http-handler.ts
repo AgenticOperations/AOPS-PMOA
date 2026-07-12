@@ -198,7 +198,9 @@ function hasJsonContentType(request: IncomingMessage): boolean {
 
 function acceptsMcpResponses(request: IncomingMessage): boolean {
   const values = rawHeaderValues(request, 'accept');
-  if (values.length === 0) return false;
+  if (values.length === 0 || values.some((value) => value.includes('"') || value.includes('\\'))) {
+    return false;
+  }
   const ranges = values.flatMap((value) => value.split(','));
   return ['application/json', 'text/event-stream'].every((requiredType) =>
     ranges.some((range) => {

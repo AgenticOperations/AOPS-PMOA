@@ -398,6 +398,8 @@ describe('createHostedMcpHandler', () => {
       'application/json, text/event-stream; q=0',
       'application/json; q=-0.1, text/event-stream',
       'application/json; q=invalid, text/event-stream',
+      'application/json; profile="a,b"; q=0, text/event-stream',
+      'application/json; profile="a,b, text/event-stream',
     ]) {
       const unacceptable = await rawRequest(started, {
         authorization: 'Bearer credential-a',
