@@ -101,7 +101,10 @@ function validateInput(input: VerifyHostedMcpInput): ValidatedInput {
   }
 
   if (
-    (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:')
+    (endpoint.protocol !== 'https:' && (
+      endpoint.protocol !== 'http:'
+      || !new Set(['localhost', '127.0.0.1', '[::1]']).has(endpoint.hostname)
+    ))
     || endpoint.pathname !== '/mcp'
     || endpoint.username !== ''
     || endpoint.password !== ''
@@ -169,6 +172,7 @@ async function post(context: RequestContext, body: Record<string, unknown>): Pro
         'content-type': 'application/json',
       },
       method: 'POST',
+      redirect: 'error',
       signal: context.signal,
     });
   } catch {
@@ -202,28 +206,10 @@ async function rpc(
 async function notify(context: RequestContext, method: string): Promise<void> {
   const response = await post(context, { jsonrpc: '2.0', method });
   if (!response.ok) throw mapHttpError(response.status);
+  if (response.status !== 202) throw verificationError('protocol_error', response.status);
 
   const text = await response.text();
-  if (text.trim() === '') {
-    if (response.status === 202 || response.status === 204) return;
-    throw verificationError('protocol_error', response.status);
-  }
-
-  requireJsonResponse(response);
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw verificationError('protocol_error', response.status);
-  }
-  if (
-    !isRecord(body)
-    || body.jsonrpc !== '2.0'
-    || Object.hasOwn(body, 'error')
-    || !isRecord(body.result)
-  ) {
-    throw verificationError('protocol_error', response.status);
-  }
+  if (text.trim() !== '') throw verificationError('protocol_error', response.status);
 }
 
 function readTools(result: Record<string, unknown>): { readonly toolCount: number } {
@@ -245,7 +231,31 @@ function readTools(result: Record<string, unknown>): { readonly toolCount: numbe
   return { toolCount: names.length };
 }
 
+function isValidMcpContentItem(item: unknown): item is Record<string, unknown> {
+  if (!isRecord(item) || typeof item.type !== 'string') return false;
+  if (item.type === 'text') return typeof item.text === 'string';
+  if (item.type === 'image' || item.type === 'audio') {
+    return typeof item.data === 'string' && typeof item.mimeType === 'string';
+  }
+  if (item.type === 'resource') {
+    if (!isRecord(item.resource) || typeof item.resource.uri !== 'string') return false;
+    return typeof item.resource.text === 'string' || typeof item.resource.blob === 'string';
+  }
+  if (item.type === 'resource_link') {
+    return typeof item.name === 'string' && typeof item.uri === 'string';
+  }
+  return false;
+}
+
 function parseOnboardContent(result: Record<string, unknown>): Record<string, unknown> {
+  if (
+    !Array.isArray(result.content)
+    || !result.content.every(isValidMcpContentItem)
+    || (Object.hasOwn(result, 'isError') && typeof result.isError !== 'boolean')
+  ) {
+    throw verificationError('protocol_error', null);
+  }
+
   if (result.isError === true) {
     throw verificationError('protocol_error', null, 'The MCP onboarding check failed.');
   }
@@ -255,7 +265,6 @@ function parseOnboardContent(result: Record<string, unknown>): Record<string, un
     return result.structuredContent;
   }
 
-  if (!Array.isArray(result.content)) throw verificationError('protocol_error', null);
   const firstText = result.content.find((item) => isRecord(item) && item.type === 'text' && typeof item.text === 'string');
   if (!isRecord(firstText) || typeof firstText.text !== 'string') throw verificationError('protocol_error', null);
 

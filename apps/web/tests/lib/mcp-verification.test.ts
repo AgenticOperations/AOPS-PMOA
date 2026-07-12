@@ -111,6 +111,7 @@ describe('verifyHostedMcp', () => {
       expect(headers.get('accept')).toBe('application/json, text/event-stream');
       expect(headers.get('authorization')).toBe(`Bearer ${credential}`);
       expect(headers.get('content-type')).toBe('application/json');
+      expect(init.redirect).toBe('error');
     }
     expect(result).toEqual({
       agentName: 'Research agent',
@@ -130,12 +131,26 @@ describe('verifyHostedMcp', () => {
     });
   });
 
-  it('accepts a JSON success response for the initialized notification', async () => {
+  it('accepts a 202 initialized notification with a whitespace-only body', async () => {
     const { fetchImpl } = successFetch({
-      notificationResponse: jsonResponse({ jsonrpc: '2.0', result: {} }),
+      notificationResponse: new Response('  \n', { status: 202 }),
     });
 
     await expect(verifyHostedMcp({ credential, endpoint, fetchImpl })).resolves.toMatchObject({ status: 'verified' });
+  });
+
+  it.each([
+    ['HTTP 200 with no body', new Response(null, { status: 200 })],
+    ['HTTP 202 with a body', new Response('accepted', { status: 202 })],
+    ['HTTP 200 JSON success', jsonResponse({ jsonrpc: '2.0', result: {} })],
+    ['HTTP 202 JSON-RPC success', jsonResponse({ jsonrpc: '2.0', result: {} }, 202)],
+    ['HTTP 204 with no body', new Response(null, { status: 204 })],
+  ])('rejects initialized notification response other than empty HTTP 202: %s', async (_label, notificationResponse) => {
+    const { fetchImpl } = successFetch({ notificationResponse });
+
+    const error = await captureError({ credential, endpoint, fetchImpl });
+
+    expect(error).toMatchObject({ code: 'protocol_error', status: notificationResponse.status });
   });
 
   it('falls back to the first text content JSON when structuredContent is absent', async () => {
@@ -153,6 +168,36 @@ describe('verifyHostedMcp', () => {
       status: 'verified',
       toolCount: 8,
     });
+  });
+
+  it('accepts valid non-text MCP content when structuredContent provides the identity', async () => {
+    const { fetchImpl } = successFetch({
+      onboardResult: {
+        content: [{ data: 'aGVsbG8=', mimeType: 'image/png', type: 'image' }],
+        structuredContent: onboardIdentity,
+      },
+    });
+
+    await expect(verifyHostedMcp({ credential, endpoint, fetchImpl })).resolves.toMatchObject({ status: 'verified' });
+  });
+
+  it.each([
+    ['missing content', { structuredContent: onboardIdentity }],
+    ['non-array content', { content: {}, structuredContent: onboardIdentity }],
+    ['non-boolean isError', { content: [], isError: 'false', structuredContent: onboardIdentity }],
+    ['non-object item', { content: [null], structuredContent: onboardIdentity }],
+    ['unsupported item type', { content: [{ type: 'video' }], structuredContent: onboardIdentity }],
+    ['text without text', { content: [{ type: 'text' }], structuredContent: onboardIdentity }],
+    ['image without data', { content: [{ mimeType: 'image/png', type: 'image' }], structuredContent: onboardIdentity }],
+    ['audio without mime type', { content: [{ data: 'aGVsbG8=', type: 'audio' }], structuredContent: onboardIdentity }],
+    ['resource without contents', { content: [{ resource: { uri: 'file:///a' }, type: 'resource' }], structuredContent: onboardIdentity }],
+    ['resource link without name', { content: [{ type: 'resource_link', uri: 'file:///a' }], structuredContent: onboardIdentity }],
+  ])('rejects malformed CallToolResult content even with structuredContent: %s', async (_label, onboardResult) => {
+    const { fetchImpl } = successFetch({ onboardResult });
+
+    const error = await captureError({ credential, endpoint, fetchImpl });
+
+    expect(error).toMatchObject({ code: 'protocol_error', status: null });
   });
 
   it('rejects a tool list missing any required tool', async () => {
@@ -299,6 +344,45 @@ describe('verifyHostedMcp', () => {
     expect(JSON.stringify(error)).not.toContain(credential);
   });
 
+  it('rejects redirects without fetching either the endpoint again or the redirect target', async () => {
+    const urls: string[] = [];
+    const redirectTarget = `https://evil.example/mcp?credential=${credential}`;
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      urls.push(String(input));
+      if (init?.redirect === 'error') throw new TypeError(`redirect to ${redirectTarget} rejected`);
+      urls.push(redirectTarget);
+      return rpcResult(1, {});
+    });
+
+    const error = await captureError({ credential, endpoint, fetchImpl });
+
+    expect(urls).toEqual([endpoint]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(error).toMatchObject({
+      code: 'network_error',
+      message: 'Could not reach the MCP service.',
+      status: null,
+    });
+    expect(JSON.stringify(error)).not.toContain(credential);
+  });
+
+  it.each([
+    'http://localhost/mcp',
+    'http://localhost:8070/mcp',
+    'http://127.0.0.1:8070/mcp',
+    'http://[::1]:8070/mcp',
+  ])('allows explicit HTTP loopback endpoint %s', async (loopbackEndpoint) => {
+    const { fetchImpl, requests } = successFetch();
+
+    await expect(verifyHostedMcp({ credential, endpoint: loopbackEndpoint, fetchImpl })).resolves.toMatchObject({ status: 'verified' });
+    expect(requests.map(({ url }) => url)).toEqual([
+      loopbackEndpoint,
+      loopbackEndpoint,
+      loopbackEndpoint,
+      loopbackEndpoint,
+    ]);
+  });
+
   it('uses one timeout across the exchange and aborts a pending request safely', async () => {
     vi.useFakeTimers();
     const fetchImpl = vi.fn<typeof fetch>((_input, init) => {
@@ -335,6 +419,7 @@ describe('verifyHostedMcp', () => {
   it.each([
     [{ endpoint: '/mcp', credential }, 'relative endpoint'],
     [{ endpoint: 'ftp://mcp.example/mcp', credential }, 'non-HTTP protocol'],
+    [{ endpoint: 'http://mcp.example/mcp', credential }, 'non-loopback HTTP endpoint'],
     [{ endpoint: 'https://user:pass@mcp.example/mcp', credential }, 'endpoint credentials'],
     [{ endpoint: 'https://mcp.example/other', credential }, 'wrong path'],
     [{ endpoint: 'https://mcp.example/mcp?x=1', credential }, 'query'],
