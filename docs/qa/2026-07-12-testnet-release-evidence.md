@@ -26,7 +26,7 @@ No credential secret, OTP, session token, Circle profile, or worker token is inc
 | API suite | Pass | 35 files, 195 tests |
 | MCP suite | Pass | 2 files, 11 tests |
 | Web suite | Pass | 19 files, 72 tests |
-| Docker image | Pass | `docker build -t agentops-pmoa:testnet-qa .` |
+| Docker image | Pass | `agentops-pmoa:testnet-qa`, manifest `sha256:cdda114b6d9cbab1289017a29b72c985ac0540dbcb10a23a72f2e235982a6f73` |
 | Diff whitespace | Pass | `git diff --check` |
 
 Source: local release run on 2026-07-12 and `package.json` `verify` script.
