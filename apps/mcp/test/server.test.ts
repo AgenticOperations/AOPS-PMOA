@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it } from 'vitest';
-import { buildAgentOpsMcpServer } from '../src/server.js';
+import { AGENTOPS_MCP_INSTRUCTIONS, buildAgentOpsMcpServer } from '../src/server.js';
 import type { AgentOpsRuntimeClient } from '../src/tools.js';
 
 function fakeClient(): AgentOpsRuntimeClient {
@@ -23,11 +23,12 @@ describe('agentOps MCP server', () => {
     const server = buildAgentOpsMcpServer(fakeClient());
     const client = new Client({ name: 'agentops-test', version: '0.0.0' });
 
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-
     try {
-      expect(client.getInstructions()).toContain('Actions sent outside AOPS are not governed');
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      expect(client.getInstructions()).toBe(AGENTOPS_MCP_INSTRUCTIONS);
+      expect(client.getServerVersion()).toEqual({ name: 'agentops', version: '0.0.0' });
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name)).toEqual([
         'agentops.onboard',
@@ -40,8 +41,7 @@ describe('agentOps MCP server', () => {
         'agentops.operation_record',
       ]);
     } finally {
-      await client.close();
-      await server.close();
+      await Promise.allSettled([client.close(), server.close()]);
     }
   });
 });
