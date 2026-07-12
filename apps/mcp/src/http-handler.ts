@@ -20,7 +20,7 @@ export type SafeRequestLog = {
 export type HostedMcpHandlerDeps = {
   readonly config: HostedMcpConfig;
   readonly createRuntimeClient: (credential: string) => AgentOpsRuntimeClient;
-  readonly onRequestLog?: (event: SafeRequestLog) => void;
+  readonly onRequestLog?: (event: SafeRequestLog) => void | Promise<void>;
 };
 
 type OriginCheck =
@@ -34,6 +34,7 @@ type BodyReadResult =
 
 const BEARER_CHALLENGE = 'Bearer realm="agentops-mcp"';
 const PREFLIGHT_MAX_AGE_SECONDS = 600;
+const MAX_USER_AGENT_LENGTH = 256;
 
 function rawHeaderValues(request: IncomingMessage, name: string): readonly string[] {
   const values: string[] = [];
@@ -159,6 +160,21 @@ function writeSafeJson(
   response.end(JSON.stringify({ requestId }));
 }
 
+function writeSafeJsonAndClose(
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  requestId: string,
+  headers: Readonly<Record<string, string>> = {},
+): void {
+  const socket = request.socket;
+  response.setHeader('Connection', 'close');
+  response.once('finish', () => {
+    if (!socket.destroyed) socket.destroySoon();
+  });
+  writeSafeJson(response, status, requestId, headers);
+}
+
 function readBearerCredential(request: IncomingMessage): string | null {
   const values = rawHeaderValues(request, 'authorization');
   if (values.length !== 1) return null;
@@ -183,13 +199,27 @@ function hasJsonContentType(request: IncomingMessage): boolean {
 function acceptsMcpResponses(request: IncomingMessage): boolean {
   const values = rawHeaderValues(request, 'accept');
   if (values.length === 0) return false;
-  const mediaTypes = new Set(
-    values
-      .flatMap((value) => value.split(','))
-      .map((value) => value.split(';', 1)[0]?.trim().toLowerCase())
-      .filter((value): value is string => value !== undefined && value.length > 0),
+  const ranges = values.flatMap((value) => value.split(','));
+  return ['application/json', 'text/event-stream'].every((requiredType) =>
+    ranges.some((range) => {
+      const [rawType, ...rawParameters] = range.split(';');
+      if (rawType?.trim().toLowerCase() !== requiredType) return false;
+      let quality = 1;
+      let foundQuality = false;
+      for (const rawParameter of rawParameters) {
+        const separator = rawParameter.indexOf('=');
+        if (separator === -1) continue;
+        const name = rawParameter.slice(0, separator).trim().toLowerCase();
+        if (name !== 'q') continue;
+        if (foundQuality) return false;
+        foundQuality = true;
+        const value = rawParameter.slice(separator + 1).trim();
+        if (!/^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(value)) return false;
+        quality = Number(value);
+      }
+      return quality > 0;
+    }),
   );
-  return mediaTypes.has('application/json') && mediaTypes.has('text/event-stream');
 }
 
 async function readBoundedBody(request: IncomingMessage, maximumBytes: number): Promise<BodyReadResult> {
@@ -197,7 +227,6 @@ async function readBoundedBody(request: IncomingMessage, maximumBytes: number): 
   if (declaredLength !== null && /^[0-9]+$/.test(declaredLength)) {
     const parsedLength = Number(declaredLength);
     if (Number.isSafeInteger(parsedLength) && parsedLength > maximumBytes) {
-      request.resume();
       return { kind: 'too-large' };
     }
   }
@@ -230,7 +259,6 @@ async function readBoundedBody(request: IncomingMessage, maximumBytes: number): 
       total += buffer.byteLength;
       if (total > maximumBytes) {
         finish({ kind: 'too-large' });
-        request.resume();
         return;
       }
       chunks.push(buffer);
@@ -284,7 +312,7 @@ async function handleAuthenticatedMcp(
 ): Promise<void> {
   const bodyResult = await readBoundedBody(request, deps.config.maxBodyBytes);
   if (bodyResult.kind === 'too-large') {
-    writeSafeJson(response, 413, requestId);
+    writeSafeJsonAndClose(request, response, 413, requestId);
     return;
   }
   const body = parseJsonRpcObject(bodyResult.value);
@@ -329,6 +357,21 @@ function safePath(request: IncomingMessage): string {
   return queryIndex === -1 ? value : value.slice(0, queryIndex);
 }
 
+function safeUserAgent(request: IncomingMessage, credential: string | undefined): string | null {
+  const value = singleHeader(request, 'user-agent');
+  if (value === null) return null;
+  let sanitized = [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 31 || (code >= 127 && code <= 159) ? '?' : character;
+    })
+    .join('');
+  if (credential !== undefined && credential.length > 0) {
+    sanitized = sanitized.replaceAll(credential, '[REDACTED]');
+  }
+  return sanitized.slice(0, MAX_USER_AGENT_LENGTH);
+}
+
 export function createHostedMcpHandler(deps: HostedMcpHandlerDeps): RequestListener {
   let inFlight = 0;
 
@@ -337,22 +380,22 @@ export function createHostedMcpHandler(deps: HostedMcpHandlerDeps): RequestListe
     const startedAt = performance.now();
     const method = request.method ?? '';
     const path = safePath(request);
-    const userAgent = singleHeader(request, 'user-agent');
+    let credentialForLog: string | undefined;
 
     try {
       const origin = checkOrigin(request, deps.config);
       if (origin.kind === 'allowed') setAllowedOrigin(response, origin.value);
       if (origin.kind === 'forbidden' || !hasAllowedHost(request, deps.config)) {
-        writeSafeJson(response, 403, requestId);
+        writeSafeJsonAndClose(request, response, 403, requestId);
         return;
       }
       if (request.url !== '/mcp') {
-        writeSafeJson(response, 404, requestId);
+        writeSafeJsonAndClose(request, response, 404, requestId);
         return;
       }
       if (method === 'OPTIONS') {
         if (origin.kind !== 'allowed') {
-          writeSafeJson(response, 403, requestId);
+          writeSafeJsonAndClose(request, response, 403, requestId);
           return;
         }
         response.statusCode = 204;
@@ -365,24 +408,26 @@ export function createHostedMcpHandler(deps: HostedMcpHandlerDeps): RequestListe
 
       const credential = readBearerCredential(request);
       if (credential === null) {
-        writeSafeJson(response, 401, requestId, { 'WWW-Authenticate': BEARER_CHALLENGE });
+        writeSafeJsonAndClose(request, response, 401, requestId, {
+          'WWW-Authenticate': BEARER_CHALLENGE,
+        });
         return;
       }
+      credentialForLog = credential;
       if (method !== 'POST') {
-        writeSafeJson(response, 405, requestId, { Allow: 'POST, OPTIONS' });
+        writeSafeJsonAndClose(request, response, 405, requestId, { Allow: 'POST, OPTIONS' });
         return;
       }
       if (!hasJsonContentType(request)) {
-        writeSafeJson(response, 415, requestId);
+        writeSafeJsonAndClose(request, response, 415, requestId);
         return;
       }
       if (!acceptsMcpResponses(request)) {
-        writeSafeJson(response, 406, requestId);
+        writeSafeJsonAndClose(request, response, 406, requestId);
         return;
       }
       if (inFlight >= deps.config.maxInFlight) {
-        request.resume();
-        writeSafeJson(response, 429, requestId, { 'Retry-After': '1' });
+        writeSafeJsonAndClose(request, response, 429, requestId, { 'Retry-After': '1' });
         return;
       }
 
@@ -401,10 +446,10 @@ export function createHostedMcpHandler(deps: HostedMcpHandlerDeps): RequestListe
         path,
         requestId,
         status: response.statusCode,
-        userAgent,
+        userAgent: safeUserAgent(request, credentialForLog),
       };
       try {
-        deps.onRequestLog?.(event);
+        await deps.onRequestLog?.(event);
       } catch {
         // Request logging must never affect the response path.
       }

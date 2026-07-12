@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { createServer, request as httpRequest, type RequestListener, type Server } from 'node:http';
+import { connect as netConnect } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RuntimeApiError } from '../src/runtime-client.js';
 import type { AgentOpsRuntimeClient } from '../src/tools.js';
@@ -47,7 +48,7 @@ async function startHandler(
   options: {
     readonly config?: Partial<HostedMcpConfig>;
     readonly createRuntimeClient?: HostedMcpHandlerDeps['createRuntimeClient'];
-    readonly onRequestLog?: (event: SafeRequestLog) => void;
+    readonly onRequestLog?: HostedMcpHandlerDeps['onRequestLog'];
   } = {},
 ): Promise<StartedHandler> {
   const server = createServer({ requireHostHeader: false });
@@ -82,6 +83,40 @@ async function startHandler(
   });
   server.on('request', handler);
   return { config, server, url };
+}
+
+async function rawSocketRequest(started: StartedHandler, payload: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const socket = netConnect({ host: started.url.hostname, port: Number(started.url.port) });
+    const chunks: Buffer[] = [];
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('Raw test socket remained open.'));
+    }, 1_500);
+    socket.once('connect', () => socket.write(payload));
+    socket.on('data', (chunk: Buffer) => chunks.push(chunk));
+    socket.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    socket.once('close', () => {
+      clearTimeout(timeout);
+      resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+  });
+}
+
+function rawPostHead(started: StartedHandler, extraHeaders: readonly string[]): string {
+  return [
+    'POST /mcp HTTP/1.1',
+    `Host: ${started.url.host}`,
+    'Authorization: Bearer credential-a',
+    'Content-Type: application/json',
+    'Accept: application/json, text/event-stream',
+    ...extraHeaders,
+    '',
+    '',
+  ].join('\r\n');
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -355,7 +390,15 @@ describe('createHostedMcpHandler', () => {
     });
     expect(unsupported.status).toBe(415);
 
-    for (const accept of ['application/json', 'text/event-stream', '*/*']) {
+    for (const accept of [
+      'application/json',
+      'text/event-stream',
+      '*/*',
+      'application/json; q=0, text/event-stream',
+      'application/json, text/event-stream; q=0',
+      'application/json; q=-0.1, text/event-stream',
+      'application/json; q=invalid, text/event-stream',
+    ]) {
       const unacceptable = await rawRequest(started, {
         authorization: 'Bearer credential-a',
         body: initializeBody,
@@ -363,6 +406,52 @@ describe('createHostedMcpHandler', () => {
       });
       expect(unacceptable.status).toBe(406);
     }
+
+    const parameterized = await rawRequest(started, {
+      authorization: 'Bearer credential-a',
+      body: initializeBody,
+      headers: validPostHeaders({
+        accept: 'application/json; charset=utf-8; q=0.5, text/event-stream; q=1.0',
+      }),
+    });
+    expect(parameterized.status).toBe(200);
+  });
+
+  it('fails closed on duplicate authorization, duplicate host, and content-length plus transfer-encoding', async () => {
+    const started = await startHandler();
+    const duplicateAuthorization = await rawSocketRequest(
+      started,
+      rawPostHead(started, [
+        'Authorization: Bearer credential-b',
+        `Content-Length: ${String(Buffer.byteLength(initializeBody))}`,
+        '',
+        initializeBody,
+      ]),
+    );
+    expect(duplicateAuthorization).toMatch(/^HTTP\/1\.1 401 /);
+
+    const duplicateHost = await rawSocketRequest(
+      started,
+      [
+        'GET /not-mcp HTTP/1.1',
+        `Host: ${started.url.host}`,
+        'Host: evil.example.test',
+        '',
+        '',
+      ].join('\r\n'),
+    );
+    expect(duplicateHost).toMatch(/^HTTP\/1\.1 403 /);
+
+    const clAndTe = await rawSocketRequest(
+      started,
+      rawPostHead(started, [
+        `Content-Length: ${String(Buffer.byteLength(initializeBody))}`,
+        'Transfer-Encoding: chunked',
+        '',
+        initializeBody,
+      ]),
+    );
+    expect(clAndTe).toMatch(/^HTTP\/1\.1 400 /);
   });
 
   it.each([
@@ -403,6 +492,51 @@ describe('createHostedMcpHandler', () => {
     expect(created).toBe(0);
   });
 
+  it('closes slow chunked attacker sockets after observable 413 and 429 responses', async () => {
+    let releaseFirst: (() => void) | undefined;
+    const release = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let signalStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const started = await startHandler({
+      config: { maxBodyBytes: 256, maxInFlight: 1 },
+      createRuntimeClient: (credential) =>
+        fakeClient(credential, {
+          onboard: async () => {
+            signalStarted?.();
+            await release;
+            return { tenant: credential };
+          },
+        }),
+    });
+
+    const oversized = await rawSocketRequest(
+      started,
+      `${rawPostHead(started, ['Transfer-Encoding: chunked'])}200\r\n${'x'.repeat(512)}\r\n`,
+    );
+    expect(oversized).toMatch(/^HTTP\/1\.1 413 /);
+    expect(oversized).toMatch(/\r\nConnection: close\r\n/i);
+
+    const first = rawRequest(started, {
+      authorization: 'Bearer credential-a',
+      body: initializeBody,
+      headers: validPostHeaders(),
+    });
+    await firstStarted;
+    const busy = await rawSocketRequest(
+      started,
+      rawPostHead(started, ['Transfer-Encoding: chunked']),
+    );
+    expect(busy).toMatch(/^HTTP\/1\.1 429 /);
+    expect(busy).toMatch(/\r\nConnection: close\r\n/i);
+
+    releaseFirst?.();
+    expect((await first).status).toBe(200);
+  });
+
   it.each([
     ['timeout', new DOMException('credential-a timed out', 'AbortError'), 503],
     ['upstream 5xx', new RuntimeApiError(502, 'upstream leaked org-a', 'upstream_secret'), 503],
@@ -412,7 +546,9 @@ describe('createHostedMcpHandler', () => {
     const logs: SafeRequestLog[] = [];
     const started = await startHandler({
       createRuntimeClient: () => fakeClient('credential-a', { onboard: () => Promise.reject(error) }),
-      onRequestLog: (event) => logs.push(event),
+      onRequestLog: (event) => {
+        logs.push(event);
+      },
     });
     const response = await rawRequest(started, {
       authorization: 'Bearer credential-a',
@@ -517,7 +653,7 @@ describe('createHostedMcpHandler', () => {
     expect(constructions.every(({ credential }) => credential === 'credential-a' || credential === 'credential-b')).toBe(true);
   }, 20_000);
 
-  it('logs exactly the safe fields once after completion and ignores logger failures', async () => {
+  it('logs exactly the bounded safe fields once and redacts the authenticated credential', async () => {
     const logs: SafeRequestLog[] = [];
     const started = await startHandler({
       onRequestLog: (event) => {
@@ -528,15 +664,14 @@ describe('createHostedMcpHandler', () => {
     const response = await rawRequest(started, {
       headers: {
         authorization: 'Bearer log-secret',
-        'user-agent': 'safe-test-agent',
+        'user-agent': `safe-test-agent log-secret ${'a'.repeat(400)}`,
         'x-agent': 'agent-sensitive',
         'x-organization': 'org-sensitive',
       },
       method: 'GET',
-      path: '/not-mcp',
     });
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(405);
     expect(logs).toHaveLength(1);
     expect(Object.keys(logs[0] ?? {}).sort()).toEqual([
       'durationMs',
@@ -548,12 +683,42 @@ describe('createHostedMcpHandler', () => {
     ]);
     expect(logs[0]).toMatchObject({
       method: 'GET',
-      path: '/not-mcp',
-      status: 404,
-      userAgent: 'safe-test-agent',
+      path: '/mcp',
+      status: 405,
     });
+    expect(logs[0]?.userAgent).not.toContain('log-secret');
+    expect(logs[0]?.userAgent?.length).toBeLessThanOrEqual(256);
+    expect(
+      [...(logs[0]?.userAgent ?? '')].every((character) => {
+        const code = character.charCodeAt(0);
+        return code > 31 && (code < 127 || code > 159);
+      }),
+    ).toBe(true);
     expect(logs[0]?.durationMs).toBeGreaterThanOrEqual(0);
     expect(logs[0]?.requestId).toEqual(expect.any(String));
     expect(JSON.stringify(logs)).not.toMatch(/log-secret|agent-sensitive|org-sensitive/);
+  });
+
+  it('swallows a rejected async request logger without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const started = await startHandler({
+        onRequestLog: async () => {
+          await Promise.resolve();
+          throw new Error('async logger failed');
+        },
+      });
+      const response = await rawRequest(started, { method: 'GET', path: '/not-mcp' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(response.status).toBe(404);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });
