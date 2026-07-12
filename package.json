@@ -18,6 +18,7 @@
     "dev:circle-worker": "npm --workspace @agentops-pmoa/api run dev:circle-worker",
     "dev:web": "npm --workspace @agentops-pmoa/web run dev",
     "dev:mcp": "npm --workspace @agentops-pmoa/mcp run dev",
+    "dev:mcp:http": "npm --workspace @agentops-pmoa/mcp run dev:http",
     "build:packages": "npm run build --workspace @agentops-pmoa/contracts --workspace @agentops-pmoa/config --workspace @agentops-pmoa/db",
     "build:apps": "npm run build --workspace @agentops-pmoa/api --workspace @agentops-pmoa/web --workspace @agentops-pmoa/mcp",
     "build": "npm run build:packages && npm run build:apps",

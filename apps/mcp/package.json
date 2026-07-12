@@ -8,8 +8,10 @@
   },
   "scripts": {
     "dev": "node --env-file=.env ../../node_modules/.bin/tsx src/index.ts",
+    "dev:http": "node --import tsx src/http.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/src/index.js",
+    "start:http": "node dist/src/http.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run"
