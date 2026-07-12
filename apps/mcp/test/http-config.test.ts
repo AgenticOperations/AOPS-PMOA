@@ -17,6 +17,10 @@ describe('readHostedMcpEnv', () => {
     });
   });
 
+  it('defaults to development only when NODE_ENV is absent', () => {
+    expect(readHostedMcpEnv({})).toEqual(readHostedMcpEnv({ NODE_ENV: 'development' }));
+  });
+
   it('parses overrides, normalizes URLs, and deduplicates allowlists', () => {
     expect(
       readHostedMcpEnv({
@@ -81,7 +85,7 @@ describe('readHostedMcpEnv', () => {
     });
   });
 
-  it.each(['prod', 'production ', ' development', 'staging', 'TEST', ' '])(
+  it.each([undefined, '', ' ', 'prod', 'production ', ' development', 'staging', 'TEST'])(
     'rejects unsupported NODE_ENV value %j',
     (nodeEnv) => {
       expect(() => readHostedMcpEnv({ NODE_ENV: nodeEnv })).toThrow('NODE_ENV');
@@ -209,6 +213,19 @@ describe('readHostedMcpEnv', () => {
     'https://@console.example.test',
     'https://console.example.test?',
     'https://console.example.test#',
+    'https://*.example.test',
+    'https://.example.test',
+    'https://example.test.',
+    'https://example..test',
+    'https://-example.test',
+    'https://example-.test',
+    'https://example_test',
+    'https://example;test',
+    'https://example.test:',
+    'https://0x7f000001',
+    'https://0x7f.0.0.1',
+    'https://2130706433',
+    'https://127.000.0.1',
     'console.example.test',
     'https://console.example.test,,http://localhost:3005',
     '   ',
@@ -216,6 +233,19 @@ describe('readHostedMcpEnv', () => {
     expect(() => readHostedMcpEnv({ MCP_ALLOWED_ORIGINS: allowedOrigins })).toThrow(
       'MCP_ALLOWED_ORIGINS',
     );
+  });
+
+  it('normalizes and deduplicates origins with strict valid hostnames and ports', () => {
+    expect(
+      readHostedMcpEnv({
+        MCP_ALLOWED_ORIGINS:
+          'HTTPS://EXAMPLE.COM:8443/,https://example.com:8443,http://127.0.0.1:08080,https://[2001:0DB8:0:0:0:0:0:1]:8443',
+      }).allowedOrigins,
+    ).toEqual([
+      'https://example.com:8443',
+      'http://127.0.0.1:8080',
+      'https://[2001:db8::1]:8443',
+    ]);
   });
 
   it('does not leak credential-bearing invalid origins in errors', () => {
