@@ -69,6 +69,7 @@ function agentInitials(name: string): string {
 export function AgentDetailShell({
   orgId,
   orgSlug,
+  mcpEndpoint,
   agent,
   activeTab = 'overview',
   connections,
@@ -85,6 +86,7 @@ export function AgentDetailShell({
 }: {
   readonly orgId: string;
   readonly orgSlug: string;
+  readonly mcpEndpoint: string;
   readonly agent: AgentDetail;
   readonly activeTab?: AgentDetailTab | undefined;
   readonly connections: ConnectionRecord[];
@@ -103,7 +105,6 @@ export function AgentDetailShell({
     readonly deactivate?: (() => Promise<void>) | undefined;
     readonly createConnection?: Parameters<typeof ConnectionPanel>[0]['createAction'] | undefined;
     readonly rotateConnection?: Parameters<typeof ConnectionPanel>[0]['rotateAction'] | undefined;
-    readonly testConnection?: Parameters<typeof ConnectionPanel>[0]['testAction'] | undefined;
     readonly revokeConnection?: Parameters<typeof ConnectionPanel>[0]['revokeAction'] | undefined;
     readonly attachWalletRef?: Parameters<typeof WalletRefsPanel>[0]['attachAction'] | undefined;
     readonly detachWalletRef?: Parameters<typeof WalletRefsPanel>[0]['detachAction'] | undefined;
@@ -366,11 +367,11 @@ export function AgentDetailShell({
             agentId={agent.id}
             connections={connections}
             createAction={actions?.createConnection}
+            mcpEndpoint={mcpEndpoint}
             orgId={orgId}
             orgSlug={orgSlug}
             revokeAction={actions?.revokeConnection}
             rotateAction={actions?.rotateConnection}
-            testAction={actions?.testConnection}
           />
 
           <WalletRefsPanel

@@ -14,7 +14,6 @@ import {
   pauseAgentAction,
   revokeConnectionFromFormAction,
   rotateConnectionFromFormAction,
-  testConnectionFromFormAction,
   updateAgentAction,
 } from '../../../../actions/identity-spine';
 import { getAgentActivityFeed, getAgentDetail, getOrgBySlug, listTeams } from '@/lib/server/identity-spine-client';
@@ -42,6 +41,7 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
   const { agentId, orgSlug } = await params;
   const query = (await searchParams) ?? {};
   const activeTab = normalizeAgentTab(singleParam(query.tab));
+  const mcpEndpoint = process.env.MCP_PUBLIC_URL ?? 'http://localhost:8070/mcp';
   let org;
   try {
     org = await getOrgBySlug(orgSlug);
@@ -70,6 +70,7 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
         allowedActions={allowedActions}
         blockedOperations={blockedOperations}
         connections={detail.connections}
+        mcpEndpoint={mcpEndpoint}
         walletRefs={detail.walletRefs}
         teams={teams.filter((team) => team.archived_at === null)}
         orgId={org.id}
@@ -82,7 +83,6 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
           deactivate: deactivateAgentAction.bind(null, org.id, org.slug, agentId),
           createConnection: createConnectionFromFormAction,
           rotateConnection: rotateConnectionFromFormAction,
-          testConnection: testConnectionFromFormAction,
           revokeConnection: revokeConnectionFromFormAction,
           attachWalletRef: attachWalletRefFromFormAction,
           detachWalletRef: detachWalletRefFromFormAction,

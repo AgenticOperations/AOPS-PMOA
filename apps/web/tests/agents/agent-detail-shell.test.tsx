@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { AgentDetailShell, type AgentDetailTab } from '../../src/components/agents/AgentDetailShell.js';
 import type { AgentDetail } from '../../src/lib/identity-spine-types.js';
@@ -18,12 +19,20 @@ const baseAgent: AgentDetail = {
   wallet_refs_count: 0,
 };
 
-function renderDetail(activeTab: AgentDetailTab = 'overview') {
+function renderDetail(
+  activeTab: AgentDetailTab = 'overview',
+  options: {
+    readonly createConnection?: NonNullable<
+      NonNullable<Parameters<typeof AgentDetailShell>[0]['actions']>['createConnection']
+    >;
+  } = {},
+) {
   return render(
     <AgentDetailShell
       activeTab={activeTab}
       orgId="org_acme"
       orgSlug="acme-agent-ops"
+      mcpEndpoint="https://mcp.agentops.test/mcp"
       agent={baseAgent}
       connections={[
         {
@@ -150,6 +159,7 @@ function renderDetail(activeTab: AgentDetailTab = 'overview') {
       ]}
       actions={{
         bindPolicy: async () => {},
+        createConnection: options.createConnection,
         removePolicyBinding: async () => {},
         updateAgent: async () => {},
       }}
@@ -187,6 +197,25 @@ describe('AgentDetailShell', () => {
     expect(screen.getByText('No wallet references')).toBeInTheDocument();
     expect(screen.getAllByText('Local Claude').length).toBeGreaterThan(0);
     expect(screen.queryByRole('heading', { name: 'Configuration history' })).not.toBeInTheDocument();
+  });
+
+  it('threads the page-facing hosted MCP endpoint into one-time credential setup', async () => {
+    const user = userEvent.setup();
+    renderDetail('credentials', {
+      createConnection: async () => ({
+        secret: {
+          connectionName: 'Hosted runtime',
+          secret: 'conn_page_threaded',
+        },
+      }),
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Create credential' }));
+    await user.type(screen.getByLabelText('Credential name'), 'Hosted runtime');
+    await user.click(within(screen.getByRole('dialog', { name: 'Create credential' })).getByRole('button', { name: 'Create credential' }));
+
+    expect(await screen.findByText('https://mcp.agentops.test/mcp')).toBeInTheDocument();
+    expect(screen.getByText(/Bearer conn_page_threaded/)).toBeInTheDocument();
   });
 
   it('shows recent runtime evidence separately from on-demand live monitoring and configuration history', () => {

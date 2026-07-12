@@ -5104,21 +5104,195 @@ html[data-theme="dark"] .controls-console {
   gap: 8px;
 }
 
-.secret-reveal {
+.credential-mcp-setup {
   display: grid;
-  gap: 12px;
-  padding: 16px;
-  border: 1px solid var(--accent-blue);
-  border-radius: var(--radius);
-  background: var(--accent-tint);
+  min-width: 0;
+  gap: 0;
 }
 
-.secret-reveal code,
-pre {
+.mcp-setup-intro {
+  display: grid;
+  gap: 7px;
+  padding: 2px 0 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.mcp-setup-intro h3,
+.mcp-setup-section h4,
+.mcp-verification h4 {
+  margin: 0;
+}
+
+.mcp-setup-intro > p:last-child,
+.mcp-setup-section-heading p,
+.mcp-verification-heading p,
+.mcp-verification-status > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.mcp-setup-section,
+.mcp-verification {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.mcp-setup-section-heading,
+.mcp-verification-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mcp-setup-section-heading > div,
+.mcp-verification-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.mcp-setup-section h4,
+.mcp-verification h4 {
+  color: var(--text-primary);
+  font-size: 0.79rem;
+  letter-spacing: -0.01em;
+}
+
+.mcp-copy-button {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent-blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 760;
+  padding: 2px 0;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.mcp-copy-button:hover {
+  color: var(--text-primary);
+}
+
+.mcp-copy-button:active,
+.mcp-verification .agent-primary-button:active {
+  transform: translateY(1px);
+}
+
+.mcp-copy-button:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 3px;
+}
+
+.mcp-setup-code {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   overflow-x: auto;
   padding: 12px;
   border-radius: 6px;
-  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.mcp-boundary-copy {
+  margin: 0;
+  max-width: 66ch;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+.mcp-copy-status {
+  min-height: 18px;
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.mcp-verification {
+  gap: 14px;
+  padding-bottom: 2px;
+  border-bottom: 0;
+}
+
+.mcp-verification .agent-primary-button {
+  flex: 0 0 auto;
+}
+
+.mcp-verification-status:empty {
+  display: none;
+}
+
+.mcp-verification-result {
+  display: grid;
+  gap: 14px;
+  padding: 14px 0 0 14px;
+  border-left: 2px solid var(--accent-blue);
+}
+
+.mcp-verification-result > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.mcp-verification-result > div:first-child strong {
+  color: var(--accent-blue);
+  font-size: 0.82rem;
+}
+
+.mcp-verification-result > div:first-child span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.mcp-verification-result dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.mcp-verification-result dl > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.mcp-verification-result dt {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mcp-verification-result dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.mcp-verification-result code {
   font-family: var(--font-mono);
 }
 
@@ -8194,9 +8368,8 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-color: color-mix(in oklch, var(--state-danger) 24%, var(--border-subtle));
 }
 
-.console-shell .secret-reveal {
-  border-radius: 8px;
-  box-shadow: none;
+.console-shell .credential-mcp-setup {
+  min-width: 0;
 }
 
 @media (max-width: 980px) {
@@ -8220,6 +8393,34 @@ html[data-theme="dark"] .sidebar-brand-logo {
 }
 
 @media (max-width: 680px) {
+  .credential-mcp-setup,
+  .mcp-setup-section,
+  .mcp-verification {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .mcp-setup-section-heading,
+  .mcp-verification-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .mcp-copy-button,
+  .mcp-verification .agent-primary-button {
+    justify-self: start;
+  }
+
+  .mcp-setup-code {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .mcp-verification-result dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .controls-page-header,
   .controls-library-heading,
   .console-shell .workspace > .grid > header {

@@ -6,6 +6,7 @@ import type { ConnectionRecord } from '@/lib/identity-spine-types';
 import { formatUtcDateTime } from '@/lib/date-format';
 import { formatConnectionKind, formatStatus } from './format';
 import { AgentTablePager } from './AgentTablePager';
+import { CredentialMcpSetup } from './CredentialMcpSetup';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import {
@@ -21,6 +22,7 @@ type ConnectionPanelProps = {
   readonly orgId: string;
   readonly orgSlug: string;
   readonly agentId: string;
+  readonly mcpEndpoint: string;
   readonly connections: ConnectionRecord[];
   readonly newSecret?: {
     readonly connectionName: string;
@@ -31,10 +33,6 @@ type ConnectionPanelProps = {
     formData: FormData,
   ) => Promise<ConnectionActionState>) | undefined;
   readonly rotateAction?: ((
-    state: ConnectionActionState,
-    formData: FormData,
-  ) => Promise<ConnectionActionState>) | undefined;
-  readonly testAction?: ((
     state: ConnectionActionState,
     formData: FormData,
   ) => Promise<ConnectionActionState>) | undefined;
@@ -51,11 +49,11 @@ export function ConnectionPanel({
   orgId,
   orgSlug,
   agentId,
+  mcpEndpoint,
   connections,
   newSecret,
   createAction,
   rotateAction,
-  testAction,
   revokeAction,
 }: ConnectionPanelProps) {
   const [createOpen, setCreateOpen] = useState(newSecret !== undefined);
@@ -128,6 +126,7 @@ export function ConnectionPanel({
           createAction={createAction}
           initialSecret={initialSecretAvailable ? newSecret : undefined}
           key={createSession}
+          mcpEndpoint={mcpEndpoint}
           onPendingChange={setCreatePending}
           orgId={orgId}
           orgSlug={orgSlug}
@@ -136,7 +135,7 @@ export function ConnectionPanel({
 
       <Sheet labelledBy="credential-detail-title" onOpenChange={(open) => !open && setSelectedConnection(null)} open={selectedConnection !== null} panelClassName="agent-action-sheet">
         <SheetHeader>
-          <div><SheetTitle id="credential-detail-title">Credential details</SheetTitle><SheetDescription>Inspect, test, rotate, or revoke this runtime credential.</SheetDescription></div>
+          <div><SheetTitle id="credential-detail-title">Credential details</SheetTitle><SheetDescription>Inspect, rotate, or revoke this runtime credential.</SheetDescription></div>
           <SheetCloseButton onClick={() => setSelectedConnection(null)} />
         </SheetHeader>
         {selectedConnection !== null ? (
@@ -147,7 +146,6 @@ export function ConnectionPanel({
               <div><dt>Kind</dt><dd>{formatConnectionKind(selectedConnection.kind)}</dd></div>
               <div><dt>Status</dt><dd>{formatStatus(selectedConnection.status)}</dd></div>
               <div><dt>Secret</dt><dd>{selectedConnection.secret_last4 === null ? 'Not issued' : `Ending in ${selectedConnection.secret_last4}`}</dd></div>
-              <div><dt>Last tested</dt><dd>{selectedConnection.last_tested_at === null ? 'Never' : formatUtcDateTime(selectedConnection.last_tested_at)}</dd></div>
               <div><dt>Last used</dt><dd>{selectedConnection.last_used_at === null ? 'Never' : formatUtcDateTime(selectedConnection.last_used_at)}</dd></div>
             </dl>
             {selectedConnection.status === 'active' ? (
@@ -160,7 +158,7 @@ export function ConnectionPanel({
                   orgSlug={orgSlug}
                   revokeAction={revokeAction}
                   rotateAction={rotateAction}
-                  testAction={testAction}
+                  mcpEndpoint={mcpEndpoint}
                 />
               </div>
             ) : null}
@@ -175,6 +173,7 @@ function CredentialCreateSession({
   agentId,
   createAction,
   initialSecret,
+  mcpEndpoint,
   onPendingChange,
   orgId,
   orgSlug,
@@ -182,6 +181,7 @@ function CredentialCreateSession({
   readonly agentId: string;
   readonly createAction: ConnectionPanelProps['createAction'];
   readonly initialSecret: ConnectionPanelProps['newSecret'];
+  readonly mcpEndpoint: string;
   readonly onPendingChange: (pending: boolean) => void;
   readonly orgId: string;
   readonly orgSlug: string;
@@ -194,7 +194,7 @@ function CredentialCreateSession({
   }, [onPendingChange, pending]);
 
   if (visibleSecret !== undefined) {
-    return <SheetBody><CredentialSecretReveal secret={visibleSecret} title="Save this secret now" /></SheetBody>;
+    return <SheetBody><CredentialMcpSetup mcpEndpoint={mcpEndpoint} secret={visibleSecret} title="Save this secret now" /></SheetBody>;
   }
 
   return (
@@ -212,35 +212,12 @@ function CredentialCreateSession({
   );
 }
 
-function CredentialSecretReveal({
-  secret,
-  title,
-}: {
-  readonly secret: NonNullable<ConnectionActionState['secret']>;
-  readonly title: string;
-}) {
-  return (
-    <div className="secret-reveal" role="status">
-      <div>
-        <p className="eyebrow">Shown once</p>
-        <h3>{title}</h3>
-        <p>
-          Store the secret for {secret.connectionName}. It will not be shown again after this setup
-          step.
-        </p>
-      </div>
-      <code>{secret.secret}</code>
-      <pre>{`AGENTOPS_CONNECTION_SECRET=${secret.secret}`}</pre>
-    </div>
-  );
-}
-
 function ConnectionRowActions({
   orgId,
   orgSlug,
   agentId,
   connectionId,
-  testAction,
+  mcpEndpoint,
   rotateAction,
   revokeAction,
 }: {
@@ -248,10 +225,7 @@ function ConnectionRowActions({
   readonly orgSlug: string;
   readonly agentId: string;
   readonly connectionId: string;
-  readonly testAction?: ((
-    state: ConnectionActionState,
-    formData: FormData,
-  ) => Promise<ConnectionActionState>) | undefined;
+  readonly mcpEndpoint: string;
   readonly rotateAction?: ((
     state: ConnectionActionState,
     formData: FormData,
@@ -264,23 +238,12 @@ function ConnectionRowActions({
   return (
     <div className="connection-actions">
       <div className="button-row">
-        {testAction !== undefined ? (
-          <ConnectionSubmitForm
-            action={testAction}
-            agentId={agentId}
-            buttonClassName="button-secondary"
-            connectionId={connectionId}
-            label="Test"
-            orgId={orgId}
-            orgSlug={orgSlug}
-            pendingLabel="Testing..."
-          />
-        ) : null}
         {rotateAction !== undefined ? (
           <ConnectionRotateForm
             action={rotateAction}
             agentId={agentId}
             connectionId={connectionId}
+            mcpEndpoint={mcpEndpoint}
             orgId={orgId}
             orgSlug={orgSlug}
           />
@@ -360,6 +323,7 @@ function ConnectionRotateForm({
   orgSlug,
   agentId,
   connectionId,
+  mcpEndpoint,
 }: {
   readonly action: (
     state: ConnectionActionState,
@@ -369,6 +333,7 @@ function ConnectionRotateForm({
   readonly orgSlug: string;
   readonly agentId: string;
   readonly connectionId: string;
+  readonly mcpEndpoint: string;
 }) {
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState(0);
@@ -400,6 +365,7 @@ function ConnectionRotateForm({
           agentId={agentId}
           connectionId={connectionId}
           key={session}
+          mcpEndpoint={mcpEndpoint}
           onPendingChange={setPending}
           orgId={orgId}
           orgSlug={orgSlug}
@@ -413,6 +379,7 @@ function CredentialRotateSession({
   action,
   agentId,
   connectionId,
+  mcpEndpoint,
   onPendingChange,
   orgId,
   orgSlug,
@@ -420,6 +387,7 @@ function CredentialRotateSession({
   readonly action: NonNullable<ConnectionPanelProps['rotateAction']>;
   readonly agentId: string;
   readonly connectionId: string;
+  readonly mcpEndpoint: string;
   readonly onPendingChange: (pending: boolean) => void;
   readonly orgId: string;
   readonly orgSlug: string;
@@ -431,7 +399,7 @@ function CredentialRotateSession({
   }, [onPendingChange, pending]);
 
   if (state.secret !== undefined) {
-    return <SheetBody><CredentialSecretReveal secret={state.secret} title="Save this rotated secret now" /></SheetBody>;
+    return <SheetBody><CredentialMcpSetup mcpEndpoint={mcpEndpoint} secret={state.secret} title="Save this rotated secret now" /></SheetBody>;
   }
 
   return (
