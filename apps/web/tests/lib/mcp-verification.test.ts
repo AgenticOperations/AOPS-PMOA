@@ -38,7 +38,31 @@ const initializeResult = {
 const onboardContent = [{ type: 'text', text: 'AOPS onboarding completed.' }] as const;
 
 function toolDescriptor(name: string): Record<string, unknown> {
-  return { inputSchema: { type: 'object' }, name };
+  return {
+    inputSchema: {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      additionalProperties: false,
+      properties: {
+        context: { type: 'object' },
+        intent: { type: 'string' },
+      },
+      required: ['intent'],
+      type: 'object',
+    },
+    name,
+  };
+}
+
+function toolsWithFirstSchema(inputSchema: unknown): Record<string, unknown> {
+  return {
+    tools: requiredTools.map((name, index) => index === 0 ? { inputSchema, name } : toolDescriptor(name)),
+  };
+}
+
+function neverCancellingBody(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    cancel: () => new Promise<void>(() => {}),
+  }, { highWaterMark: 0 });
 }
 
 function jsonResponse(body: unknown, status = 200, contentType = 'application/json'): Response {
@@ -225,6 +249,7 @@ describe('verifyHostedMcp', () => {
   it.each([
     ['missing protocolVersion', { capabilities: {}, serverInfo: { name: 'agentops', version: '1' } }],
     ['blank protocolVersion', { capabilities: {}, protocolVersion: ' ', serverInfo: { name: 'agentops', version: '1' } }],
+    ['mismatched protocolVersion', { capabilities: {}, protocolVersion: '2024-11-05', serverInfo: { name: 'agentops', version: '1' } }],
     ['array capabilities', { capabilities: [], protocolVersion: '2025-06-18', serverInfo: { name: 'agentops', version: '1' } }],
     ['missing serverInfo', { capabilities: {}, protocolVersion: '2025-06-18' }],
     ['array serverInfo', { capabilities: {}, protocolVersion: '2025-06-18', serverInfo: [] }],
@@ -245,6 +270,25 @@ describe('verifyHostedMcp', () => {
     ['wrong schema type', { tools: requiredTools.map((name) => ({ inputSchema: { type: 'array' }, name })) }],
     ['blank name', { tools: [...requiredTools.map(toolDescriptor), toolDescriptor(' ')] }],
   ])('rejects malformed tools/list result: %s', async (_label, toolsResult) => {
+    const { fetchImpl } = successFetch({ toolsResult });
+
+    const error = await captureError({ credential, endpoint, fetchImpl });
+
+    expect(error).toMatchObject({ code: 'protocol_error', status: null });
+  });
+
+  it.each([
+    ['array properties', toolsWithFirstSchema({ properties: [], type: 'object' })],
+    ['non-object property schema', toolsWithFirstSchema({ properties: { intent: [] }, type: 'object' })],
+    ['non-array required', toolsWithFirstSchema({ properties: { intent: {} }, required: 'intent', type: 'object' })],
+    ['non-string required item', toolsWithFirstSchema({ properties: { intent: {} }, required: [1], type: 'object' })],
+    ['duplicate required item', toolsWithFirstSchema({ properties: { intent: {} }, required: ['intent', 'intent'], type: 'object' })],
+    ['required item absent from properties', toolsWithFirstSchema({ properties: { intent: {} }, required: ['missing'], type: 'object' })],
+    ['array additionalProperties', toolsWithFirstSchema({ additionalProperties: [], type: 'object' })],
+    ['numeric additionalProperties', toolsWithFirstSchema({ additionalProperties: 1, type: 'object' })],
+    ['blank $schema', toolsWithFirstSchema({ $schema: ' ', type: 'object' })],
+    ['non-string $schema', toolsWithFirstSchema({ $schema: 1, type: 'object' })],
+  ])('rejects malformed tool inputSchema details: %s', async (_label, toolsResult) => {
     const { fetchImpl } = successFetch({ toolsResult });
 
     const error = await captureError({ credential, endpoint, fetchImpl });
@@ -329,6 +373,26 @@ describe('verifyHostedMcp', () => {
     expect(error.message).not.toContain('{');
   });
 
+  it('rejects malformed UTF-8 before it can decode into an otherwise valid response', async () => {
+    const encoder = new TextEncoder();
+    const prefix = encoder.encode('{"id":1,"jsonrpc":"2.0","result":{"capabilities":{},"protocolVersion":"2025-06-18","serverInfo":{"name":"agent');
+    const suffix = encoder.encode('","version":"1"}}}');
+    const bytes = new Uint8Array(prefix.length + 2 + suffix.length);
+    bytes.set(prefix);
+    bytes.set([0xc3, 0x28], prefix.length);
+    bytes.set(suffix, prefix.length + 2);
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(bytes, {
+      headers: { 'content-type': 'application/json' },
+      status: 200,
+    }));
+
+    const error = await captureError({ credential, endpoint, fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(error).toMatchObject({ code: 'protocol_error', status: 200 });
+    expect(JSON.stringify(error)).not.toContain(credential);
+  });
+
   it('rejects a response whose declared content length exceeds the safe limit', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       id: 1,
@@ -380,6 +444,29 @@ describe('verifyHostedMcp', () => {
     expect(cancelled).toBe(true);
     expect(error).toMatchObject({ code: 'response_too_large', status: 200 });
     expect(JSON.stringify(error)).not.toContain(credential);
+  });
+
+  it('settles an oversized response even when stream cancellation never settles', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(neverCancellingBody(), {
+      headers: {
+        'content-length': String(1_048_577),
+        'content-type': 'application/json',
+      },
+      status: 200,
+    }));
+    let captured: unknown;
+    let settled = false;
+    void verifyHostedMcp({ credential, endpoint, fetchImpl, timeoutMs: 25 }).then(
+      () => { settled = true; },
+      (error: unknown) => { captured = error; settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(settled).toBe(true);
+    expect(captured).toBeInstanceOf(McpVerificationError);
+    expect(captured).toMatchObject({ code: 'response_too_large', status: 200 });
   });
 
   it.each([
@@ -555,6 +642,49 @@ describe('verifyHostedMcp', () => {
     expect(requestCount).toBe(2);
     expect(error).toMatchObject({ code: 'timeout', status: null });
     expect(JSON.stringify(error)).not.toContain(credential);
+  });
+
+  it('settles a JSON body timeout even when reader cancellation never settles', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(neverCancellingBody(), {
+      headers: { 'content-type': 'application/json' },
+      status: 200,
+    }));
+    let captured: unknown;
+    let settled = false;
+    void verifyHostedMcp({ credential, endpoint, fetchImpl, timeoutMs: 25 }).then(
+      () => { settled = true; },
+      (error: unknown) => { captured = error; settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(settled).toBe(true);
+    expect(captured).toBeInstanceOf(McpVerificationError);
+    expect(captured).toMatchObject({ code: 'timeout', status: null });
+  });
+
+  it('settles a notification body timeout even when reader cancellation never settles', async () => {
+    vi.useFakeTimers();
+    let requestCount = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      requestCount += 1;
+      if (requestCount === 1) return rpcResult(1, initializeResult);
+      return new Response(neverCancellingBody(), { status: 202 });
+    });
+    let captured: unknown;
+    let settled = false;
+    void verifyHostedMcp({ credential, endpoint, fetchImpl, timeoutMs: 25 }).then(
+      () => { settled = true; },
+      (error: unknown) => { captured = error; settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(requestCount).toBe(2);
+    expect(settled).toBe(true);
+    expect(captured).toBeInstanceOf(McpVerificationError);
+    expect(captured).toMatchObject({ code: 'timeout', status: null });
   });
 
   it('clears the timeout after a successful exchange', async () => {

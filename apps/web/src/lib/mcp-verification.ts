@@ -166,6 +166,23 @@ function requireJsonResponse(response: Response): void {
   if (mediaType !== 'application/json') throw verificationError('protocol_error', response.status);
 }
 
+function cancelBody(body: ReadableStream<Uint8Array> | null): void {
+  if (body === null) return;
+  try {
+    void body.cancel().catch(() => undefined);
+  } catch {
+    // Cancellation is cleanup only and must never delay or replace the verifier result.
+  }
+}
+
+function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel().catch(() => undefined);
+  } catch {
+    // Cancellation is cleanup only and must never delay or replace the verifier result.
+  }
+}
+
 async function readBoundedText(response: Response, signal: AbortSignal): Promise<string> {
   const contentLength = response.headers.get('content-length');
   if (contentLength !== null) {
@@ -173,11 +190,7 @@ async function readBoundedText(response: Response, signal: AbortSignal): Promise
     const declaredBytes = Number(contentLength);
     if (!Number.isSafeInteger(declaredBytes)) throw verificationError('protocol_error', response.status);
     if (declaredBytes > MAX_RESPONSE_BYTES) {
-      try {
-        await response.body?.cancel();
-      } catch {
-        // The fixed verifier error below is safe regardless of cancellation behavior.
-      }
+      cancelBody(response.body);
       throw verificationError('response_too_large', response.status);
     }
   }
@@ -185,7 +198,7 @@ async function readBoundedText(response: Response, signal: AbortSignal): Promise
   if (response.body === null) return '';
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   const chunks: string[] = [];
   let bytesRead = 0;
   let completed = false;
@@ -197,7 +210,7 @@ async function readBoundedText(response: Response, signal: AbortSignal): Promise
       let removeAbortListener = () => {};
       const aborted = new Promise<never>((_resolve, reject) => {
         const onAbort = () => {
-          void reader.cancel().catch(() => undefined);
+          cancelReader(reader);
           reject(verificationError('timeout', null));
         };
         signal.addEventListener('abort', onAbort, { once: true });
@@ -221,11 +234,7 @@ async function readBoundedText(response: Response, signal: AbortSignal): Promise
 
       bytesRead += chunk.value.byteLength;
       if (bytesRead > MAX_RESPONSE_BYTES) {
-        try {
-          await reader.cancel();
-        } catch {
-          // The bounded failure remains safe even when the stream cannot be cancelled.
-        }
+        cancelReader(reader);
         throw verificationError('response_too_large', response.status);
       }
       chunks.push(decoder.decode(chunk.value, { stream: true }));
@@ -237,13 +246,7 @@ async function readBoundedText(response: Response, signal: AbortSignal): Promise
     if (error instanceof McpVerificationError) throw error;
     throw verificationError('protocol_error', response.status);
   } finally {
-    if (!completed) {
-      try {
-        await reader.cancel();
-      } catch {
-        // Never surface a raw stream cancellation error.
-      }
-    }
+    if (!completed) cancelReader(reader);
     try {
       reader.releaseLock();
     } catch {
@@ -324,7 +327,8 @@ function assertInitializeResult(result: Record<string, unknown>): void {
   const capabilities = result.capabilities;
   const serverInfo = result.serverInfo;
   if (
-    !hasOwnNonBlankString(result, 'protocolVersion')
+    !Object.hasOwn(result, 'protocolVersion')
+    || result.protocolVersion !== INITIALIZE_PARAMS.protocolVersion
     || !Object.hasOwn(result, 'capabilities')
     || !isPlainObject(capabilities)
     || !Object.hasOwn(result, 'serverInfo')
@@ -336,6 +340,43 @@ function assertInitializeResult(result: Record<string, unknown>): void {
   }
 }
 
+function isValidToolInputSchema(inputSchema: unknown): inputSchema is Record<string, unknown> {
+  if (
+    !isPlainObject(inputSchema)
+    || !Object.hasOwn(inputSchema, 'type')
+    || inputSchema.type !== 'object'
+  ) {
+    return false;
+  }
+
+  let properties: Record<string, unknown> | undefined;
+  if (Object.hasOwn(inputSchema, 'properties')) {
+    if (!isPlainObject(inputSchema.properties)) return false;
+    properties = inputSchema.properties;
+    if (!Object.values(properties).every(isPlainObject)) return false;
+  }
+
+  if (Object.hasOwn(inputSchema, 'required')) {
+    if (!Array.isArray(inputSchema.required) || !inputSchema.required.every((item) => typeof item === 'string')) {
+      return false;
+    }
+    const required = inputSchema.required as string[];
+    if (new Set(required).size !== required.length) return false;
+    if (!required.every((name) => properties !== undefined && Object.hasOwn(properties, name))) return false;
+  }
+
+  if (Object.hasOwn(inputSchema, 'additionalProperties')) {
+    const additionalProperties = inputSchema.additionalProperties;
+    if (typeof additionalProperties !== 'boolean' && !isPlainObject(additionalProperties)) return false;
+  }
+
+  if (Object.hasOwn(inputSchema, '$schema')) {
+    if (typeof inputSchema.$schema !== 'string' || inputSchema.$schema.trim() === '') return false;
+  }
+
+  return true;
+}
+
 function readTools(result: Record<string, unknown>): { readonly toolCount: number } {
   if (!Array.isArray(result.tools)) throw verificationError('protocol_error', null);
 
@@ -344,9 +385,7 @@ function readTools(result: Record<string, unknown>): { readonly toolCount: numbe
       !isPlainObject(tool)
       || !hasOwnNonBlankString(tool, 'name')
       || !Object.hasOwn(tool, 'inputSchema')
-      || !isPlainObject(tool.inputSchema)
-      || !Object.hasOwn(tool.inputSchema, 'type')
-      || tool.inputSchema.type !== 'object'
+      || !isValidToolInputSchema(tool.inputSchema)
     ) {
       throw verificationError('protocol_error', null);
     }
