@@ -78,6 +78,7 @@ The shipped local flow uses organization-scoped Agent Stack sessions. These valu
 | `MCP_ALLOWED_ORIGINS` | Exact browser origins allowed to verify one-time credentials |
 | `MCP_MAX_BODY_BYTES` | JSON-RPC request body limit |
 | `MCP_MAX_INFLIGHT_REQUESTS` | Process-level concurrent request ceiling |
+| `MCP_SHUTDOWN_GRACE_MS` | Maximum graceful drain time after termination begins |
 | `AGENTOPS_MCP_TIMEOUT_MS` | Runtime API request timeout |
 
 The hosted service receives the agent credential per request in the bearer header. It must not be configured with a process-wide `AGENTOPS_MCP_CREDENTIAL`.

@@ -376,11 +376,29 @@ describe('createHostedMcpHandler', () => {
     expect(Number(allowed.headers.get('access-control-max-age'))).toBeGreaterThan(0);
     expect(Number(allowed.headers.get('access-control-max-age'))).toBeLessThanOrEqual(86_400);
 
+    for (const privateNetworkValue of [undefined, 'false', 'TRUE', 'true, true']) {
+      const headers: Record<string, string> = {
+        'access-control-request-headers': 'authorization, content-type',
+        'access-control-request-method': 'POST',
+        origin: 'https://console.example.test',
+      };
+      if (privateNetworkValue !== undefined) {
+        headers['access-control-request-private-network'] = privateNetworkValue;
+      }
+      const notRequested = await rawRequest(started, { headers, method: 'OPTIONS' });
+      expect(notRequested.status).toBe(204);
+      expect(notRequested.headers.get('access-control-allow-private-network')).toBeNull();
+    }
+
     const disallowed = await rawRequest(started, {
-      headers: { origin: 'https://evil.example.test' },
+      headers: {
+        'access-control-request-private-network': 'true',
+        origin: 'https://evil.example.test',
+      },
       method: 'OPTIONS',
     });
     expect(disallowed.status).toBe(403);
+    expect(disallowed.headers.get('access-control-allow-private-network')).toBeNull();
   });
 
   it('enforces JSON content type and both MCP response media types', async () => {

@@ -74,6 +74,7 @@ Chrome may ask for Local Network Access permission when a localhost console veri
 ## Deployment Checklist
 
 - `NODE_ENV=production`
+- `MCP_HOST=0.0.0.0` (or the platform-required container bind); restrict public access at the proxy/firewall
 - `MCP_PUBLIC_URL=https://<host>/mcp`
 - exact public authority in `MCP_ALLOWED_HOSTS`
 - exact console HTTPS origin in `MCP_ALLOWED_ORIGINS`
