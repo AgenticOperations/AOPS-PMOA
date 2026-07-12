@@ -1,100 +1,83 @@
 ---
 created: 2026-07-06
+updated: 2026-07-12
 project: agentOps
 ecosystem: circle
-tags: [build-pmoa, env, circle, arc, secrets]
+tags: [environment, setup, security, circle, oauth]
 ---
 
-# BUILD-PMOA Env Inventory
+# Environment Inventory
 
-Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Projects/Web3-Builds/agentOps/PMOA-EVENT-PRD/40-final-implementation-readiness-and-build-sequence]]
+Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/deployment/testnet-circle-worker]]
 
-This file lists env key names only. It does not contain secret values.
+This inventory lists key names and ownership only. It must never contain credential values.
 
-## API Env Sources
+## Required Local Product Values
 
-Copied from `BUILD/Backend/.env` and `BUILD/Backend/.env.example` into `BUILD-PMOA/apps/api/`.
+### API and Circle worker: `apps/api/.env`
 
-Expected API keys include:
+| Key | Owner | Purpose |
+|---|---|---|
+| `NODE_ENV` | API/worker | Runtime mode |
+| `HOST`, `PORT` | API | API listener; supported local port is `8080` |
+| `LOG_LEVEL` | API/worker | Structured log level |
+| `DATABASE_URL` | API/worker | PostgreSQL authority and migration target |
+| `REDIS_URL` | API | Payment balance cache and enforcement hot tier |
+| `SESSION_COOKIE_NAME` | API/web | Human session cookie contract |
+| `APP_BASE_URL` | OAuth/web | Supported local web origin is `http://localhost:3005` |
+| `GOOGLE_CLIENT_ID` | OAuth | Google OAuth web client ID |
+| `GOOGLE_CLIENT_SECRET` | OAuth | Google OAuth client secret |
+| `GOOGLE_OAUTH_REDIRECT_URL` | OAuth | Web BFF callback URL |
+| `CIRCLE_TREASURY_PROVIDER` | worker | Defaults to `agent_stack` |
+| `CIRCLE_PROFILE_MASTER_KEY` | worker only | Base64-encoded 32-byte key encrypting organization Circle profiles |
+| `CIRCLE_WORKER_TOKEN` | API/worker | Internal bearer token, minimum 32 characters |
+| `CIRCLE_WORKER_URL` | API | Private worker base URL |
+| `CIRCLE_WORKER_HOST`, `CIRCLE_WORKER_PORT` | worker | Worker listener; supported local port is `8090` |
 
-- `NODE_ENV`
-- `HOST`
-- `PORT`
-- `LOG_LEVEL`
-- `DATABASE_URL`
-- `REDIS_URL`
-- `SESSION_COOKIE_NAME`
-- `COOKIE_DOMAIN`
-- `APP_BASE_URL`
-- `AUTH_RATE_LIMIT`
-- `AUTH_RATE_WINDOW_SECONDS`
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_OAUTH_REDIRECT_URL`
-- `ARC_RPC_URL`
-- `ARC_CHAIN_ID`
-- `ARC_USDC_ADDRESS`
-- `ARC_LIVE`
-- `GATEWAY_WALLET_ADDRESS`
-- `GATEWAY_MINTER_ADDRESS`
-- `SOLANA_RPC_URL`
-- `KMS_PROVIDER`
-- `KMS_TREASURY_KEY_ID`
-- `KMS_AGENT_FLOAT_KEY_ID`
-- `TREASURY_PRIVATE_KEY`
-- `AGENT_FLOAT_PRIVATE_KEY`
+`setup.sh` securely asks for missing Google values and generates the two internal Circle worker secrets. It never generates or stores organization OTPs.
+
+## Optional API and Worker Values
+
+- `CIRCLE_CLI_TIMEOUT_MS`, `CIRCLE_CLI_MAX_RETRIES`, `CIRCLE_CLI_RETRY_DELAY_MS`
+- `CIRCLE_LIQUIDITY_WORKER_POLL_MS`, `CIRCLE_LIQUIDITY_SUBMITTED_RETRY_MS`
+- `CIRCLE_PROVIDER_JOB_TIMEOUT_MS`
+- `CIRCLE_GATEWAY_API_BASE`
+- `CIRCLE_LIVE_RAIL_VERIFICATION_ENABLED`, `CIRCLE_LIVE_REBALANCE_ENABLED` (not enabled in the testnet product)
+- `PUBLIC_API_BASE_URL`
+
+### Developer-controlled provider only
+
+The shipped local flow uses organization-scoped Agent Stack sessions. These values are read only when `CIRCLE_TREASURY_PROVIDER=developer_controlled`:
+
 - `CIRCLE_API_BASE`
-- `CIRCLE_API_KEY`
-- `CIRCLE_GATEWAY_LIVE`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `EMAIL_FROM`
-- `RAZORPAY_KEY_ID`
-- `RAZORPAY_KEY_SECRET`
-- `RAZORPAY_WEBHOOK_SECRET`
-- `DEMO_ENABLED`
-- `DEMO_VENDOR_HOST`
-- `DEMO_VENDOR_ADDRESS`
-- `DEMO_RESOURCE`
+- `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`
+- `CIRCLE_TEST_API_KEY`, `CIRCLE_TEST_ENTITY_SECRET`
+- `CIRCLE_LIVE_API_KEY`, `CIRCLE_LIVE_ENTITY_SECRET`
 
-## Web Env Sources
+## Web: `apps/web/.env.local`
 
-Copied from `BUILD/Frontend/.env.local` and `BUILD/Frontend/.env.example` into `BUILD-PMOA/apps/web/`.
+| Key | Purpose |
+|---|---|
+| `AGENTOPS_API_BASE_URL` | Server-only API origin; local value uses port `8080` |
+| `ARC_ENV_LABEL` | Honest environment label shown in the console |
+| `SESSION_COOKIE_NAME` | Must match the API value |
+| `APP_BASE_URL` | Must match the API value and use port `3005` locally |
 
-Expected web keys include:
+## MCP: `apps/mcp/.env`
 
-- `AGENTOPS_API_BASE_URL`
-- `OPERATOR_ADMIN_KEY`
-- `AGENTOPS_ORG_ID`
-- `ARC_ENV_LABEL`
-- `SESSION_COOKIE_NAME`
-- `APP_BASE_URL`
+| Key | Purpose |
+|---|---|
+| `AGENTOPS_API_BASE_URL` | Runtime API origin |
+| `AGENTOPS_MCP_CREDENTIAL` | One agent runtime credential created by an operator |
+| `AGENTOPS_MCP_TIMEOUT_MS` | Upstream request timeout |
 
-## MCP Env Sources
+The bootstrap does not prompt for `AGENTOPS_MCP_CREDENTIAL`, because credentials are created after an organization and agent exist. The MCP process is launched by its host when needed.
 
-Defined in `BUILD-PMOA/apps/mcp/.env.example`.
+## Security Rules
 
-Expected MCP keys include:
-
-- `AGENTOPS_API_BASE_URL`
-- `AGENTOPS_MCP_CREDENTIAL`
-- `AGENTOPS_MCP_TIMEOUT_MS`
-
-## Rules
-
-- Never print env values in logs, tests, docs, or final responses.
-- Add new env keys to `.env.example` before using them in code.
-- Validate env at app boot with a typed schema.
-- Provider credentials are not evidence that a feature is production-ready; live provider behavior still needs verification gates.
-
-## Section 11A Database Rule
-
-`DATABASE_URL` is the single database target switch for PMOA.
-
-- Local-first: use local Postgres or the copied local `.env`.
-- Cloud-ready: set `DATABASE_URL` to managed Postgres or Supabase.
-- Do not print or log the URL.
-- Do not run PMOA migrations against the old `BUILD` database until an explicit compatibility plan exists.
-- Evidence routes still need an injected authenticated org resolver; `DATABASE_URL` alone must not expose audit reads.
+- Local `.env` files are gitignored and written with owner-only permissions by setup.
+- Never print secrets, OTPs, session cookies, private keys, payment signatures, or decrypted Circle profiles.
+- The profile master key belongs only on the Circle worker in deployment.
+- API and worker must share the same database and worker token.
+- The web process must never receive worker secrets or Circle profile material.
+- `DATABASE_URL` is the only PMOA database target switch. Never point it at the legacy `BUILD` database without a migration plan.

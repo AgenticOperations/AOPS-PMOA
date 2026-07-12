@@ -7,7 +7,7 @@ tags: [build-pmoa, later-features, credentials, policy]
 
 # Features To Discuss Later
 
-Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/build-till-now/section-1-core-product-spine]] | [[10-Projects/Web3-Builds/agentOps/PMOA-EVENT-PRD/40-final-implementation-readiness-and-build-sequence]]
+Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/PRODUCT]]
 
 This file keeps useful product ideas that should not leak into the active build before their section is ready.
 

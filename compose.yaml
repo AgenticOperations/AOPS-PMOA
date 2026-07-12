@@ -1,0 +1,37 @@
+name: agentops-pmoa
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agentops
+      POSTGRES_PASSWORD: agentops
+      POSTGRES_USER: agentops
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentops -d agentops"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    volumes:
+      - agentops-postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    volumes:
+      - agentops-redis-data:/data
+
+volumes:
+  agentops-postgres-data:
+  agentops-redis-data:

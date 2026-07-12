@@ -1,133 +1,164 @@
 ---
 created: 2026-07-06
+updated: 2026-07-12
 project: agentOps
 ecosystem: circle
-tags: [build-pmoa, scaffold, implementation, circle, arc]
+tags: [readme, product, setup, testnet, mcp, circle]
 ---
 
-# BUILD-PMOA
+# agentOps
 
-Backlinks: [[10-Projects/Web3-Builds/agentOps/PMOA-EVENT-PRD/00-README]] | [[10-Projects/Web3-Builds/agentOps/PMOA-EVENT-PRD/40-final-implementation-readiness-and-build-sequence]]
+Backlinks: [[10-Projects/Web3-Builds/agentOps/HANDOFF]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/PRODUCT]]
 
-This is the clean PMOA rebuild of agentOps.
+agentOps is a testnet control plane for teams operating autonomous agents. It combines agent identity, runtime credentials, policy enforcement, human approvals, operational rate limits, Circle-backed USDC treasury execution, MCP integration, and hash-chained evidence in one organization-isolated product.
 
-The old `BUILD/` folder remains reference-only. Do not extend old product flows by default. Pull proven code patterns from `BUILD/` only when they fit the PMOA architecture.
+The current release is intentionally **testnet only**. It does not represent mainnet payment execution as available.
 
-## Structure
+## Product Surface
+
+- **Organizations and access:** Google OAuth, organization membership, roles, teams, and tenant-isolated reads and mutations.
+- **Managed agents:** agent identities, runtime credentials, pause/deactivate controls, wallet references, effective policies, and activity history.
+- **Policy controls:** action-specific policy drafts, validation, simulations, immutable revisions, activation, target assignment, archival, and runtime decisions.
+- **Approvals:** expiring approval requests, one-time approve/deny decisions, and one-time consumption tied to the original decision.
+- **Operations:** managed tool catalog, rate limits, runtime decisions, and auditable control changes.
+- **Treasury:** organization-scoped Circle Agent Wallet sessions, five testnet chain wallets, exact and Gateway x402 rails, payment access and budgets, provider jobs, liquidity preparation, balances, and evidence.
+- **MCP:** an independent stdio MCP server exposing the same runtime policy and approval plane used by direct API clients.
+- **Evidence:** classified, tenant-fenced, hash-chained audit events for operator and runtime actions.
+
+## Architecture
 
 ```text
-BUILD-PMOA/
-  apps/
-    api/    Fastify API, workers, backend engines
-    mcp/    Standalone stdio MCP server for agent/client integration
-    web/    Next operator console
-  packages/
-    contracts/ shared product contracts and wire schemas
-    config/    shared configuration helpers
-    db/        database migration and query ownership
-  docs/
-    env-inventory.md
-    reference-map.md
-    build-till-now/
+Browser / operator
+       |
+       v
+Next.js web :3005  --->  Fastify API :8080  --->  PostgreSQL
+                              |                  Redis
+                              v
+                    Circle worker :8090
+                    (private provider boundary)
+
+Agent / MCP host  --->  standalone stdio MCP  --->  Fastify runtime API
 ```
 
-## Build Order
+| Workspace | Responsibility |
+|---|---|
+| `apps/web` | Next.js operator console and OAuth BFF |
+| `apps/api` | Fastify API, identity, policy, approvals, operations, payments, evidence |
+| `apps/api/src/circle-worker.ts` | Private multi-tenant Circle CLI/provider worker and liquidity-job processor |
+| `apps/mcp` | Independent stdio MCP adapter for managed agents |
+| `packages/contracts` | Shared wire contracts |
+| `packages/config` | Shared configuration helpers |
+| `packages/db` | PostgreSQL migrations and migration runner |
 
-1. Section 0 new baseline: install, lint, typecheck, build, and tests.
-2. Section 11A minimal canonical audit writer.
-3. Section 1 core product spine.
-4. Continue using `PMOA-EVENT-PRD/40-final-implementation-readiness-and-build-sequence.md`.
+## Requirements
 
-## Build History Rule
+- macOS or Linux with Bash
+- Node.js `22.13.0` or newer and npm
+- Docker Desktop with Compose v2 when using the bundled local PostgreSQL and Redis
+- A Google OAuth web client configured with this callback:
 
-Every completed section must update `BUILD-PMOA/docs/build-till-now/`.
+  `http://localhost:3005/api/auth/google/callback`
 
-Required files per section:
+Circle Agent Wallet access is connected **per organization inside the product** using email and OTP. The default `agent_stack` provider does not require a global Circle API key in the local env file.
 
-- `section-<section-id>-<slug>.md`
-- `error_log_section-<section-id>-<slug>.md`
+## One-Command Setup
 
-These files explain what was built, why it was built, what tests prove it, and which errors or implementation issues were found. They are required before moving to the next section.
+```bash
+./setup.sh
+```
 
-## Environment Files
+The setup command:
 
-Existing env files from old `BUILD/` are copied into matching new app folders:
+1. Validates Node and npm.
+2. Creates missing `apps/api/.env` and `apps/web/.env.local` files from their templates.
+3. Asks one at a time for missing Google OAuth values. Secret input is not echoed.
+4. Generates a base64 32-byte Circle profile encryption key and a random internal worker token when absent.
+5. Starts local PostgreSQL and Redis only when the configured local ports are not already reachable.
+6. Installs the locked npm dependency graph, verifies the pinned Circle CLI, rejects high/critical npm advisories, and builds shared packages/migrations.
+7. Starts and health-checks web `3005`, API `8080`, and Circle worker `8090`.
+8. Keeps the three application services supervised until you press `Ctrl+C`.
 
-- `BUILD/Backend/.env` -> `BUILD-PMOA/apps/api/.env`
-- `BUILD/Backend/.env.example` -> `BUILD-PMOA/apps/api/.env.example`
-- `BUILD/Frontend/.env.local` -> `BUILD-PMOA/apps/web/.env.local`
-- `BUILD/Frontend/.env.example` -> `BUILD-PMOA/apps/web/.env.example`
-- `BUILD-PMOA/apps/mcp/.env.example` documents the independent MCP service env keys.
+Service logs are written to `.runtime/logs/`. PostgreSQL and Redis data use named Docker volumes and remain available after the application services stop.
 
-Do not commit local env files. They are ignored by `BUILD-PMOA/.gitignore`.
+Open [http://localhost:3005](http://localhost:3005), sign in with Google, create an organization, and connect its Circle Agent Wallet from Treasury setup. OTP values are handled by the product flow and are never written to repository env files.
 
-## First Implementation Gate
+## Start an Existing Installation
 
-Before Section 11A starts, the scaffold must have:
+```bash
+./startup.sh --run-only
+```
 
-- API lint/typecheck/test passing.
-- Web lint/typecheck/test passing.
-- Root workspace scripts working.
-- Env inventory reviewed without exposing secret values.
+`startup.sh` is a compatibility entrypoint to the same bootstrap implementation. `--run-only` validates existing env files, dependencies, and infrastructure and starts the three application services. It does not create env files, prompt for credentials, run `npm install`, or rebuild packages.
 
-## Section 0 Baseline Result
+The equivalent npm command is:
 
-Completed: 2026-07-06.
+```bash
+npm run start:local
+```
 
-- Install: PASS. `npm install` completed after network escalation and created `package-lock.json`.
-- Dependency audit: PASS. `npm audit --audit-level=moderate` reports 0 vulnerabilities after PostCSS override and dedupe.
-- Lint: PASS with `npm run lint`.
-- Typecheck: PASS with `npm run typecheck`.
-- Build: PASS with `npm run build`.
-- Tests: PASS with `npm test` across 5 test files and 5 tests.
-- Full verification: PASS with `npm run verify`.
-- Clean-output verification: PASS after removing generated artifacts and rerunning `npm run verify`.
-- Env hygiene: PASS. Local env files remain ignored; env inventory lists key names only; no raw secret logging found in scaffold source.
+If any application port is already occupied, startup fails without killing the existing process.
 
-Section 11A can now start with architecture discussion and a fresh section implementation plan.
+## Environment Contract
 
-## Section 11A Result
+Local secrets remain gitignored. The bootstrap validates these cross-service invariants:
 
-Completed: 2026-07-06.
+- API uses port `8080`; web uses `3005`; the private Circle worker uses `8090`.
+- API and web use the same `APP_BASE_URL` and `SESSION_COOKIE_NAME`.
+- Google OAuth redirects through the web BFF callback.
+- `CIRCLE_WORKER_TOKEN` is at least 32 characters.
+- `CIRCLE_PROFILE_MASTER_KEY` decodes to exactly 32 bytes.
+- Database and Redis URLs use supported URL schemes.
 
-Section 11A built the canonical audit foundation:
+See [docs/env-inventory.md](docs/env-inventory.md) for the current key inventory. To use managed PostgreSQL or Redis, populate their URLs before running setup; the bootstrap skips local Docker startup for non-local endpoints.
 
-- PMOA SQL migration runner in `packages/db`.
-- Initial PMOA audit schema:
-  - `orgs`
-  - `audit_event_heads`
-  - `audit_events`
-- Evidence retention boundary: canonical audit tables reference `orgs(id) ON DELETE RESTRICT`.
-- Deterministic canonical JSON hashing.
-- Nested audit redaction for bearer tokens, cookies, API keys, private keys, signatures, x402 payment material, provider credentials, and session material.
-- Transactional `recordAuditEvent(client, input)` writer.
-- Per-org sequence allocation and hash-chain linking.
-- Idempotency behavior:
-  - same org plus same key plus same canonical body returns the existing event,
-  - same org plus same key plus different canonical body throws `idempotency_conflict`.
-- Org-fenced audit list/detail/verify services.
-- Injected-scope evidence routes:
-  - `GET /v1/evidence/events`
-  - `GET /v1/evidence/events/:eventId`
-  - `GET /v1/evidence/events/:eventId/verify`
-  - `GET /v1/evidence/chain/verify`
+## MCP Server
 
-Evidence routes are not mounted by default. They mount only when the app receives both a Postgres pool and a real `resolveOrgScope` dependency. This avoids temporary `x-org-id` auth and keeps Section 1 responsible for the real authenticated tenant boundary.
+The MCP process is stdio-based and starts when an MCP host launches it. It is not a fourth HTTP daemon.
 
-## Local-First, Cloud-Ready Database
+```bash
+cp apps/mcp/.env.example apps/mcp/.env
+# Set AGENTOPS_MCP_CREDENTIAL to an agent runtime credential created in the console.
+npm run dev:mcp
+```
 
-The build uses one database switch: `DATABASE_URL`.
+For Claude Desktop or another MCP host, launch the built server with an absolute path or run the workspace development command. Never write logs to stdout from the stdio server.
 
-- Local development can use the default local Postgres URL or the copied local `.env`.
-- Cloud deployment can point `DATABASE_URL` at managed Postgres or Supabase without code changes.
-- Section 11A tests use Docker-backed Postgres through core `testcontainers`.
-- New PMOA migrations are independent from the old `BUILD/Backend` cascade-delete schema.
+## Development Commands
 
-Do not point PMOA migrations at the old `BUILD` database until there is an explicit compatibility/migration plan.
+```bash
+npm run dev:web             # Next.js; pass -- --port 3005 when run manually
+npm run dev:api             # Fastify API
+npm run dev:circle-worker   # private Circle worker
+npm run dev:mcp             # standalone stdio MCP
 
-## Section 11A Verification
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run verify
+```
 
-- `npm --workspace @agentops-pmoa/db test -- test/migrate.test.ts`: PASS.
-- `npm --workspace @agentops-pmoa/api test -- test/evidence/...`: PASS, 6 files and 18 tests.
-- `npm run verify`: PASS.
-- `npm audit --audit-level=moderate`: PASS, 0 vulnerabilities.
+The API and Circle worker apply pending PostgreSQL migrations at startup. Do not point `DATABASE_URL` at the legacy `BUILD` database.
+
+The current Circle CLI/Solana dependency chain reports moderate npm advisories with no non-breaking upstream fix. Setup reports them but fails only on high or critical advisories; do not use `npm audit fix --force` without re-running the payment-provider regression suite.
+
+## Health and Operations
+
+| Service | Health endpoint | Exposure |
+|---|---|---|
+| API | `http://127.0.0.1:8080/healthz` | public deployment service |
+| Circle worker | `http://127.0.0.1:8090/healthz` | private network only |
+| Web | `http://127.0.0.1:3005/` | public deployment service |
+
+All `/internal/circle/*` routes require the worker bearer token. The worker owns decrypted temporary Circle CLI profiles; the web and public API must never receive profile encryption keys, OTPs, or decrypted provider state.
+
+## Current Documentation
+
+- [PRODUCT.md](PRODUCT.md): product boundaries and language.
+- [DESIGN.md](DESIGN.md): authenticated-console design contract.
+- [docs/env-inventory.md](docs/env-inventory.md): current environment keys and ownership.
+- [docs/deployment/testnet-circle-worker.md](docs/deployment/testnet-circle-worker.md): deployment and worker security model.
+- [docs/qa/2026-07-12-testnet-release-evidence.md](docs/qa/2026-07-12-testnet-release-evidence.md): latest accepted testnet evidence.
+- [docs/features-to-discuss-later.md](docs/features-to-discuss-later.md): deliberately deferred product work.
+
+Historical audits, build journals, critiques, screenshots, wireframes, and completed plans are retained under [archive/2026-07-12-pre-bootstrap-sanitization](archive/2026-07-12-pre-bootstrap-sanitization/README.md). They are reference material, not current implementation instructions.

@@ -1,6 +1,6 @@
 ---
 created: 2026-07-07
-updated: 2026-07-10
+updated: 2026-07-12
 project: agentOps
 ecosystem: circle
 tags: [build-pmoa, design-context, impeccable, canonical]
@@ -58,5 +58,6 @@ The public landing/marketing site is explicitly **out of scope** here. It is a s
 
 ## Related documents
 
-- `docs/audit/2026-07-10-console-feature-data-audit.md` — full page/data/action inventory.
-- `docs/audit/2026-07-10-visual-ux-redesign-spec.md` — full IA, per-page analytics mapping, Overview design, component patterns, and phased build roadmap.
+- `../redesign-spec/01-locked-console-redesign.md` - current authenticated-console hierarchy and UX contract.
+- `../redesign-spec/visual/console-system.html` - authoritative visual direction for the console redesign.
+- `archive/2026-07-12-pre-bootstrap-sanitization/docs/audit/` - historical audits retained for traceability, not active instructions.

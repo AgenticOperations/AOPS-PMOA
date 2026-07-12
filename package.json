@@ -12,6 +12,8 @@
     "apps/*"
   ],
   "scripts": {
+    "setup": "./setup.sh",
+    "start:local": "./startup.sh --run-only",
     "dev:api": "npm --workspace @agentops-pmoa/api run dev",
     "dev:circle-worker": "npm --workspace @agentops-pmoa/api run dev:circle-worker",
     "dev:web": "npm --workspace @agentops-pmoa/web run dev",
@@ -21,7 +23,8 @@
     "build": "npm run build:packages && npm run build:apps",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "lint": "npm run build:packages && npm run lint --workspaces --if-present",
-    "test": "npm run build:packages && npm run test --workspaces --if-present",
+    "test:bootstrap": "node --test scripts/*.test.mjs",
+    "test": "npm run test:bootstrap && npm run build:packages && npm run test --workspaces --if-present",
     "verify": "npm run lint && npm run typecheck && npm run build && npm test"
   },
   "overrides": {

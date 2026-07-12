@@ -7,7 +7,7 @@ tags: [deployment, testnet, circle, worker, security]
 
 # Testnet Circle Worker Deployment
 
-Backlinks: [[10-Projects/Web3-Builds/agentOps/HANDOFF]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/plans/2026-07-11-testnet-circle-multitenancy]]
+Backlinks: [[10-Projects/Web3-Builds/agentOps/HANDOFF]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]]
 
 ## Services
 
