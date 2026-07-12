@@ -5168,7 +5168,7 @@ html[data-theme="dark"] .controls-console {
 .mcp-copy-button {
   display: inline-flex;
   flex: 0 0 auto;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   border: 0;
   background: transparent;
@@ -5237,7 +5237,7 @@ html[data-theme="dark"] .controls-console {
 
 .mcp-verification .agent-primary-button {
   flex: 0 0 auto;
-  min-height: 36px;
+  min-height: 44px;
 }
 
 .mcp-verification-status:empty {

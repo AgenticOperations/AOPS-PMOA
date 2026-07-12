@@ -28,7 +28,7 @@ const claudeCodeConfig = `{
 const codexCommand = `codex mcp add agentops --url ${mcpEndpoint} --bearer-token-env-var AGENTOPS_MCP_CREDENTIAL`;
 
 function localAdapterConfig(secret: string): string {
-  return `AGENTOPS_API_BASE_URL=http://localhost:8080\nAGENTOPS_MCP_CREDENTIAL=${secret}\nnpm run dev:mcp`;
+  return `AGENTOPS_API_BASE_URL=http://localhost:8080 AGENTOPS_MCP_CREDENTIAL=${secret} npm run dev:mcp`;
 }
 
 describe('ConnectionPanel', () => {
@@ -64,7 +64,7 @@ describe('ConnectionPanel', () => {
     expect(screen.getByRole('heading', { name: 'Codex CLI' })).toBeInTheDocument();
     expect(screen.getByText(codexCommand)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Local repository adapter' })).toBeInTheDocument();
-    expect(screen.getByText('Requires a BUILD-PMOA checkout. Run these lines from the repository root.')).toBeInTheDocument();
+    expect(screen.getByText('Requires a BUILD-PMOA checkout. Run this command from the repository root.')).toBeInTheDocument();
     const localSection = screen.getByRole('heading', { name: 'Local repository adapter' }).closest('section');
     expect(localSection?.querySelector('pre')?.textContent).toBe(localAdapterConfig('conn_test_abc123'));
     expect(screen.getByText(boundaryInstruction)).toBeInTheDocument();
@@ -483,12 +483,12 @@ describe('ConnectionPanel', () => {
     for (const [buttonName, value, status] of copies) {
       await user.click(screen.getByRole('button', { name: buttonName }));
       expect(writeText).toHaveBeenLastCalledWith(value);
-      expect(screen.getByText(status)).toBeInTheDocument();
+      expect(await screen.findByText(status)).toBeInTheDocument();
     }
     expect(writeText).toHaveBeenCalledTimes(copies.length);
   });
 
-  it('re-announces a repeated copy action through a fresh live-region node', async () => {
+  it('re-announces a repeated copy through observable content changes in one live-region node', async () => {
     const user = userEvent.setup();
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -506,11 +506,15 @@ describe('ConnectionPanel', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Copy endpoint' }));
-    const firstAnnouncement = screen.getByText('Copied endpoint');
+    await screen.findByText('Copied endpoint');
+    const liveRegion = document.querySelector('.mcp-copy-status');
+    expect(liveRegion).not.toBeNull();
     await user.click(screen.getByRole('button', { name: 'Copy endpoint' }));
-    const secondAnnouncement = screen.getByText('Copied endpoint');
 
-    expect(secondAnnouncement).not.toBe(firstAnnouncement);
+    expect(document.querySelector('.mcp-copy-status')).toBe(liveRegion);
+    expect(liveRegion).toHaveTextContent('');
+    await screen.findByText('Copied endpoint');
+    expect(document.querySelector('.mcp-copy-status')).toBe(liveRegion);
   });
 
   it('aborts an in-flight verification when the setup unmounts', async () => {

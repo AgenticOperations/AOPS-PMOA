@@ -40,6 +40,14 @@ describe('resolveMcpPublicUrl', () => {
     'https://mcp.agentops.example/mcp#fragment',
     'https://mcp.agentops.example/mcp#',
     ' https://mcp.agentops.example/mcp',
+    'https:mcp.agentops.example/mcp',
+    'https://MCP.AgentOps.Example/mcp',
+    'https://mcp.agentops.example:443/mcp',
+    'https://mcp.\texample/mcp',
+    'https://mcp.example/mcp\n',
+    'https://mcp.example/\u0000mcp',
+    'https://mcp.example/mcp\u001f',
+    'https://mcp.example/mcp\u007f',
   ])('rejects unsafe production endpoint %s', (value) => {
     expect(() => resolveMcpPublicUrl(env('production', value))).toThrowError(
       'MCP_PUBLIC_URL must be an HTTPS URL with the exact /mcp path',

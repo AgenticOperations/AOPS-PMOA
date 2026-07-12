@@ -6,6 +6,7 @@ import {
   verifyHostedMcp,
   type McpVerificationResult,
 } from '@/lib/mcp-verification';
+import { buildLocalAdapterCommand } from '@/lib/local-adapter-command';
 
 type CredentialMcpSetupProps = {
   readonly mcpEndpoint: string;
@@ -25,8 +26,9 @@ type VerificationState =
 const BOUNDARY_INSTRUCTION = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Call the matching check tool first, follow approval requirements, and record the final outcome. Actions sent outside AOPS are not governed by this connection.';
 
 export function CredentialMcpSetup({ mcpEndpoint, secret, title }: CredentialMcpSetupProps) {
-  const [copyStatus, setCopyStatus] = useState({ id: 0, message: '' });
+  const [copyStatus, setCopyStatus] = useState('');
   const [verification, setVerification] = useState<VerificationState>({ state: 'idle' });
+  const copyAnnouncementTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
   const verificationController = useRef<AbortController | null>(null);
   const verificationAttempt = useRef(0);
   const claudeCodeConfig = `{
@@ -41,23 +43,36 @@ export function CredentialMcpSetup({ mcpEndpoint, secret, title }: CredentialMcp
   }
 }`;
   const codexCommand = `codex mcp add agentops --url ${mcpEndpoint} --bearer-token-env-var AGENTOPS_MCP_CREDENTIAL`;
-  const localAdapter = `AGENTOPS_API_BASE_URL=http://localhost:8080
-AGENTOPS_MCP_CREDENTIAL=${secret.secret}
-npm run dev:mcp`;
+  const localAdapter = buildLocalAdapterCommand(secret.secret);
 
   useEffect(() => () => {
+    if (copyAnnouncementTimer.current !== null) {
+      globalThis.clearTimeout(copyAnnouncementTimer.current);
+      copyAnnouncementTimer.current = null;
+    }
     verificationAttempt.current += 1;
     verificationController.current?.abort();
     verificationController.current = null;
   }, [mcpEndpoint, secret.secret]);
 
+  function announceCopyStatus(message: string) {
+    if (copyAnnouncementTimer.current !== null) {
+      globalThis.clearTimeout(copyAnnouncementTimer.current);
+    }
+    setCopyStatus('');
+    copyAnnouncementTimer.current = globalThis.setTimeout(() => {
+      setCopyStatus(message);
+      copyAnnouncementTimer.current = null;
+    }, 25);
+  }
+
   async function copy(label: string, value: string) {
     try {
       if (navigator.clipboard?.writeText === undefined) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(value);
-      setCopyStatus((current) => ({ id: current.id + 1, message: `Copied ${label}` }));
+      announceCopyStatus(`Copied ${label}`);
     } catch {
-      setCopyStatus((current) => ({ id: current.id + 1, message: 'Copy unavailable' }));
+      announceCopyStatus('Copy unavailable');
     }
   }
 
@@ -127,7 +142,7 @@ npm run dev:mcp`;
 
       <section className="mcp-setup-section" aria-labelledby="mcp-local-adapter-label">
         <div className="mcp-setup-section-heading">
-          <div><h4 id="mcp-local-adapter-label">Local repository adapter</h4><p>Requires a BUILD-PMOA checkout. Run these lines from the repository root.</p></div>
+          <div><h4 id="mcp-local-adapter-label">Local repository adapter</h4><p>Requires a BUILD-PMOA checkout. Run this command from the repository root.</p></div>
           <button className="mcp-copy-button" onClick={() => void copy('local repository adapter', localAdapter)} type="button">Copy local repository adapter</button>
         </div>
         <pre className="mcp-setup-code">{localAdapter}</pre>
@@ -141,7 +156,7 @@ npm run dev:mcp`;
         <p className="mcp-boundary-copy">{BOUNDARY_INSTRUCTION}</p>
       </section>
 
-      <p className="mcp-copy-status" aria-live="polite" key={copyStatus.id}>{copyStatus.message}</p>
+      <p className="mcp-copy-status" aria-atomic="true" aria-live="polite">{copyStatus}</p>
 
       <section className="mcp-verification" aria-labelledby="mcp-verification-label">
         <div className="mcp-verification-heading">
