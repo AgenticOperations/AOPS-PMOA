@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Clean PMOA rebuild of agentOps. Old BUILD remains reference-only.",
   "engines": {
-    "node": ">=20.11.0"
+    "node": ">=22.13.0"
   },
   "workspaces": [
     "packages/*",
@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "dev:api": "npm --workspace @agentops-pmoa/api run dev",
+    "dev:circle-worker": "npm --workspace @agentops-pmoa/api run dev:circle-worker",
     "dev:web": "npm --workspace @agentops-pmoa/web run dev",
     "dev:mcp": "npm --workspace @agentops-pmoa/mcp run dev",
     "build:packages": "npm run build --workspace @agentops-pmoa/contracts --workspace @agentops-pmoa/config --workspace @agentops-pmoa/db",
@@ -24,6 +25,11 @@
     "verify": "npm run lint && npm run typecheck && npm run build && npm test"
   },
   "overrides": {
+    "@circle-fin/cli@0.0.6": {
+      "viem": {
+        "ws": "8.21.0"
+      }
+    },
     "postcss": "8.5.16",
     "testcontainers": "12.0.0",
     "undici": "7.28.0"

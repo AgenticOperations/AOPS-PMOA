@@ -1,9 +1,13 @@
 import type pg from 'pg';
+import type { Redis } from 'ioredis';
+import { readCachedBalances, writeCachedBalances } from './balances-cache.js';
+import { gatewayDepositSatisfied, resolveGatewayDepositorAddress } from './circle-liquidity-worker.js';
 import { sha256Hex } from '../evidence/canonical-json.js';
 import { recordAuditEvent } from '../evidence/audit-writer.js';
 import { approvalContextHash, consumeApproval, createApprovalRequest, getApproval, recordActivity } from '../approvals/store.js';
 import { badRequest, conflict, IdentityError, notFound } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
+import { completeProductOnboardingFlow } from '../identity/onboarding-progress.js';
 import type { ConnectionAuthResult } from '../identity/store.js';
 import type { OperatorContext } from '../identity/types.js';
 import { checkPolicyDecision } from '../policy/store.js';
@@ -647,7 +651,7 @@ function x402Resource(input: RuntimeX402PaymentInput): {
   return {
     url,
     category: stringValue(resource.category),
-    domain: stringValue(resource.domain) ?? domainFromUrl(url),
+    domain: domainFromUrl(url) ?? stringValue(resource.domain),
   };
 }
 
@@ -756,6 +760,28 @@ function gatewayUsdcForMode(chain: PaymentChain, mode: PaymentMode): string {
   return mode === 'test' ? TEST_GATEWAY_USDC[chain] : LIVE_GATEWAY_USDC[chain];
 }
 
+function networkMatchesMode(network: string, chain: PaymentChain, mode: PaymentMode): boolean {
+  const normalized = network.trim().toLowerCase();
+  const expected = gatewayNetworkForMode(chain, mode).toLowerCase();
+  if (normalized.startsWith('eip155:')) return normalized === expected;
+  if (normalized === chain) return true;
+  if (mode === 'live') return false;
+  const testAliases: Record<PaymentChain, readonly string[]> = {
+    arbitrum: ['arbitrum-sepolia', 'arb-sepolia'],
+    avalanche: ['avalanche-fuji', 'avax-fuji'],
+    base: ['base-sepolia'],
+    optimism: ['op-sepolia'],
+    polygon: ['polygon-amoy', 'matic-amoy'],
+  };
+  return testAliases[chain].includes(normalized);
+}
+
+function canonicalUsdcAsset(asset: string | null, chain: PaymentChain, mode: PaymentMode): string | null {
+  const expected = gatewayUsdcForMode(chain, mode);
+  if (asset === null || asset.toLowerCase() === 'usdc') return expected;
+  return asset.toLowerCase() === expected.toLowerCase() ? expected : null;
+}
+
 function gatewayRailForChain(chain: PaymentChain): PaymentRail {
   return normalizeRail(`gateway_${chain}`);
 }
@@ -831,8 +857,9 @@ function quoteFromAccept(accept: RuntimeX402Accept, mode: PaymentMode): RuntimeQ
   if (accept.scheme !== 'exact') return null;
   const chain = networkToChain(accept.network);
   if (chain === null) return null;
-  const asset = stringValue(accept.asset) ?? 'USDC';
-  const assetAddress = asset.toLowerCase() === 'usdc' ? gatewayUsdcForMode(chain, mode) : asset;
+  if (!networkMatchesMode(accept.network, chain, mode)) return null;
+  const assetAddress = canonicalUsdcAsset(stringValue(accept.asset), chain, mode);
+  if (assetAddress === null) return null;
   const amountMicros = x402UsdcMicrosFromAccept(accept);
   const recipient = stringValue(accept.payTo);
   if (recipient === null) return null;
@@ -942,9 +969,21 @@ async function enforceX402Policy(
   input: RuntimeX402PaymentInput,
   quote: RuntimeQuote,
   resource: ReturnType<typeof x402Resource>,
+  accountApprovalThresholdMicros: bigint | null,
 ): Promise<{ readonly approvalId: string | null; readonly decisionId: string }> {
   const target: PolicyDecisionRequest['target'] = { type: 'agent', id: auth.agent_id };
-  const context = x402PolicyContext({ paymentInput: input, quote, resource });
+  const thresholdRequiresApproval = accountApprovalThresholdMicros !== null && quote.amountMicros >= accountApprovalThresholdMicros;
+  const context = {
+    ...x402PolicyContext({ paymentInput: input, quote, resource }),
+    ...(thresholdRequiresApproval
+      ? {
+          control: {
+            approval_threshold_usdc: formatUsdc(accountApprovalThresholdMicros),
+            source: 'agent_payment_account',
+          },
+        }
+      : {}),
+  };
   const decision = await checkPolicyDecision(
     pool,
     { actorId: auth.connection_id, role: 'member', orgId: auth.org_id },
@@ -961,7 +1000,8 @@ async function enforceX402Policy(
     throw new IdentityError(decision.reasonCode, 403, decision.explanation);
   }
 
-  if (decision.decision !== 'approval_required') return { approvalId: null, decisionId: decision.id };
+  const requiresApproval = decision.decision === 'approval_required' || thresholdRequiresApproval;
+  if (!requiresApproval) return { approvalId: null, decisionId: decision.id };
 
   const proof = approvalProofFromContext(input.context);
   if (proof.approvalId !== null && proof.decisionId !== null) {
@@ -987,7 +1027,13 @@ async function enforceX402Policy(
     target,
     context,
   });
-  throw new PaymentApprovalRequiredError(decision.id, approval.id, decision.explanation);
+  throw new PaymentApprovalRequiredError(
+    decision.id,
+    approval.id,
+    thresholdRequiresApproval && decision.decision !== 'approval_required'
+      ? `Payment amount is at or above the agent approval threshold of ${formatUsdc(accountApprovalThresholdMicros)} USDC.`
+      : decision.explanation,
+  );
 }
 
 function paymentEventFromRow(row: PaymentEventRow, activity: RuntimeX402PaymentRecord['activity']): RuntimeX402PaymentRecord {
@@ -1310,6 +1356,13 @@ export async function setAgentPaymentAccess(
     },
   });
 
+  if (paymentAccess) {
+    await completeProductOnboardingFlow(pool, orgId, 'payment_access', {
+      agent_id: agentId,
+      source: 'agent_payment_access_enabled',
+    });
+  }
+
   return accountFromRow(row);
 }
 
@@ -1340,6 +1393,35 @@ export async function getAgentPayments(
   return {
     account: account.rows[0] === undefined ? null : accountFromRow(account.rows[0]),
     sources: sources.rows.map(sourceFromRow),
+  };
+}
+
+export async function listAgentPaymentAccounts(
+  pool: pg.Pool,
+  orgId: string,
+): Promise<{
+  readonly accounts: readonly AgentPaymentAccountRecord[];
+  readonly sources: readonly PaymentSourceRecord[];
+}> {
+  const [accountRows, sourceRows] = await Promise.all([
+    pool.query<AgentPaymentAccountRow>(
+      `SELECT *
+         FROM agent_payment_accounts
+        WHERE org_id = $1`,
+      [orgId],
+    ),
+    pool.query<PaymentSourceRow>(
+      `SELECT *
+         FROM payment_sources
+        WHERE org_id = $1
+          AND status = 'active'
+        ORDER BY rail ASC, created_at DESC`,
+      [orgId],
+    ),
+  ]);
+  return {
+    accounts: accountRows.rows.map(accountFromRow),
+    sources: sourceRows.rows.map(sourceFromRow),
   };
 }
 
@@ -2299,6 +2381,9 @@ export async function setOrgPaymentMode(
   orgId: string,
   mode: PaymentMode,
 ): Promise<OrgPaymentModeRecord> {
+  if (mode !== 'test') {
+    throw badRequest('payment_mode_testnet_only', 'Live payments are not available in the testnet product.');
+  }
   const result = await pool.query<OrgPaymentModeRow>(
     `INSERT INTO org_payment_modes (org_id, mode, updated_by)
      VALUES ($1, $2, $3)
@@ -2546,17 +2631,21 @@ export async function listCircleBalances(
   pool: Db,
   orgId: string,
   provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+  redis?: Redis,
 ): Promise<CircleChainBalanceRecord[]> {
   const mode = (await getOrgPaymentMode(pool, orgId)).mode;
+  const cached = await readCachedBalances(redis, orgId, mode);
+  if (cached !== null) return [...cached];
   const rows = await listCircleWalletRows(pool, orgId, mode);
-  return Promise.all(
+  const balances = await Promise.all(
     rows.map(async (wallet) => {
+      const gatewayDepositorAddress = resolveGatewayDepositorAddress(wallet.address, wallet.metadata);
       const [walletBalances, gatewayBalance] = await Promise.all([
         provider.getWalletBalances({ mode, walletId: wallet.circle_wallet_id }).catch(() => ({
           balances: [],
           providerMode: mode,
         })),
-        provider.getGatewayBalance({ address: wallet.address, chain: wallet.chain, mode }).catch(() => null),
+        provider.getGatewayBalance({ address: gatewayDepositorAddress, chain: wallet.chain, mode }).catch(() => null),
       ]);
       return {
         address: wallet.address,
@@ -2576,6 +2665,8 @@ export async function listCircleBalances(
       };
     }),
   );
+  await writeCachedBalances(redis, orgId, mode, balances);
+  return balances;
 }
 
 export async function listCircleProviderJobs(
@@ -2663,7 +2754,9 @@ export async function reconcileCircleProviderJobs(
       const observedMicros = balance?.gateway === null || balance?.gateway === undefined
         ? 0n
         : parseUsdcMicros(balance.gateway.available);
-      if (observedMicros < amountMicros) continue;
+      const before = metadataString(metadata, 'gateway_before_usdc');
+      const beforeMicros = before === null ? null : parseUsdcMicros(before);
+      if (!gatewayDepositSatisfied({ amountMicros, beforeMicros, observedMicros })) continue;
 
       reconciled.push(await completeProviderJobReconciled(pool, {
         amount,
@@ -2740,7 +2833,7 @@ async function completeProviderJobReconciled(
       orgId: input.orgId,
       idempotencyKey: `circle_provider_job.reconciled:${input.jobId}`,
       eventType: `${input.jobType}.reconciled`,
-      actor: { type: 'user', id: input.operator.actorId },
+      actor: { type: input.operator.userId === undefined ? 'system' : 'user', id: input.operator.actorId },
       action: `${input.jobType}.reconciled`,
       outcome: 'success',
       resource: { type: 'circle_provider_job', id: input.jobId },
@@ -2825,11 +2918,13 @@ async function reconcileSatisfiedLiquidityJobsForBalances(
     if (destinationBalance === undefined) continue;
 
     const amountMicros = parseUsdcMicros(formatDbUsdc(row.amount_usdc));
+    const destinationTarget = metadataString(metadata, 'destination_target_usdc');
+    const destinationTargetMicros = destinationTarget === null ? amountMicros : parseUsdcMicros(destinationTarget);
     const needsGatewayBalance = strategy === 'wallet_to_gateway' || strategy === 'wallet_rebalance_then_gateway_deposit';
     const observedMicros = needsGatewayBalance
       ? destinationBalance.gateway === null ? 0n : parseUsdcMicros(destinationBalance.gateway.available)
       : walletUsdcMicros(destinationBalance);
-    if (observedMicros < amountMicros) continue;
+    if (observedMicros < destinationTargetMicros) continue;
 
     await db.query(
       `UPDATE circle_provider_jobs
@@ -2903,8 +2998,51 @@ function maxMicros(left: bigint, right: bigint): bigint {
   return left > right ? left : right;
 }
 
+function positiveDeficitMicros(target: bigint, current: bigint): bigint {
+  return target > current ? target - current : 0n;
+}
+
+function gatewayUsdcMicros(balance: CircleChainBalanceRecord | undefined): bigint {
+  if (balance?.gateway === null || balance?.gateway === undefined) return 0n;
+  try {
+    return parseUsdcMicros(balance.gateway.available);
+  } catch {
+    return 0n;
+  }
+}
+
 function jobUuid(jobId: string): string {
   return jobId.startsWith('cjob_') ? jobId.slice('cjob_'.length) : jobId;
+}
+
+async function openLiquidityPreparationJob(
+  db: Db,
+  input: {
+    readonly connectionId: string;
+    readonly mode: PaymentMode;
+    readonly orgId: string;
+    readonly quoteHash: string;
+  },
+): Promise<CircleProviderJobRecord | null> {
+  const existing = await db.query<CircleProviderJobRow>(
+    `SELECT *
+       FROM circle_provider_jobs
+      WHERE org_id = $1
+        AND mode = $2
+        AND job_type = 'liquidity.prepare'
+        AND status IN ('queued', 'submitted')
+        AND metadata ->> 'connection_id' = $3
+        AND metadata ->> 'payment_quote_hash' = $4
+      ORDER BY created_at ASC
+      LIMIT 1`,
+    [input.orgId, input.mode, input.connectionId, input.quoteHash],
+  );
+  const row = existing.rows[0];
+  return row === undefined ? null : providerJobFromRow(row);
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
 async function createGatewayLiquidityPreparationJob(
@@ -2931,14 +3069,38 @@ async function createGatewayLiquidityPreparationJob(
     );
   }
 
-  const prepMicros = maxMicros(input.quote.amountMicros, CIRCLE_GATEWAY_MIN_DEPOSIT_MICROS);
+  const quoteHash = sha256Hex({
+    accept: input.quote.accept,
+    agentId: input.auth.agent_id,
+    connectionId: input.auth.connection_id,
+    mode: input.mode,
+    resource: input.paymentInput.resource ?? {},
+    x402: {
+      amount: input.quote.x402Amount,
+      network: input.quote.x402Network,
+      rail: input.quote.rail,
+    },
+  });
+  const existing = await openLiquidityPreparationJob(db, {
+    connectionId: input.auth.connection_id,
+    mode: input.mode,
+    orgId: input.auth.org_id,
+    quoteHash,
+  });
+  if (existing !== null) return existing;
+
   const balances = await listCircleBalances(db, input.auth.org_id, input.provider);
   const destinationBalance = balances.find((balance) => balance.chain === input.quote.chain);
+  const destinationGatewayMicros = gatewayUsdcMicros(destinationBalance);
+  const destinationTargetMicros = maxMicros(input.quote.amountMicros, CIRCLE_GATEWAY_MIN_DEPOSIT_MICROS);
+  const gatewayDeficitMicros = positiveDeficitMicros(destinationTargetMicros, destinationGatewayMicros);
+  const prepMicros = maxMicros(gatewayDeficitMicros, CIRCLE_GATEWAY_MIN_DEPOSIT_MICROS);
   const destinationWalletMicros = destinationBalance === undefined ? 0n : walletUsdcMicros(destinationBalance);
+  const bridgeDeficitMicros = positiveDeficitMicros(prepMicros, destinationWalletMicros);
   const sourceChain =
-    destinationWalletMicros >= prepMicros
+    bridgeDeficitMicros === 0n
       ? input.quote.chain
-      : sourceChainForRebalance(balances, input.quote.chain, prepMicros);
+      : sourceChainForRebalance(balances, input.quote.chain, bridgeDeficitMicros);
 
   if (sourceChain === null) {
     throw conflict(
@@ -2952,17 +3114,9 @@ async function createGatewayLiquidityPreparationJob(
       ? 'wallet_to_gateway'
       : 'wallet_rebalance_then_gateway_deposit';
   const jobId = prefixedId('cjob');
-  const quoteHash = sha256Hex({
-    accept: input.quote.accept,
-    mode: input.mode,
-    resource: input.paymentInput.resource ?? {},
-    x402: {
-      amount: input.quote.x402Amount,
-      network: input.quote.x402Network,
-      rail: input.quote.rail,
-    },
-  });
-  const inserted = await db.query<CircleProviderJobRow>(
+  let inserted: pg.QueryResult<CircleProviderJobRow>;
+  try {
+    inserted = await db.query<CircleProviderJobRow>(
     `INSERT INTO circle_provider_jobs (
        id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by
      )
@@ -2977,8 +3131,12 @@ async function createGatewayLiquidityPreparationJob(
       JSON.stringify({
         agent_id: input.auth.agent_id,
         connection_id: input.auth.connection_id,
+        destination_before_usdc: formatUsdc(destinationGatewayMicros),
         destination_bucket: `gateway:${input.quote.chain}`,
         destination_chain: input.quote.chain,
+        destination_target_usdc: formatUsdc(destinationTargetMicros),
+        destination_wallet_before_usdc: formatUsdc(destinationWalletMicros),
+        destination_wallet_target_usdc: formatUsdc(prepMicros),
         gasless_verified: true,
         payment_amount_usdc: input.quote.amount,
         payment_quote_hash: quoteHash,
@@ -2995,6 +3153,17 @@ async function createGatewayLiquidityPreparationJob(
       input.auth.connection_id,
     ],
   );
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const concurrent = await openLiquidityPreparationJob(db, {
+      connectionId: input.auth.connection_id,
+      mode: input.mode,
+      orgId: input.auth.org_id,
+      quoteHash,
+    });
+    if (concurrent !== null) return concurrent;
+    throw error;
+  }
   const row = inserted.rows[0];
   if (row === undefined) throw new Error('liquidity_prepare_job_insert_failed');
 
@@ -3043,8 +3212,31 @@ async function createExactLiquidityPreparationJob(
     );
   }
 
-  const prepMicros = maxMicros(input.quote.amountMicros, EXACT_WALLET_REBALANCE_MIN_MICROS);
+  const quoteHash = sha256Hex({
+    accept: input.quote.accept,
+    agentId: input.auth.agent_id,
+    connectionId: input.auth.connection_id,
+    mode: input.mode,
+    resource: input.paymentInput.resource ?? {},
+    x402: {
+      amount: input.quote.x402Amount,
+      network: input.quote.x402Network,
+      rail: input.quote.rail,
+    },
+  });
+  const existing = await openLiquidityPreparationJob(db, {
+    connectionId: input.auth.connection_id,
+    mode: input.mode,
+    orgId: input.auth.org_id,
+    quoteHash,
+  });
+  if (existing !== null) return existing;
+
   const balances = await listCircleBalances(db, input.auth.org_id, input.provider);
+  const destinationBalance = balances.find((balance) => balance.chain === input.quote.chain);
+  const destinationBeforeMicros = destinationBalance === undefined ? 0n : walletUsdcMicros(destinationBalance);
+  const destinationTargetMicros = maxMicros(input.quote.amountMicros, EXACT_WALLET_REBALANCE_MIN_MICROS);
+  const prepMicros = positiveDeficitMicros(destinationTargetMicros, destinationBeforeMicros);
   const sourceChain = sourceChainForRebalance(balances, input.quote.chain, prepMicros);
   if (sourceChain === null) {
     throw conflict(
@@ -3054,17 +3246,9 @@ async function createExactLiquidityPreparationJob(
   }
 
   const jobId = prefixedId('cjob');
-  const quoteHash = sha256Hex({
-    accept: input.quote.accept,
-    mode: input.mode,
-    resource: input.paymentInput.resource ?? {},
-    x402: {
-      amount: input.quote.x402Amount,
-      network: input.quote.x402Network,
-      rail: input.quote.rail,
-    },
-  });
-  const inserted = await db.query<CircleProviderJobRow>(
+  let inserted: pg.QueryResult<CircleProviderJobRow>;
+  try {
+    inserted = await db.query<CircleProviderJobRow>(
     `INSERT INTO circle_provider_jobs (
        id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by
      )
@@ -3079,8 +3263,10 @@ async function createExactLiquidityPreparationJob(
       JSON.stringify({
         agent_id: input.auth.agent_id,
         connection_id: input.auth.connection_id,
+        destination_before_usdc: formatUsdc(destinationBeforeMicros),
         destination_bucket: `wallet:${input.quote.chain}`,
         destination_chain: input.quote.chain,
+        destination_target_usdc: formatUsdc(destinationTargetMicros),
         gasless_verified: true,
         payment_amount_usdc: input.quote.amount,
         payment_quote_hash: quoteHash,
@@ -3097,6 +3283,17 @@ async function createExactLiquidityPreparationJob(
       input.auth.connection_id,
     ],
   );
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const concurrent = await openLiquidityPreparationJob(db, {
+      connectionId: input.auth.connection_id,
+      mode: input.mode,
+      orgId: input.auth.org_id,
+      quoteHash,
+    });
+    if (concurrent !== null) return concurrent;
+    throw error;
+  }
   const row = inserted.rows[0];
   if (row === undefined) throw new Error('liquidity_prepare_job_insert_failed');
 
@@ -3131,8 +3328,9 @@ export async function listRebalanceRecommendations(
   pool: pg.Pool,
   orgId: string,
   provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+  redis?: Redis,
 ): Promise<RebalanceRecommendationRecord[]> {
-  const balances = await listCircleBalances(pool, orgId, provider);
+  const balances = await listCircleBalances(pool, orgId, provider, redis);
   return listRebalanceRecommendationsForBalances(pool, orgId, balances);
 }
 
@@ -3419,6 +3617,12 @@ export async function initiateCircleGatewayDeposit(
     throw badRequest('gateway_deposit_minimum', 'Gateway deposits must be at least 0.5 USDC.');
   }
   const wallet = await activeCircleWallet(pool, orgId, mode, input.chain);
+  const gatewayDepositorAddress = resolveGatewayDepositorAddress(wallet.address, wallet.metadata);
+  const gatewayBefore = await provider.getGatewayBalance({
+    address: gatewayDepositorAddress,
+    chain: input.chain,
+    mode,
+  }).catch(() => null);
   const jobId = prefixedId('cjob');
   const inserted = await pool.query<CircleProviderJobRow>(
     `INSERT INTO circle_provider_jobs (
@@ -3435,6 +3639,7 @@ export async function initiateCircleGatewayDeposit(
       JSON.stringify({
         address: wallet.address,
         circle_wallet_id: wallet.circle_wallet_id,
+        gateway_before_usdc: gatewayBefore?.available ?? null,
         wallet_set_id: wallet.wallet_set_id,
       }),
       operator.actorId,
@@ -3465,7 +3670,7 @@ export async function initiateCircleGatewayDeposit(
     return withTransaction(pool, async (client) => {
       const updated = await client.query<CircleProviderJobRow>(
         `UPDATE circle_provider_jobs
-            SET status = 'submitted',
+            SET status = 'complete',
                 provider_ref = $2,
                 metadata = metadata || $3::jsonb,
                 updated_at = now()
@@ -3477,11 +3682,22 @@ export async function initiateCircleGatewayDeposit(
           JSON.stringify({
             approval_transaction_id: submitted.approvalTransactionId,
             amount_micros: submitted.amountMicros,
+            completed_by: operator.actorId,
             deposit_transaction_id: submitted.depositTransactionId,
+            gateway_depositor_address: submitted.gatewayDepositorAddress,
             gateway_wallet_address: submitted.gatewayWalletAddress,
+            provider_confirmed_at: new Date().toISOString(),
+            reconcile_method: 'provider_confirmed',
             usdc_address: submitted.usdcAddress,
           }),
         ],
+      );
+      await client.query(
+        `UPDATE circle_chain_wallets
+            SET metadata = metadata || jsonb_build_object('gateway_depositor_address', $2::text),
+                updated_at = now()
+          WHERE id = $1`,
+        [wallet.id, submitted.gatewayDepositorAddress],
       );
       const row = updated.rows[0];
       if (row === undefined) throw new Error('circle_gateway_deposit_job_update_failed');
@@ -3489,24 +3705,25 @@ export async function initiateCircleGatewayDeposit(
       await recordActivity(client, {
         orgId,
         category: 'treasury',
-        action: 'gateway.deposit.submitted',
+        action: 'gateway.deposit.complete',
         outcome: 'success',
-        summary: `${amount} USDC Gateway deposit submitted on ${input.chain}`,
+        summary: `${amount} USDC Gateway deposit completed on ${input.chain}`,
         payload: {
           amount_usdc: amount,
           chain: input.chain,
           mode,
           provider_ref: submitted.depositTransactionId,
           approval_transaction_id: submitted.approvalTransactionId,
+          gateway_depositor_address: submitted.gatewayDepositorAddress,
         },
       });
 
       await recordAuditEvent(client, {
         orgId,
-        idempotencyKey: `gateway.deposit.submitted:${jobId}`,
-        eventType: 'gateway.deposit.submitted',
+        idempotencyKey: `gateway.deposit.complete:${jobId}`,
+        eventType: 'gateway.deposit.complete',
         actor: { type: 'user', id: operator.actorId },
-        action: 'gateway.deposit.submitted',
+        action: 'gateway.deposit.complete',
         outcome: 'success',
         resource: { type: 'circle_provider_job', id: jobId },
         classification: {
@@ -3733,6 +3950,8 @@ export async function retryLiquidityJob(
 
   const amount = formatDbUsdc(row.amount_usdc);
   const amountMicros = parseUsdcMicros(amount);
+  const destinationTarget = metadataString(metadata, 'destination_target_usdc');
+  const destinationTargetMicros = destinationTarget === null ? amountMicros : parseUsdcMicros(destinationTarget);
   let bridgeTransactionId: string | null = metadataString(metadata, 'bridge_transaction_id');
   let bridgeStatus: string | null = metadataString(metadata, 'bridge_status');
   let depositTransactionId: string | null = metadataString(metadata, 'deposit_transaction_id');
@@ -3742,17 +3961,21 @@ export async function retryLiquidityJob(
     const sourceWallet = await activeCircleWallet(pool, orgId, mode, sourceChain);
     const destinationWallet = await activeCircleWallet(pool, orgId, mode, destinationChain);
     const needsGatewayBalance = strategy === 'wallet_to_gateway' || strategy === 'wallet_rebalance_then_gateway_deposit';
+    let gatewayDepositorAddress = resolveGatewayDepositorAddress(destinationWallet.address, {
+      ...objectFromJson(destinationWallet.metadata),
+      ...metadata,
+    });
 
     if (needsGatewayBalance) {
       try {
         const gatewayBalance = await provider.getGatewayBalance({
-          address: destinationWallet.address,
+          address: gatewayDepositorAddress,
           chain: destinationChain,
           mode,
         });
         const gatewayMicros = parseUsdcMicros(gatewayBalance.available);
         observedGatewayUsdc = formatUsdc(gatewayMicros);
-        if (gatewayMicros >= amountMicros) {
+        if (gatewayMicros >= destinationTargetMicros) {
           gatewayAlreadySufficient = true;
           bridgeStatus = bridgeStatus ?? 'already_sufficient_gateway_balance';
         }
@@ -3764,18 +3987,35 @@ export async function retryLiquidityJob(
     if (
       !gatewayAlreadySufficient &&
       (strategy === 'wallet_rebalance_then_gateway_deposit' || strategy === 'wallet_rebalance') &&
-      bridgeTransactionId === null
+      bridgeTransactionId === null &&
+      depositTransactionId === null
     ) {
       const destinationWalletMicros = await providerWalletUsdcMicros({
         mode,
         provider,
         walletId: destinationWallet.circle_wallet_id,
       });
-      if (destinationWalletMicros !== null && destinationWalletMicros >= amountMicros) {
+      const walletTargetMicros = strategy === 'wallet_rebalance' ? destinationTargetMicros : amountMicros;
+      const bridgeAmountMicros = destinationWalletMicros === null
+        ? amountMicros
+        : positiveDeficitMicros(walletTargetMicros, destinationWalletMicros);
+      if (bridgeAmountMicros === 0n) {
         bridgeStatus = 'already_sufficient_destination_balance';
       } else {
+        if (bridgeAmountMicros > amountMicros) {
+          return failLiquidityJob(pool, {
+            errorCode: 'liquidity_destination_balance_regressed',
+            jobId,
+            message: 'Destination liquidity fell below the balance used to size this preparation job. Retry the payment to create a new deficit-aware job.',
+            metadata: {
+              destination_target_usdc: formatUsdc(walletTargetMicros),
+              observed_destination_wallet_usdc: destinationWalletMicros === null ? null : formatUsdc(destinationWalletMicros),
+            },
+          });
+        }
+        const bridgeAmount = formatUsdc(bridgeAmountMicros);
         const bridge = await provider.bridgeWalletTopUp({
-          amount,
+          amount: bridgeAmount,
           fromAddress: sourceWallet.address,
           fromChain: sourceChain,
           idempotencyKey: metadataString(metadata, 'bridge_idempotency_key') ?? jobUuid(jobId),
@@ -3792,6 +4032,24 @@ export async function retryLiquidityJob(
         }
         bridgeStatus = 'submitted';
         bridgeTransactionId = bridge.transaction ?? null;
+        await pool.query(
+          `UPDATE circle_provider_jobs
+              SET status = 'submitted',
+                  provider_ref = COALESCE($2, provider_ref),
+                  metadata = metadata || $3::jsonb,
+                  updated_at = now()
+            WHERE id = $1`,
+          [
+            jobId,
+            bridgeTransactionId,
+            JSON.stringify({
+              bridge_amount_usdc: bridgeAmount,
+              bridge_status: bridgeStatus,
+              bridge_transaction_id: bridgeTransactionId,
+              prep_status: 'bridge_submitted',
+            }),
+          ],
+        );
       }
     }
 
@@ -3805,16 +4063,58 @@ export async function retryLiquidityJob(
           walletId: destinationWallet.circle_wallet_id,
         });
         depositTransactionId = deposit.depositTransactionId;
+        gatewayDepositorAddress = deposit.gatewayDepositorAddress;
+        await pool.query(
+          `UPDATE circle_provider_jobs
+              SET status = 'submitted',
+                  provider_ref = $2,
+                  metadata = metadata || $3::jsonb,
+                  updated_at = now()
+            WHERE id = $1`,
+          [
+            jobId,
+            depositTransactionId,
+            JSON.stringify({
+              deposit_transaction_id: depositTransactionId,
+              gateway_depositor_address: gatewayDepositorAddress,
+              prep_status: 'gateway_deposit_submitted',
+            }),
+          ],
+        );
+        await pool.query(
+          `UPDATE circle_chain_wallets
+              SET metadata = metadata || jsonb_build_object('gateway_depositor_address', $2::text),
+                  updated_at = now()
+            WHERE id = $1`,
+          [destinationWallet.id, gatewayDepositorAddress],
+        );
       }
 
-      const gatewayBalance = await provider.getGatewayBalance({
-        address: destinationWallet.address,
-        chain: destinationChain,
-        mode,
-      });
+      let gatewayBalance: Awaited<ReturnType<CircleTreasuryProvider['getGatewayBalance']>>;
+      try {
+        gatewayBalance = await provider.getGatewayBalance({
+          address: gatewayDepositorAddress,
+          chain: destinationChain,
+          mode,
+        });
+      } catch {
+        return submitLiquidityJobAwaitingGatewayBalance(pool, {
+          amount,
+          bridgeStatus,
+          bridgeTransactionId,
+          depositTransactionId,
+          destinationChain,
+          jobId,
+          observedGatewayUsdc: null,
+          operator,
+          orgId,
+          sourceChain,
+          strategy,
+        });
+      }
       const gatewayMicros = parseUsdcMicros(gatewayBalance.available);
       observedGatewayUsdc = formatUsdc(gatewayMicros);
-      if (gatewayMicros < amountMicros) {
+      if (gatewayMicros < destinationTargetMicros) {
         return submitLiquidityJobAwaitingGatewayBalance(pool, {
           amount,
           bridgeStatus,
@@ -3879,7 +4179,7 @@ export async function retryLiquidityJob(
         orgId,
         idempotencyKey: `liquidity.prepare.complete:${jobId}`,
         eventType: 'liquidity.prepare.complete',
-        actor: { type: 'user', id: operator.actorId },
+        actor: { type: operator.userId === undefined ? 'system' : 'user', id: operator.actorId },
         action: 'liquidity.prepare.complete',
         outcome: 'success',
         resource: { type: 'circle_provider_job', id: jobId },
@@ -3952,9 +4252,10 @@ export async function getTreasuryOverview(
   pool: pg.Pool,
   orgId: string,
   provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+  redis?: Redis,
 ): Promise<TreasuryOverviewRecord> {
   const mode = (await getOrgPaymentMode(pool, orgId)).mode;
-  const balances = await listCircleBalances(pool, orgId, provider);
+  const balances = await listCircleBalances(pool, orgId, provider, redis);
   return getTreasuryOverviewForBalances(pool, orgId, mode, balances);
 }
 
@@ -3974,8 +4275,6 @@ async function getTreasuryOverviewForBalances(
     }
   }, 0n);
 
-  await expireStaleCircleProviderJobs(pool, orgId);
-  await reconcileSatisfiedLiquidityJobsForBalances(pool, orgId, balances);
   const jobs = await pool.query<CircleProviderJobRow>(
     `SELECT *
        FROM circle_provider_jobs
@@ -4054,13 +4353,14 @@ export async function getPaymentsConsoleSnapshot(
   pool: pg.Pool,
   orgId: string,
   provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+  redis?: Redis,
 ): Promise<{
   readonly balances: readonly CircleChainBalanceRecord[];
   readonly rebalanceRecommendations: readonly RebalanceRecommendationRecord[];
   readonly overview: TreasuryOverviewRecord;
 }> {
   const mode = (await getOrgPaymentMode(pool, orgId)).mode;
-  const balances = await listCircleBalances(pool, orgId, provider);
+  const balances = await listCircleBalances(pool, orgId, provider, redis);
   const [overview, rebalanceRecommendations] = await Promise.all([
     getTreasuryOverviewForBalances(pool, orgId, mode, balances),
     listRebalanceRecommendationsForBalances(pool, orgId, balances),
@@ -4495,7 +4795,7 @@ export async function payRuntimeX402(
         resourceUrl: resource.url,
         resourceCategory: resource.category,
       });
-      throw conflict('unsupported_payment_rail', 'The x402 payment request is not compatible with the configured Gateway rail.');
+      throw conflict('unsupported_payment_rail', 'The x402 payment request is not compatible with this workspace\'s supported USDC rails.');
     }
 
     if (quote === null) {
@@ -4608,7 +4908,17 @@ export async function payRuntimeX402(
       throw badRequest('exact_resource_url_required', 'Exact x402 payments require resource.url so agentOps can retry the paid endpoint.');
     }
 
-    const policyGate = await enforceX402Policy(pool, auth, input, quote, resource);
+    const accountApprovalThresholdMicros = account.approval_threshold_usdc === null
+      ? null
+      : parseUsdcMicros(account.approval_threshold_usdc);
+    const policyGate = await enforceX402Policy(
+      pool,
+      auth,
+      input,
+      quote,
+      resource,
+      accountApprovalThresholdMicros,
+    );
 
     const railCapability = await getCircleChainCapability(client, mode, quote.chain);
     const verificationFailure = railVerificationFailure(railCapability, quote);
@@ -4704,8 +5014,10 @@ export async function payRuntimeX402(
     if (quote.settlementKind === 'gateway' && source.provider === 'circle_gateway') {
       let availableMicros: bigint;
       try {
+        const chainWallet = await activeCircleWallet(client, auth.org_id, mode, quote.chain);
+        const gatewayDepositorAddress = resolveGatewayDepositorAddress(chainWallet.address, chainWallet.metadata);
         const balance = await provider.getGatewayBalance({
-          address: source.address as string,
+          address: gatewayDepositorAddress,
           chain: quote.chain,
           mode,
         });
@@ -4914,20 +5226,23 @@ export async function payRuntimeX402(
     const reservationId = prefixedId('payres');
     const settlementPayer = 'payer' in settlement ? settlement.payer : undefined;
     const settlementTransaction = settlement.transaction ?? undefined;
-    const fulfillment = providerMode === 'test' && quote.settlementKind === 'direct_exact'
-      ? await fulfillPaidResource({
-          amount: quote.x402Amount,
-          asset: quote.x402Requirements.asset,
-          method: stringValue(input.resource?.method) ?? undefined,
-          mimeType: stringValue(input.resource?.mimeType) ?? 'application/json',
-          network: quote.x402Network,
-          payer: settlementPayer,
-          rail: quote.rail,
-          recipient: quote.recipient,
-          transaction: settlementTransaction,
-          url: resource.url,
-        })
-      : { status: 'not_requested' as const };
+    const providerFulfillment = 'fulfillment' in settlement ? settlement.fulfillment : undefined;
+    const fulfillment = providerFulfillment ?? (
+      providerMode === 'test' && quote.settlementKind === 'direct_exact'
+        ? await fulfillPaidResource({
+            amount: quote.x402Amount,
+            asset: quote.x402Requirements.asset,
+            method: stringValue(input.resource?.method) ?? undefined,
+            mimeType: stringValue(input.resource?.mimeType) ?? 'application/json',
+            network: quote.x402Network,
+            payer: settlementPayer,
+            rail: quote.rail,
+            recipient: quote.recipient,
+            transaction: settlementTransaction,
+            url: resource.url,
+          })
+        : { status: 'not_requested' as const }
+    );
     const quotePayload = {
       accept: quote.accept,
       resource: input.resource ?? {},

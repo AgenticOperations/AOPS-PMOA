@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
+import type { Redis } from 'ioredis';
 import { z } from 'zod';
 import { resolveSession } from '../auth/store.js';
 import { IdentityError } from '../identity/errors.js';
@@ -18,6 +19,7 @@ import {
   getPaymentsConsoleSnapshot,
   getTreasuryOverview,
   initiateCircleGatewayDeposit,
+  listAgentPaymentAccounts,
   listCircleBalances,
   listPaymentSources,
   listPaymentEvents,
@@ -41,7 +43,8 @@ import {
   verifyPaymentRails,
   verifyPaymentRail,
 } from './store.js';
-import { createCircleTreasuryProvider, type CircleTreasuryProvider } from './circle-provider.js';
+import type { CircleTreasuryProvider } from './circle-provider.js';
+import type { CircleConnectionController } from './circle-worker-client.js';
 
 export type RegisterPaymentRoutesDeps = {
   readonly pool: pg.Pool;
@@ -49,11 +52,14 @@ export type RegisterPaymentRoutesDeps = {
   readonly sessionCookieName?: string | undefined;
   readonly resolveOperator?: ((request: FastifyRequest) => Promise<OperatorContext | null>) | undefined;
   readonly circleProvider?: CircleTreasuryProvider | undefined;
+  readonly circleProviderFactory?: ((orgId: string) => CircleTreasuryProvider) | undefined;
+  readonly circleConnectionService?: CircleConnectionController | undefined;
+  readonly redis?: Redis | undefined;
 };
 
 const modeSchema = z.enum(['test', 'live']);
 const chainSchema = z.enum(['base', 'arbitrum', 'polygon', 'optimism', 'avalanche']);
-const railSchema = z.enum([
+const paymentRails = [
   'gateway_base',
   'gateway_arbitrum',
   'gateway_polygon',
@@ -64,9 +70,10 @@ const railSchema = z.enum([
   'exact_polygon',
   'exact_optimism',
   'exact_avalanche',
-]);
+] as const;
+const railSchema = z.enum(paymentRails);
 const sourceTypeSchema = z.enum(['gateway', 'direct_exact', 'dedicated_wallet']);
-const providerSchema = z.enum(['circle_gateway', 'circle_wallets', 'manual', 'simulation']);
+const providerSchema = z.enum(['circle_gateway', 'circle_wallets']);
 const accountTypeSchema = z.enum(['eoa', 'sca', 'virtual', 'unknown']);
 const moneySchema = z.string().trim().regex(/^\d+(?:\.\d{1,6})?$/);
 
@@ -87,13 +94,12 @@ const paymentSourceSchema = z.object({
   account_type: accountTypeSchema.optional(),
   address: z.string().trim().min(1).max(240).nullable().optional(),
   external_wallet_id: z.string().trim().min(1).max(240).nullable().optional(),
-  simulated_balance_usdc: moneySchema.optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const paymentAccessSchema = z.object({
   status: z.enum(['active', 'disabled']),
-  allowed_rails: z.array(railSchema).max(8).default([]),
+  allowed_rails: z.array(railSchema).max(paymentRails.length).default([]),
   budget_usdc: moneySchema,
   dedicated_wallet_required: z.boolean(),
   per_request_cap_usdc: moneySchema,
@@ -106,6 +112,15 @@ const providerModeSchema = z.object({
 
 const circleTreasurySchema = z.object({
   label: z.string().trim().min(1).max(120).default('Org treasury'),
+});
+
+const circleConnectionInitSchema = z.object({
+  email: z.string().trim().email().max(320),
+});
+
+const circleConnectionCompleteSchema = z.object({
+  challenge_id: z.string().trim().min(1).max(120),
+  otp: z.string().trim().regex(/^(?:[A-Za-z0-9]+-)?\d{6}$/),
 });
 
 const gatewayDepositSchema = z.object({
@@ -210,8 +225,42 @@ function parseBody<T>(schema: z.ZodType<T>, request: FastifyRequest): T {
   return schema.parse(request.body ?? {});
 }
 
+function unavailableCircleProvider(): CircleTreasuryProvider {
+  const unavailable = <T>(): Promise<T> => Promise.reject(new IdentityError(
+    'circle_connection_not_configured',
+    503,
+    'Circle Agent Wallet worker is not configured.',
+  ));
+  return {
+    bridgeWalletTopUp: unavailable,
+    createWallet: unavailable,
+    createWalletSet: unavailable,
+    getGatewayBalance: unavailable,
+    getWalletBalances: unavailable,
+    health: () => ({ configured: false, missing: ['circle_agent_wallet_worker'], mode: 'test', provider: 'circle' }),
+    initiateGatewayDeposit: unavailable,
+    requestTestnetFunds: unavailable,
+    settleExactX402: unavailable,
+    settleGatewayX402: unavailable,
+  };
+}
+
 export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymentRoutesDeps): void {
-  const circleProvider = deps.circleProvider ?? createCircleTreasuryProvider();
+  const circleConnectionService = deps.circleConnectionService ?? null;
+
+  const requireCircleConnectionService = (): CircleConnectionController => {
+    if (circleConnectionService === null) {
+      throw new IdentityError(
+        'circle_connection_not_configured',
+        503,
+        'Circle Agent Wallet onboarding is not configured.',
+      );
+    }
+    return circleConnectionService;
+  };
+  const providerForOrg = deps.circleProviderFactory ?? (deps.circleProvider === undefined
+    ? (): CircleTreasuryProvider => unavailableCircleProvider()
+    : () => deps.circleProvider as CircleTreasuryProvider);
 
   if (deps.installErrorHandler === true) {
     app.setErrorHandler((error, _request, reply) => {
@@ -249,10 +298,54 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     return { treasuries: await listTreasuries(deps.pool, params.orgId) };
   });
 
+  app.get('/v1/orgs/:orgId/payments/circle/connection', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return {
+      connection: await requireCircleConnectionService().status({
+        orgId: params.orgId,
+        userId: operator.userId ?? operator.actorId,
+      }),
+    };
+  });
+
+  app.post('/v1/orgs/:orgId/payments/circle/connection/init', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'owner');
+    const input = parseBody(circleConnectionInitSchema, request);
+    const result = await requireCircleConnectionService().initialize({
+      email: input.email,
+      orgId: params.orgId,
+      userId: operator.userId ?? operator.actorId,
+    });
+    return reply.code(202).send(result);
+  });
+
+  app.post('/v1/orgs/:orgId/payments/circle/connection/complete', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'owner');
+    const input = parseBody(circleConnectionCompleteSchema, request);
+    return requireCircleConnectionService().complete({
+      challengeId: input.challenge_id,
+      orgId: params.orgId,
+      otp: input.otp,
+      userId: operator.userId ?? operator.actorId,
+    });
+  });
+
+  app.delete('/v1/orgs/:orgId/payments/circle/connection', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'owner');
+    return requireCircleConnectionService().disconnect({
+      orgId: params.orgId,
+      userId: operator.userId ?? operator.actorId,
+    });
+  });
+
   app.get('/v1/orgs/:orgId/payments/treasury/overview', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return { overview: await getTreasuryOverview(deps.pool, params.orgId, circleProvider) };
+    return { overview: await getTreasuryOverview(deps.pool, params.orgId, providerForOrg(params.orgId), deps.redis) };
   });
 
   app.post('/v1/orgs/:orgId/payments/treasury', async (request, reply) => {
@@ -277,9 +370,30 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
 
   app.get('/v1/orgs/:orgId/payments/provider-health', async (request) => {
     const params = request.params as { readonly orgId: string };
-    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'viewer');
     const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
-    return { health: circleProvider.health(mode) };
+    if (circleConnectionService !== null) {
+      const connection = await circleConnectionService.status({
+        orgId: params.orgId,
+        userId: operator.userId ?? operator.actorId,
+      });
+      return {
+        health: {
+          configured: connection.status === 'connected',
+          missing: connection.status === 'connected' ? [] : ['circle_agent_wallet_connection'],
+          mode,
+          provider: 'circle',
+        },
+      };
+    }
+    if (deps.circleProvider === undefined && deps.circleProviderFactory === undefined) {
+      throw new IdentityError(
+        'circle_connection_not_configured',
+        503,
+        'Circle Agent Wallet worker is not configured.',
+      );
+    }
+    return { health: providerForOrg(params.orgId).health(mode) };
   });
 
   app.get('/v1/orgs/:orgId/payments/capabilities', async (request) => {
@@ -303,7 +417,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       operator,
       params.orgId,
       parseBody(railVerificationBatchSchema, request),
-      circleProvider,
+      providerForOrg(params.orgId),
     );
     return reply.code(202).send({
       failed: jobs.filter((job) => job.status === 'failed' || job.status === 'blocked').length,
@@ -314,7 +428,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   app.post('/v1/orgs/:orgId/payments/rail-readiness/:rail/verify', async (request, reply) => {
     const params = request.params as { readonly orgId: string; readonly rail: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
-    const job = await verifyPaymentRail(deps.pool, operator, params.orgId, params.rail, circleProvider);
+    const job = await verifyPaymentRail(deps.pool, operator, params.orgId, params.rail, providerForOrg(params.orgId));
     return reply.code(job.status === 'failed' || job.status === 'blocked' ? 409 : 202).send({ job });
   });
 
@@ -326,7 +440,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       operator,
       params.orgId,
       parseBody(circleTreasurySchema, request),
-      circleProvider,
+      providerForOrg(params.orgId),
     );
     return reply.code(201).send(result);
   });
@@ -340,13 +454,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   app.get('/v1/orgs/:orgId/payments/circle/balances', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return { balances: await listCircleBalances(deps.pool, params.orgId, circleProvider) };
+    return { balances: await listCircleBalances(deps.pool, params.orgId, providerForOrg(params.orgId), deps.redis) };
   });
 
   app.get('/v1/orgs/:orgId/payments/console-snapshot', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return getPaymentsConsoleSnapshot(deps.pool, params.orgId, circleProvider);
+    return getPaymentsConsoleSnapshot(deps.pool, params.orgId, providerForOrg(params.orgId), deps.redis);
   });
 
   app.get('/v1/orgs/:orgId/payments/circle/jobs', async (request) => {
@@ -358,19 +472,19 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   app.post('/v1/orgs/:orgId/payments/circle/jobs/reconcile', async (request) => {
     const params = request.params as { readonly orgId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
-    return { jobs: await reconcileCircleProviderJobs(deps.pool, operator, params.orgId, circleProvider) };
+    return { jobs: await reconcileCircleProviderJobs(deps.pool, operator, params.orgId, providerForOrg(params.orgId)) };
   });
 
   app.get('/v1/orgs/:orgId/payments/liquidity-jobs', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return { jobs: await listLiquidityJobs(deps.pool, params.orgId, 20, circleProvider) };
+    return { jobs: await listLiquidityJobs(deps.pool, params.orgId, 20, providerForOrg(params.orgId)) };
   });
 
   app.post('/v1/orgs/:orgId/payments/liquidity-jobs/:jobId/retry', async (request, reply) => {
     const params = request.params as { readonly orgId: string; readonly jobId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
-    const job = await retryLiquidityJob(deps.pool, operator, params.orgId, params.jobId, circleProvider);
+    const job = await retryLiquidityJob(deps.pool, operator, params.orgId, params.jobId, providerForOrg(params.orgId));
     return reply.code(job.status === 'failed' ? 409 : 202).send({ job });
   });
 
@@ -383,7 +497,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   app.get('/v1/orgs/:orgId/payments/rebalance/recommendations', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
-    return { recommendations: await listRebalanceRecommendations(deps.pool, params.orgId, circleProvider) };
+    return { recommendations: await listRebalanceRecommendations(deps.pool, params.orgId, providerForOrg(params.orgId), deps.redis) };
   });
 
   app.post('/v1/orgs/:orgId/payments/rebalance/bridge-topup', async (request, reply) => {
@@ -394,7 +508,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       operator,
       params.orgId,
       parseBody(bridgeTopUpSchema, request),
-      circleProvider,
+      providerForOrg(params.orgId),
     );
     return reply.code(job.status === 'failed' ? 409 : 202).send({ job });
   });
@@ -407,7 +521,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       operator,
       params.orgId,
       parseBody(gatewayDepositSchema, request),
-      circleProvider,
+      providerForOrg(params.orgId),
     );
     return reply.code(job.status === 'failed' ? 409 : 202).send({ job });
   });
@@ -420,7 +534,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       operator,
       params.orgId,
       parseBody(testnetFaucetSchema, request),
-      circleProvider,
+      providerForOrg(params.orgId),
     );
     return reply.code(202).send({ jobs });
   });
@@ -465,6 +579,12 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     return getAgentPayments(deps.pool, params.orgId, params.agentId);
   });
 
+  app.get('/v1/orgs/:orgId/payments/agent-accounts', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    return listAgentPaymentAccounts(deps.pool, params.orgId);
+  });
+
   app.post('/v1/orgs/:orgId/agents/:agentId/payment-access', async (request) => {
     const params = request.params as { readonly orgId: string; readonly agentId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
@@ -481,6 +601,13 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
 
   app.post('/v1/runtime/payments/x402', async (request) => {
     const auth = await authenticateRuntimeConnection(deps.pool, requiredRuntimeBearerToken(request));
-    return { payment: await payRuntimeX402(deps.pool, auth, parseBody(runtimeX402Schema, request), circleProvider) };
+    return {
+      payment: await payRuntimeX402(
+        deps.pool,
+        auth,
+        parseBody(runtimeX402Schema, request),
+        providerForOrg(auth.org_id),
+      ),
+    };
   });
 }

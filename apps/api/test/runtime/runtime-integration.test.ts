@@ -52,6 +52,7 @@ type RuntimeOnboardResponse = {
   };
   readonly actions: ReadonlyArray<{
     readonly action: string;
+    readonly description: string;
   }>;
 };
 
@@ -202,6 +203,39 @@ describe('Section 2-4 runtime control surface', () => {
     expect(onboardBody.actions.map((action) => action.action)).toEqual(
       expect.arrayContaining(['runtime.http.request', 'payment.x402.authorize']),
     );
+    expect(onboardBody.actions.find((action) => action.action === 'payment.x402.authorize')?.description)
+      .toBe('Use before an x402 payment. agentOps applies policy and payment controls, then executes supported USDC rails.');
+
+    const onboarding = await store.pool.query<{ flow_key: string; status: string }>(
+      `SELECT flow_key, status
+         FROM org_onboarding_states
+        WHERE org_id = $1
+          AND flow_key IN ('agent_setup', 'policy_setup', 'runtime_test')`,
+      [orgId],
+    );
+    expect(onboarding.rows).toEqual(expect.arrayContaining([
+      { flow_key: 'agent_setup', status: 'completed' },
+      { flow_key: 'policy_setup', status: 'completed' },
+      { flow_key: 'runtime_test', status: 'completed' },
+    ]));
+
+    await store.pool.query(
+      `DELETE FROM org_onboarding_states
+        WHERE org_id = $1
+          AND flow_key IN ('agent_setup', 'policy_setup', 'runtime_test')`,
+      [orgId],
+    );
+    const reconciled = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/onboarding-states`,
+    });
+    expect(reconciled.statusCode, reconciled.body).toBe(200);
+    expect(reconciled.json<{ readonly states: Array<{ readonly flow_key: string; readonly status: string }> }>().states)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ flow_key: 'agent_setup', status: 'completed' }),
+        expect.objectContaining({ flow_key: 'policy_setup', status: 'completed' }),
+        expect.objectContaining({ flow_key: 'runtime_test', status: 'completed' }),
+      ]));
 
     const check = await app.inject({
       method: 'POST',
@@ -282,6 +316,68 @@ describe('Section 2-4 runtime control surface', () => {
       },
     });
     expect(secondConsume.statusCode).toBe(409);
+  });
+
+  it('derives the resource domain from its URL instead of trusting a spoofed domain field', async () => {
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    await createPolicy(app, {
+      orgId,
+      agentId,
+      name: 'Block protected domain',
+      statement: {
+        id: 'stmt_block_protected_domain',
+        decision: 'deny',
+        actions: ['runtime.http.request'],
+        target: { types: ['agent'], ids: [agentId] },
+        conditions: { resource: { domains: ['blocked.example.test'] } },
+        audit: 'detailed',
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/check',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        action: 'runtime.http.request',
+        resource: {
+          url: 'https://blocked.example.test/data',
+          domain: 'trusted.example.test',
+        },
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<RuntimeCheckResponse>().decision).toMatchObject({
+      decision: 'deny',
+      reasonCode: 'policy_denied',
+      normalized: {
+        context: {
+          resource: { domain: 'blocked.example.test' },
+        },
+      },
+    });
+  });
+
+  it('rejects operator-only management actions on the agent runtime surface', async () => {
+    const { secret } = await createOrgAgentAndConnection(app);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/check',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        action: 'management.connection.rotate',
+        target: { type: 'connection', id: 'conn_other' },
+        context: { purpose: 'rogue-agent-management-attempt' },
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: 'unsupported_runtime_action',
+      message: 'Agent runtime checks only support HTTP requests, x402 authorization, and tool calls.',
+    });
   });
 
   it('does not expose MCP as a backend-owned API route', async () => {

@@ -334,7 +334,7 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
     const session = await optionalSession(request, deps);
     const input = parseBody<CreateOrgInput>(createOrgSchema, request);
     if (session !== null) {
-      const org = await createOrgForUser(
+      const result = await createOrgForUser(
         deps.pool,
         {
           actorId: session.user.id,
@@ -343,7 +343,7 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
         },
         input,
       );
-      return reply.code(201).send({ org });
+      return reply.code(result.created ? 201 : 200).send({ org: result.org });
     }
 
     const operator = await requireOperator(request, deps, 'owner');

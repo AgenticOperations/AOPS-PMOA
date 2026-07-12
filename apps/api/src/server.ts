@@ -1,12 +1,26 @@
 import { buildApp } from './app.js';
 import { readApiEnv } from './config/env.js';
 import pg from 'pg';
+import { Redis } from 'ioredis';
 import { runMigrations } from '@agentops-pmoa/db';
 import { resolveSession } from './engines/auth/store.js';
 import { getMembershipRole } from './engines/identity/store.js';
+import {
+  createCircleWorkerConnectionClient,
+  createCircleWorkerTreasuryProvider,
+} from './engines/payments/circle-worker-client.js';
 
 const env = readApiEnv();
 const pool = new pg.Pool({ connectionString: env.databaseUrl });
+const redis = new Redis(env.redisUrl, { lazyConnect: false, maxRetriesPerRequest: 1 });
+const circleWorkerConfigured = env.circleWorkerUrl.length > 0 && env.circleWorkerToken.length >= 32;
+redis.on('error', (error: Error) => {
+  process.stderr.write(
+    `[redis] connection error, payments balance cache disabled for this request ${
+      error.stack ?? error.message
+    }\n`,
+  );
+});
 
 await runMigrations(pool);
 
@@ -42,7 +56,21 @@ const app = buildApp({
     sessionCookieName: env.sessionCookieName,
   },
   payments: {
+    ...(circleWorkerConfigured
+      ? {
+          circleConnectionService: createCircleWorkerConnectionClient({
+            baseUrl: env.circleWorkerUrl,
+            token: env.circleWorkerToken,
+          }),
+          circleProviderFactory: (orgId: string) => createCircleWorkerTreasuryProvider({
+            baseUrl: env.circleWorkerUrl,
+            orgId,
+            token: env.circleWorkerToken,
+          }),
+        }
+      : {}),
     pool,
+    redis,
     sessionCookieName: env.sessionCookieName,
   },
   runtime: {
@@ -66,6 +94,7 @@ const app = buildApp({
 
 app.addHook('onClose', async () => {
   await pool.end();
+  redis.disconnect();
 });
 
 try {

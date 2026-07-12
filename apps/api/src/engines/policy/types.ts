@@ -5,7 +5,8 @@ export type PolicyEnforceability = 'enforceable';
 export type PolicyCategory = 'management' | 'operational' | 'capability';
 export type PolicyDraftSource = 'preset' | 'blank' | 'request' | 'structured';
 export type PolicyDraftStatus = 'draft' | 'validated' | 'activated' | 'discarded';
-export type PolicyVersionStatus = 'active' | 'archived';
+export type PolicyVersionStatus = 'active' | 'superseded' | 'archived';
+export type PolicyRevisionMode = 'revision' | 'restore';
 export type PolicyTargetType = 'org' | 'team' | 'agent' | 'connection';
 export type PolicyAuditLevel = 'standard' | 'detailed';
 export type PolicyConditionGroup = 'resource' | 'payment' | 'tool';
@@ -123,6 +124,10 @@ export type PolicyDraftRecord = {
   readonly updated_by: string;
   readonly activated_policy_id: string | null;
   readonly activated_version: number | null;
+  readonly revision_policy_id: string | null;
+  readonly revision_base_version: number | null;
+  readonly revision_mode: PolicyRevisionMode | null;
+  readonly revision_restore_bindings: PolicyRestoreBindingInput[];
   readonly created_at: string;
   readonly updated_at: string;
 };
@@ -140,6 +145,8 @@ export type PolicyVersionRecord = {
   readonly validation: PolicyValidationResult;
   readonly change_reason: string;
   readonly created_by: string;
+  readonly archived_by: string | null;
+  readonly archived_at: string | null;
   readonly created_at: string;
   readonly binding_target_types: PolicyTargetType[];
   readonly bindings: PolicyBindingRecord[];
@@ -156,6 +163,9 @@ export type PolicyBindingRecord = {
   readonly status: 'active' | 'removed';
   readonly created_by: string;
   readonly created_at: string;
+  readonly removed_by: string | null;
+  readonly removed_at: string | null;
+  readonly removed_reason: string | null;
 };
 
 export type AgentPolicyBindingScope = 'credential' | 'direct' | 'team' | 'workspace';
@@ -212,4 +222,15 @@ export type CreatePolicyVersionInput = {
   readonly category?: PolicyCategory | undefined;
   readonly statements?: readonly PolicyStatement[] | undefined;
   readonly change_reason?: string | undefined;
+};
+
+export type CreatePolicyRevisionDraftInput = UpdatePolicyDraftInput;
+
+export type PolicyRestoreBindingInput = {
+  readonly target_type: PolicyTargetType;
+  readonly target_id: string;
+};
+
+export type CreatePolicyRestoreDraftInput = UpdatePolicyDraftInput & {
+  readonly restore_bindings?: readonly PolicyRestoreBindingInput[] | undefined;
 };

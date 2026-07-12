@@ -146,6 +146,24 @@ describe('Section 1 connection credentials', () => {
     });
     expect(list.statusCode).toBe(200);
     expect(list.json<ConnectionListResponse>().connections[0]).not.toHaveProperty('secret');
+
+    const onboarding = await store.pool.query<{ status: string }>(
+      `SELECT status FROM org_onboarding_states WHERE org_id = $1 AND flow_key = 'agent_setup'`,
+      [orgId],
+    );
+    expect(onboarding.rows[0]?.status).toBe('completed');
+
+    await store.pool.query(
+      `DELETE FROM org_onboarding_states WHERE org_id = $1 AND flow_key = 'agent_setup'`,
+      [orgId],
+    );
+    const reconciled = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/onboarding-states`,
+    });
+    expect(reconciled.statusCode, reconciled.body).toBe(200);
+    expect(reconciled.json<{ readonly states: Array<{ readonly flow_key: string; readonly status: string }> }>().states)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ flow_key: 'agent_setup', status: 'completed' })]));
   });
 
   it('tests, rotates, revokes, and authenticates connection credentials', async () => {

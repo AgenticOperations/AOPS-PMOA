@@ -56,6 +56,10 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0014_section_9_liquidity_manager');
     expect(firstRun).toContain('0015_functional_hardening_core');
     expect(firstRun).toContain('0016_rail_verify_provider_jobs');
+    expect(firstRun).toContain('0017_policy_lifecycle_revisions');
+    expect(firstRun).toContain('0018_circle_org_connections');
+    expect(firstRun).toContain('0019_x402_action_execution_copy');
+    expect(firstRun).toContain('0020_liquidity_job_idempotency');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -79,7 +83,18 @@ describe('PMOA database migrations', () => {
       '0014_section_9_liquidity_manager',
       '0015_functional_hardening_core',
       '0016_rail_verify_provider_jobs',
+      '0017_policy_lifecycle_revisions',
+      '0018_circle_org_connections',
+      '0019_x402_action_execution_copy',
+      '0020_liquidity_job_idempotency',
     ]);
+
+    const x402Action = await pool.query<{ description: string }>(
+      `SELECT description FROM policy_action_registry WHERE action_id = 'payment.x402.authorize'`,
+    );
+    expect(x402Action.rows[0]?.description).toBe(
+      'Control whether an agent may execute a supported x402 USDC payment through agentOps.',
+    );
 
     const sectionOneTable = await pool.query<{ exists: string }>(
       "SELECT to_regclass('public.connections')::text AS exists",

@@ -222,6 +222,7 @@ describe('Circle treasury provider configuration', () => {
       amountMicros: '500000',
       approvalTransactionId: 'circle_tx_approve',
       depositTransactionId: 'circle_tx_deposit',
+      gatewayDepositorAddress: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
       gatewayWalletAddress: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
       providerMode: 'test',
       usdcAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
@@ -276,14 +277,13 @@ describe('Circle treasury provider configuration', () => {
     });
   });
 
-  it('reads Agent Wallet Gateway balances through Circle CLI backing-EOA mapping', async () => {
-    const gatewayBalance = vi.fn(() => Promise.resolve({
-      available: '0.500000',
-      domain: 6,
-      total: '0.500000',
-      withdrawable: '0.500000',
-      withdrawing: '0',
-    }));
+  it('reads Agent Wallet Gateway balances from the public Gateway API for the persisted depositor', async () => {
+    const gatewayBalance = vi.fn();
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      balances: [{ balance: '0.750000', domain: 6, withdrawable: '0.750000', withdrawing: '0' }],
+      token: 'USDC',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    vi.stubGlobal('fetch', fetchMock);
     const executor = {
       executeContract: vi.fn(),
       fundTestnetUsdc: vi.fn(),
@@ -299,22 +299,22 @@ describe('Circle treasury provider configuration', () => {
     const provider = createCircleAgentWalletTreasuryProvider({ executor });
 
     const balance = await provider.getGatewayBalance({
-      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      address: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
       chain: 'base',
       mode: 'test',
     });
 
     expect(balance).toMatchObject({
-      available: '0.500000',
+      available: '0.750000',
       domain: 6,
       providerMode: 'test',
-      total: '0.500000',
+      total: '0.750000',
     });
-    expect(gatewayBalance).toHaveBeenCalledWith({
-      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
-      chain: 'base',
-      mode: 'test',
-    });
+    expect(gatewayBalance).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://gateway-api-testnet.circle.com/v1/balances',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('records Circle Agent Wallet service payment failures without throwing', async () => {
@@ -358,8 +358,27 @@ describe('Circle treasury provider configuration', () => {
     });
   });
 
-  it('treats Gateway x402 service payments as successful when Circle returns no immediate batch transaction', async () => {
-    const payService = vi.fn(() => Promise.resolve({ raw: { ok: true }, transaction: null }));
+  it('returns the paid resource after a Gateway x402 service payment succeeds', async () => {
+    const response = {
+      paid: true,
+      resource: 'agentOps Gateway x402 QA evidence',
+    };
+    const payService = vi.fn(() => Promise.resolve({
+      raw: {
+        data: {
+          payment: {
+            amount: '0.001',
+            chain: 'Base Sepolia',
+            receipt: null,
+            scheme: 'GatewayWalletBatched',
+            seller: '0x000000000000000000000000000000000000dEaD',
+          },
+          response,
+        },
+      },
+      response,
+      transaction: null,
+    }));
     const executor = {
       fundTestnetUsdc: vi.fn(),
       gatewayBalance: vi.fn(),
@@ -394,6 +413,13 @@ describe('Circle treasury provider configuration', () => {
     });
 
     expect(result).toMatchObject({
+      fulfillment: {
+        body: {
+          paid: true,
+          resource: 'agentOps Gateway x402 QA evidence',
+        },
+        status: 'delivered',
+      },
       network: 'eip155:84532',
       providerMode: 'test',
       success: true,

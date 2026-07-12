@@ -1,6 +1,6 @@
 import type { RuntimeActionSchema } from './types.js';
 
-export const runtimeContractVersion = '2026-07-07.1';
+export const runtimeContractVersion = '2026-07-12.1';
 
 export const runtimeActionSchemas: readonly RuntimeActionSchema[] = [
   {
@@ -23,7 +23,7 @@ export const runtimeActionSchemas: readonly RuntimeActionSchema[] = [
   {
     action: 'payment.x402.authorize',
     label: 'Authorize x402 payment',
-    description: 'Use before authorizing an x402 payment. Money movement is provided by later payment sections.',
+    description: 'Use before an x402 payment. agentOps applies policy and payment controls, then executes supported USDC rails.',
     required: ['resource.url', 'payment.amount', 'payment.asset', 'payment.network', 'payment.recipient'],
     optional: ['resource.category', 'resource.domain', 'resource.serviceName'],
     example: {

@@ -181,6 +181,25 @@ describe('Section 1 human auth and tenant scope', () => {
       expect.objectContaining({ id: org.id, slug: org.slug }),
     ]);
 
+    const duplicateCreate = await app.inject({
+      method: 'POST',
+      url: '/v1/orgs',
+      headers: authHeader(ownerSession.session_token),
+      payload: {
+        name: 'Second Workspace',
+      },
+    });
+    expect(duplicateCreate.statusCode, duplicateCreate.body).toBe(200);
+    expect(duplicateCreate.json<OrgResponse>().org).toEqual(expect.objectContaining({ id: org.id, slug: org.slug }));
+
+    const stillSingleOrg = await app.inject({
+      method: 'GET',
+      url: '/v1/orgs',
+      headers: authHeader(ownerSession.session_token),
+    });
+    expect(stillSingleOrg.statusCode).toBe(200);
+    expect(stillSingleOrg.json<OrgListResponse>().orgs).toHaveLength(1);
+
     mockGoogleUser({
       sub: 'google-outsider-1',
       email: 'outsider@example.test',

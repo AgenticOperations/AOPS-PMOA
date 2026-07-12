@@ -460,6 +460,39 @@ export async function denyApproval(
        VALUES ($1, $2, $3, 'user', $4, 'denied', $5)`,
       [prefixedId('apact'), orgId, approvalId, operator.actorId, note],
     );
+
+    await recordActivity(client, {
+      orgId,
+      agentId: row.agent_id,
+      connectionId: row.connection_id,
+      decisionId: row.decision_id,
+      approvalId,
+      category: 'approval',
+      action: 'approval.denied',
+      outcome: 'denied',
+      summary: 'Approval denied',
+      payload: { note },
+    });
+
+    await recordAuditEvent(client, {
+      orgId,
+      idempotencyKey: `approval.denied:${approvalId}`,
+      eventType: 'approval.denied',
+      actor: { type: 'user', id: operator.actorId },
+      action: 'approval.denied',
+      outcome: 'denied',
+      resource: { type: 'approval', id: approvalId },
+      classification: {
+        domain: 'policy',
+        category: 'runtime',
+        severity: 'info',
+        tags: ['section_3', 'approval'],
+      },
+      relations: { agent: row.agent_id, connection: row.connection_id },
+      refs: { decision: row.decision_id, approval: approvalId },
+      source: { section: 'section_3', system: 'approvals' },
+      payload: { note },
+    });
     return approvalFromRow(row);
   });
 }
@@ -558,6 +591,26 @@ export async function consumeApproval(
       action: 'approval.consumed',
       outcome: 'success',
       summary: 'Approval consumed',
+      payload: { recheck_decision_id: recheck.id },
+    });
+
+    await recordAuditEvent(client, {
+      orgId: auth.org_id,
+      idempotencyKey: `approval.consumed:${approvalId}`,
+      eventType: 'approval.consumed',
+      actor: { type: 'connection', id: auth.connection_id },
+      action: 'approval.consumed',
+      outcome: 'success',
+      resource: { type: 'approval', id: approvalId },
+      classification: {
+        domain: 'policy',
+        category: 'runtime',
+        severity: 'info',
+        tags: ['section_3', 'approval', 'runtime'],
+      },
+      relations: { agent: auth.agent_id, connection: auth.connection_id },
+      refs: { decision: decisionId, approval: approvalId },
+      source: { section: 'section_3', system: 'approvals' },
       payload: { recheck_decision_id: recheck.id },
     });
 

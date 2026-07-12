@@ -37,7 +37,7 @@ function urlDomain(url: string | null): string | null {
 
 function mergeResource(resource: Record<string, unknown>): Record<string, unknown> {
   const url = stringValue(resource.url);
-  const domain = stringValue(resource.domain) ?? urlDomain(url);
+  const domain = urlDomain(url) ?? stringValue(resource.domain);
   return {
     ...resource,
     ...(url === null ? {} : { url }),

@@ -4,6 +4,7 @@ import type { PaymentChain, PaymentMode } from './types.js';
 export type CircleCliInvocation = {
   readonly args: readonly string[];
   readonly command: string;
+  readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly timeoutMs: number;
 };
 
@@ -16,6 +17,7 @@ export type CircleCliRunner = (invocation: CircleCliInvocation) => Promise<Circl
 
 export type CircleAgentCliExecutorOptions = {
   readonly command?: string | undefined;
+  readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly maxRetries?: number | undefined;
   readonly retryDelayMs?: number | undefined;
   readonly runner?: CircleCliRunner | undefined;
@@ -66,6 +68,7 @@ export type CircleAgentGatewayDeposit = {
 
 export type CircleAgentServicePayment = {
   readonly raw: unknown;
+  readonly response?: unknown;
   readonly transaction: string | null;
 };
 
@@ -125,6 +128,14 @@ export type CircleAgentCliExecutor = {
     readonly mode: PaymentMode;
     readonly sourceChain: PaymentChain;
   }) => Promise<CircleAgentGatewayDeposit>;
+  readonly initializeLogin: (input: {
+    readonly email: string;
+    readonly mode: PaymentMode;
+  }) => Promise<{ readonly email: string; readonly requestId: string }>;
+  readonly completeLogin: (input: {
+    readonly otp: string;
+    readonly requestId: string;
+  }) => Promise<{ readonly email: string }>;
   readonly listWallet: (input: {
     readonly chain: PaymentChain;
     readonly mode: PaymentMode;
@@ -207,6 +218,9 @@ async function defaultRunner(invocation: CircleCliInvocation): Promise<CircleCli
       [...invocation.args],
       {
         encoding: 'utf8',
+        env: invocation.environment === undefined
+          ? process.env
+          : { ...process.env, ...invocation.environment },
         maxBuffer: 1024 * 1024,
         timeout: invocation.timeoutMs,
       },
@@ -399,8 +413,25 @@ function servicePaymentFrom(value: unknown): CircleAgentServicePayment {
   const item = record(cliData(value));
   return {
     raw: value,
+    ...('response' in item ? { response: item.response } : {}),
     transaction: stringField(item.transaction ?? item.transactionHash ?? item.txHash),
   };
+}
+
+function loginChallengeFrom(value: unknown, expectedEmail: string): { readonly email: string; readonly requestId: string } {
+  const item = record(cliData(value));
+  const message = stringField(item.message) ?? '';
+  const requestId = message.match(/--request\s+([0-9a-f-]{36})\b/i)?.[1];
+  if (requestId === undefined) throw new Error('circle_agent_wallet_login_request_id_missing');
+  return { email: expectedEmail, requestId };
+}
+
+function completedLoginFrom(value: unknown): { readonly email: string } {
+  const item = record(cliData(value));
+  const message = stringField(item.message) ?? '';
+  const email = message.match(/Logged in as\s+([^\s]+)/i)?.[1];
+  if (email === undefined) throw new Error('circle_agent_wallet_login_email_missing');
+  return { email };
 }
 
 function transferFrom(value: unknown): CircleAgentTransfer {
@@ -453,6 +484,7 @@ function assertEcoDepositChain(chain: PaymentChain): void {
 
 export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOptions = {}): CircleAgentCliExecutor {
   const command = options.command ?? 'circle';
+  const environment = options.environment;
   const maxRetries = options.maxRetries ?? Number(process.env.CIRCLE_CLI_MAX_RETRIES ?? '3');
   const retryDelayMs = options.retryDelayMs ?? Number(process.env.CIRCLE_CLI_RETRY_DELAY_MS ?? '5000');
   const runner = options.runner ?? defaultRunner;
@@ -462,7 +494,7 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
     const attempts = Math.max(1, Math.floor(maxRetries) + 1);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const result = await runner({ args, command, timeoutMs });
+        const result = await runner({ args, command, environment, timeoutMs });
         return parseJson(result.stdout);
       } catch (error) {
         lastError = error;
@@ -514,19 +546,27 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
     },
     fundTestnetUsdc: async ({ address, chain, mode }) => {
       if (mode !== 'test') throw new Error('circle_agent_wallet_faucet_requires_test_mode');
-      return runJson([
-        'wallet',
-        'fund',
-        '--address',
-        address,
-        '--chain',
-        circleBlockchainForChain(mode, chain),
-        '--token',
-        'usdc',
-        ...modeArgs(mode),
-        '--output',
-        'json',
-      ]);
+      try {
+        return await runJson([
+          'wallet',
+          'fund',
+          '--address',
+          address,
+          '--chain',
+          circleBlockchainForChain(mode, chain),
+          '--token',
+          'usdc',
+          ...modeArgs(mode),
+          '--output',
+          'json',
+        ]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message.toLowerCase() : '';
+        if (message.includes('429') || message.includes('rate limit')) {
+          throw new Error('circle_testnet_faucet_rate_limited');
+        }
+        throw error;
+      }
     },
     gatewayBalance: async ({ address, chain, mode }) => {
       const value = await runJson([
@@ -562,6 +602,34 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
         'json',
       ]);
       return gatewayDepositFrom(value);
+    },
+    initializeLogin: async ({ email, mode }) => {
+      if (mode !== 'test') throw new Error('circle_agent_wallet_login_requires_test_mode');
+      const value = await runJson([
+        'wallet',
+        'login',
+        email,
+        '--type',
+        'agent',
+        '--init',
+        '--testnet',
+        '--output',
+        'json',
+      ]);
+      return loginChallengeFrom(value, email);
+    },
+    completeLogin: async ({ otp, requestId }) => {
+      const value = await runJson([
+        'wallet',
+        'login',
+        '--request',
+        requestId,
+        '--otp',
+        otp,
+        '--output',
+        'json',
+      ]);
+      return completedLoginFrom(value);
     },
     gatewayDepositEco: async ({ address, amount, mode, sourceChain }) => {
       assertEcoDepositChain(sourceChain);

@@ -25,6 +25,74 @@ function runnerFrom(outputs: readonly unknown[]): { readonly calls: CircleCliInv
 }
 
 describe('Circle Agent Wallet CLI executor', () => {
+  it('passes the isolated worker environment to every Circle invocation', async () => {
+    const { calls, runner } = runnerFrom([{ data: { mainnet: {}, testnet: {} } }]);
+    const executor = createCircleAgentCliExecutor({
+      environment: {
+        CIRCLE_CLI_HOME: '/run/agentops/org_test/.circle-cli',
+        HOME: '/run/agentops/org_test',
+      },
+      runner,
+    });
+
+    await executor.status();
+
+    expect(calls[0]?.environment).toMatchObject({
+      CIRCLE_CLI_HOME: '/run/agentops/org_test/.circle-cli',
+      HOME: '/run/agentops/org_test',
+    });
+  });
+
+  it('initializes a testnet email login and extracts the single-use request id', async () => {
+    const { calls, runner } = runnerFrom([
+      {
+        message: 'OTP code sent to owner@example.com\nPlease run: circle wallet login --request 68c34a64-bf7a-4ca5-a2ac-125cab514bc9 --otp <code>',
+      },
+    ]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const challenge = await executor.initializeLogin({ email: 'owner@example.com', mode: 'test' });
+
+    expect(challenge).toEqual({
+      email: 'owner@example.com',
+      requestId: '68c34a64-bf7a-4ca5-a2ac-125cab514bc9',
+    });
+    expect(calls[0]?.args).toEqual([
+      'wallet',
+      'login',
+      'owner@example.com',
+      '--type',
+      'agent',
+      '--init',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('completes a login without retaining the OTP in the executor result', async () => {
+    const { calls, runner } = runnerFrom([{ message: 'Logged in as owner@example.com' }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const session = await executor.completeLogin({
+      otp: 'ABC-123456',
+      requestId: '68c34a64-bf7a-4ca5-a2ac-125cab514bc9',
+    });
+
+    expect(session).toEqual({ email: 'owner@example.com' });
+    expect(JSON.stringify(session)).not.toContain('ABC-123456');
+    expect(calls[0]?.args).toEqual([
+      'wallet',
+      'login',
+      '--request',
+      '68c34a64-bf7a-4ca5-a2ac-125cab514bc9',
+      '--otp',
+      'ABC-123456',
+      '--output',
+      'json',
+    ]);
+  });
+
   it('maps product chains to Circle agent wallet blockchains', () => {
     expect(circleBlockchainForChain('test', 'base')).toBe('BASE-SEPOLIA');
     expect(circleBlockchainForChain('live', 'base')).toBe('BASE');
@@ -208,6 +276,19 @@ describe('Circle Agent Wallet CLI executor', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('reports an exhausted testnet faucet cooldown without exposing raw CLI output', async () => {
+    const { runner } = runnerFrom([
+      new Error('Service returned error 429: faucet request is rate limited for this wallet'),
+    ]);
+    const executor = createCircleAgentCliExecutor({ maxRetries: 0, runner });
+
+    await expect(executor.fundTestnetUsdc({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      chain: 'base',
+      mode: 'test',
+    })).rejects.toThrow('circle_testnet_faucet_rate_limited');
+  });
+
   it('parses Gateway balances from Circle all-domain balance output', async () => {
     const { calls, runner } = runnerFrom([
       {
@@ -271,10 +352,16 @@ describe('Circle Agent Wallet CLI executor', () => {
   });
 
   it('routes Gateway x402 service payments through the direct-deposit source chain', async () => {
-    const { calls, runner } = runnerFrom([{ data: { transactionHash: '0xgateway' } }]);
+    const { calls, runner } = runnerFrom([{
+      data: {
+        payment: { receipt: null },
+        response: { paid: true, resource: 'Gateway result' },
+        transactionHash: '0xgateway',
+      },
+    }]);
     const executor = createCircleAgentCliExecutor({ runner });
 
-    await executor.payService({
+    const payment = await executor.payService({
       address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
       chain: 'base',
       maxAmount: '0.01',
@@ -282,6 +369,8 @@ describe('Circle Agent Wallet CLI executor', () => {
       rail: 'gateway',
       url: 'https://x402.example.test/data',
     });
+
+    expect(payment.response).toEqual({ paid: true, resource: 'Gateway result' });
 
     expect(calls[0]?.args).toEqual([
       'services',

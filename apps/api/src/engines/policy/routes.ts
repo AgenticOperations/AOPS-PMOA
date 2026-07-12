@@ -8,9 +8,12 @@ import type { OperatorContext, Role } from '../identity/types.js';
 import { satisfiesRole } from '../identity/roles.js';
 import {
   activatePolicyDraft,
+  activatePolicyRevisionDraft,
   archivePolicy,
   bindPolicy,
   checkPolicyDecision,
+  createPolicyRestoreDraft,
+  createPolicyRevisionDraft,
   createPolicyVersion,
   createPolicyDraft,
   discardPolicyDraft,
@@ -100,6 +103,17 @@ const activateDraftSchema = z.object({
 
 const createPolicyVersionSchema = updateDraftSchema.extend({
   change_reason: z.string().trim().max(500).optional(),
+});
+
+const createRevisionDraftSchema = updateDraftSchema;
+
+const restoreBindingSchema = z.object({
+  target_type: policyTargetTypeSchema,
+  target_id: z.string().trim().min(1).max(240),
+});
+
+const createRestoreDraftSchema = updateDraftSchema.extend({
+  restore_bindings: z.array(restoreBindingSchema).max(100).optional(),
 });
 
 const bindPolicySchema = z.object({
@@ -277,6 +291,45 @@ export function registerPolicyRoutes(app: FastifyInstance, deps: RegisterPolicyR
       parseBody(activateDraftSchema, request),
     );
     return { policy };
+  });
+
+  app.post('/v1/orgs/:orgId/policy-drafts/:draftId/activate-revision', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly draftId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const policy = await activatePolicyRevisionDraft(
+      deps.pool,
+      operator,
+      params.orgId,
+      params.draftId,
+      parseBody(activateDraftSchema, request),
+    );
+    return { policy };
+  });
+
+  app.post('/v1/orgs/:orgId/policies/:policyId/revision-drafts', async (request, reply) => {
+    const params = request.params as { readonly orgId: string; readonly policyId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const draft = await createPolicyRevisionDraft(
+      deps.pool,
+      operator,
+      params.orgId,
+      params.policyId,
+      parseBody(createRevisionDraftSchema, request),
+    );
+    return reply.code(201).send({ draft });
+  });
+
+  app.post('/v1/orgs/:orgId/policies/:policyId/restore-drafts', async (request, reply) => {
+    const params = request.params as { readonly orgId: string; readonly policyId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const draft = await createPolicyRestoreDraft(
+      deps.pool,
+      operator,
+      params.orgId,
+      params.policyId,
+      parseBody(createRestoreDraftSchema, request),
+    );
+    return reply.code(201).send({ draft });
   });
 
   app.post('/v1/orgs/:orgId/policies/:policyId/bindings', async (request, reply) => {

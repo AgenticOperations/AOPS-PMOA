@@ -3,6 +3,10 @@ import type pg from 'pg';
 import { recordAuditEvent } from '../evidence/audit-writer.js';
 import { badRequest, conflict, forbidden, notFound } from './errors.js';
 import { prefixedId, slugifyName } from './ids.js';
+import {
+  completeProductOnboardingFlow,
+  reconcileProductOnboardingProgress,
+} from './onboarding-progress.js';
 import type {
   AgentRecord,
   AgentRosterItem,
@@ -761,8 +765,24 @@ export async function createOrgForUser(
   pool: pg.Pool,
   operator: OperatorContext,
   input: CreateOrgInput,
-): Promise<OrgRecord> {
+): Promise<{ readonly org: OrgRecord; readonly created: boolean }> {
   return withTransaction(pool, async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [operator.actorId]);
+
+    const existing = await client.query<OrgRow>(
+      `SELECT o.id, o.display_name, o.slug, o.default_team_id, o.settings, o.status, o.created_at, o.updated_at
+         FROM orgs o
+         JOIN memberships m ON m.org_id = o.id
+        WHERE m.user_id = $1
+          AND m.status = 'active'
+          AND o.status = 'active'
+        ORDER BY o.created_at ASC, o.id ASC
+        LIMIT 1`,
+      [operator.actorId],
+    );
+    const existingRow = existing.rows[0];
+    if (existingRow !== undefined) return { org: orgFromRow(existingRow), created: false };
+
     const orgId = prefixedId('org');
     const defaultTeamId = prefixedId('team');
     const memberId = prefixedId('mem');
@@ -852,7 +872,7 @@ export async function createOrgForUser(
 
     const row = updated.rows[0] ?? inserted.rows[0];
     if (row === undefined) throw new Error('org_create_failed');
-    return orgFromRow(row);
+    return { org: orgFromRow(row), created: true };
   });
 }
 
@@ -1218,6 +1238,7 @@ export async function listOnboardingStates(
   pool: pg.Pool,
   orgId: string,
 ): Promise<OnboardingStateRecord[]> {
+  await reconcileProductOnboardingProgress(pool, orgId);
   const result = await pool.query<OnboardingStateRow>(
     `SELECT *
        FROM org_onboarding_states
@@ -1991,6 +2012,11 @@ export async function createConnection(
       },
       { relations: { agent: agentId, connection: connectionId } },
     );
+    await completeProductOnboardingFlow(client, orgId, 'agent_setup', {
+      agent_id: agentId,
+      connection_id: connectionId,
+      source: 'connection_created',
+    });
     const row = result.rows[0];
     if (row === undefined) throw new Error('connection_create_failed');
     return { connection: connectionFromRow(row), secret };

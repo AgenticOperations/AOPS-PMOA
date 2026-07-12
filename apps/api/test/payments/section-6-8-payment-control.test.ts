@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
+import { createPaymentSource } from '../../src/engines/payments/store.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 type OrgResponse = {
@@ -17,14 +18,6 @@ type AgentResponse = {
 
 type ConnectionCreateResponse = {
   readonly secret: string;
-};
-
-type PaymentSourceResponse = {
-  readonly source: {
-    readonly id: string;
-    readonly rail: string;
-    readonly chain: string;
-  };
 };
 
 type PolicyActivationResponse = {
@@ -153,6 +146,22 @@ async function createActivatedPaymentApprovalPolicy(app: FastifyInstance, orgId:
   return policy;
 }
 
+async function seedSimulationGatewaySource(store: PostgresTestStore, orgId: string) {
+  return createPaymentSource(
+    store.pool,
+    { actorId: 'usr_payments_owner', role: 'owner' },
+    orgId,
+    {
+      chain: 'base',
+      label: 'Base Gateway source',
+      provider: 'simulation',
+      rail: 'gateway_base',
+      simulated_balance_usdc: '100.00',
+      source_type: 'gateway',
+    },
+  );
+}
+
 describe('Sections 6-8 payment control plane', () => {
   let store: PostgresTestStore;
   let app: FastifyInstance;
@@ -187,6 +196,28 @@ describe('Sections 6-8 payment control plane', () => {
     if (app !== undefined) await app.close();
     if (store !== undefined) await store.stop();
     vi.unstubAllEnvs();
+  });
+
+  it('rejects non-Circle payment sources at the public testnet API boundary', async () => {
+    const { orgId } = await createOrgAgentAndConnection(app);
+
+    for (const provider of ['simulation', 'manual']) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/orgs/${orgId}/payments/sources`,
+        payload: {
+          chain: 'base',
+          label: `${provider} source`,
+          provider,
+          rail: 'gateway_base',
+          simulated_balance_usdc: '100.00',
+          source_type: 'gateway',
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(400);
+      expect(response.json()).toMatchObject({ error: 'validation_error' });
+    }
   });
 
   it('keeps payment access off by default and only pays Gateway-compatible x402 from an active Base source', async () => {
@@ -224,21 +255,8 @@ describe('Sections 6-8 payment control plane', () => {
     });
     expect(treasury.statusCode, treasury.body).toBe(201);
 
-    const source = await app.inject({
-      method: 'POST',
-      url: `/v1/orgs/${orgId}/payments/sources`,
-      payload: {
-        chain: 'base',
-        label: 'Base Gateway source',
-        provider: 'simulation',
-        rail: 'gateway_base',
-        simulated_balance_usdc: '100.00',
-        source_type: 'gateway',
-      },
-    });
-    expect(source.statusCode, source.body).toBe(201);
-    const sourceBody = source.json<PaymentSourceResponse>();
-    expect(sourceBody.source).toMatchObject({ chain: 'base', rail: 'gateway_base' });
+    const source = await seedSimulationGatewaySource(store, orgId);
+    expect(source).toMatchObject({ chain: 'base', rail: 'gateway_base' });
 
     const access = await app.inject({
       method: 'POST',
@@ -252,6 +270,24 @@ describe('Sections 6-8 payment control plane', () => {
       },
     });
     expect(access.statusCode, access.body).toBe(200);
+
+    const onboarding = await store.pool.query<{ status: string }>(
+      `SELECT status FROM org_onboarding_states WHERE org_id = $1 AND flow_key = 'payment_access'`,
+      [orgId],
+    );
+    expect(onboarding.rows[0]?.status).toBe('completed');
+
+    await store.pool.query(
+      `DELETE FROM org_onboarding_states WHERE org_id = $1 AND flow_key = 'payment_access'`,
+      [orgId],
+    );
+    const reconciled = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/onboarding-states`,
+    });
+    expect(reconciled.statusCode, reconciled.body).toBe(200);
+    expect(reconciled.json<{ readonly states: Array<{ readonly flow_key: string; readonly status: string }> }>().states)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ flow_key: 'payment_access', status: 'completed' })]));
 
     const exactOnly = await app.inject({
       method: 'POST',
@@ -299,7 +335,7 @@ describe('Sections 6-8 payment control plane', () => {
       decision: 'submitted',
       providerMode: 'simulation',
       rail: 'gateway_base',
-      sourceId: sourceBody.source.id,
+      sourceId: source.id,
     });
 
     const tooLarge = await app.inject({
@@ -355,19 +391,7 @@ describe('Sections 6-8 payment control plane', () => {
     });
     expect(treasury.statusCode, treasury.body).toBe(201);
 
-    const source = await app.inject({
-      method: 'POST',
-      url: `/v1/orgs/${orgId}/payments/sources`,
-      payload: {
-        chain: 'base',
-        label: 'Base Gateway source',
-        provider: 'simulation',
-        rail: 'gateway_base',
-        simulated_balance_usdc: '100.00',
-        source_type: 'gateway',
-      },
-    });
-    expect(source.statusCode, source.body).toBe(201);
+    await seedSimulationGatewaySource(store, orgId);
 
     const access = await app.inject({
       method: 'POST',
@@ -445,6 +469,73 @@ describe('Sections 6-8 payment control plane', () => {
       amount: '1.25',
       decision: 'submitted',
       rail: 'gateway_base',
+    });
+  });
+
+  it('enforces the agent payment-account approval threshold without a separate policy', async () => {
+    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app);
+    await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/treasury`,
+      payload: { chain: 'base', label: 'Base treasury', treasury_type: 'gateway' },
+    });
+    await seedSimulationGatewaySource(store, orgId);
+    await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/payment-access`,
+      payload: {
+        allowed_rails: ['gateway_base'],
+        approval_threshold_usdc: '1.00',
+        budget_usdc: '5.00',
+        dedicated_wallet_required: false,
+        per_request_cap_usdc: '2.00',
+        status: 'active',
+      },
+    });
+    const paymentPayload = {
+      resource: { category: 'market-data', url: 'https://seller.example.test/account-threshold' },
+      accepts: [{
+        scheme: 'exact',
+        network: 'base',
+        asset: 'USDC',
+        amount: '1.25',
+        payTo: '0x0000000000000000000000000000000000000001',
+        extra: { name: 'GatewayWalletBatched' },
+      }],
+    };
+
+    const gated = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: paymentPayload,
+    });
+
+    expect(gated.statusCode, gated.body).toBe(409);
+    expect(gated.json<ApprovalRequiredResponse>()).toMatchObject({ error: 'policy_requires_approval' });
+    const { approvalId, decisionId } = gated.json<ApprovalRequiredResponse>();
+
+    const approve = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/approvals/${approvalId}/approve`,
+      payload: { note: 'Approval threshold QA.' },
+    });
+    expect(approve.statusCode, approve.body).toBe(200);
+
+    const paid = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        ...paymentPayload,
+        context: { approval_id: approvalId, decision_id: decisionId },
+      },
+    });
+    expect(paid.statusCode, paid.body).toBe(200);
+    expect(paid.json<RuntimePaymentResponse>().payment).toMatchObject({
+      agentId,
+      amount: '1.25',
+      decision: 'submitted',
     });
   });
 });

@@ -215,8 +215,10 @@ let gatewaySettlement: Awaited<ReturnType<CircleTreasuryProvider['settleGatewayX
 let gatewaySettleCalls = 0;
 let exactSettleCalls = 0;
 let gatewayDepositCalls = 0;
+let gatewayBalanceAddresses: string[] = [];
 let bridgeTopUpCalls = 0;
 let bridgeTopUpIdempotencyKeys: string[] = [];
+let bridgeTopUpAmounts: string[] = [];
 let walletUsdcByChain: Record<string, string> = {};
 let gatewayUsdcByChain: Record<string, string> = {};
 let gatewayDepositCreditsBalance = true;
@@ -233,6 +235,10 @@ let exactSettlement: Awaited<ReturnType<CircleTreasuryProvider['settleExactX402'
 };
 let walletAddressNibble = 'a';
 
+function addUsdc(left: string, right: string): string {
+  return (Number(left) + Number(right)).toFixed(6).replace(/\.?0+$/, '');
+}
+
 function fakeCircleProvider(): CircleTreasuryProvider {
   return {
     health: () => ({
@@ -248,7 +254,8 @@ function fakeCircleProvider(): CircleTreasuryProvider {
       address: `0x${walletAddressNibble.repeat(40)}`,
       circleWalletId: `circle_wallet_${mode}_${chain}`,
     }),
-    getGatewayBalance: ({ chain, mode }) => {
+    getGatewayBalance: ({ address, chain, mode }) => {
+      gatewayBalanceAddresses.push(address);
       if (gatewayBalanceFailureChains.has(chain)) return Promise.reject(new Error(`gateway_balance_${chain}_rate_limited`));
       return Promise.resolve({
         available: gatewayUsdcByChain[chain] ?? '0',
@@ -282,12 +289,13 @@ function fakeCircleProvider(): CircleTreasuryProvider {
       gatewayDepositCalls += 1;
       if (gatewayDepositNeverSettles) return new Promise(() => undefined);
       const amount = (Number(amountMicros) / 1_000_000).toFixed(2);
-      if (gatewayDepositCreditsBalance) gatewayUsdcByChain[chain] = amount;
+      if (gatewayDepositCreditsBalance) gatewayUsdcByChain[chain] = addUsdc(gatewayUsdcByChain[chain] ?? '0', amount);
       return Promise.resolve({
         amount,
         amountMicros: amountMicros.toString(),
         approvalTransactionId: `circle_tx_approve_${mode}_${chain}`,
         depositTransactionId: `circle_tx_deposit_${mode}_${chain}`,
+        gatewayDepositorAddress: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
         gatewayWalletAddress: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
         providerMode: mode,
         usdcAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
@@ -302,8 +310,9 @@ function fakeCircleProvider(): CircleTreasuryProvider {
     bridgeWalletTopUp: ({ amount, fromChain, idempotencyKey, mode, toChain }) => {
       bridgeTopUpCalls += 1;
       bridgeTopUpIdempotencyKeys.push(idempotencyKey ?? '');
+      bridgeTopUpAmounts.push(amount);
       if (bridgeTopUpNeverSettles) return new Promise(() => undefined);
-      if (bridgeTopUpCreditsBalance) walletUsdcByChain[toChain] = amount;
+      if (bridgeTopUpCreditsBalance) walletUsdcByChain[toChain] = addUsdc(walletUsdcByChain[toChain] ?? '0', amount);
       return Promise.resolve({
         amount,
         fromChain,
@@ -445,8 +454,10 @@ describe('Section 9 Circle treasury foundation', () => {
     gatewaySettleCalls = 0;
     exactSettleCalls = 0;
     gatewayDepositCalls = 0;
+    gatewayBalanceAddresses = [];
     bridgeTopUpCalls = 0;
     bridgeTopUpIdempotencyKeys = [];
+    bridgeTopUpAmounts = [];
     bridgeTopUpCreditsBalance = true;
     bridgeTopUpNeverSettles = false;
     gatewayDepositNeverSettles = false;
@@ -1061,6 +1072,7 @@ describe('Section 9 Circle treasury foundation', () => {
       payload: { label: 'Testnet org treasury' },
     });
     expect(treasury.statusCode, treasury.body).toBe(201);
+
     const body = treasury.json<CircleTreasuryResponse>();
     expect(body.walletSet.circle_wallet_set_id).toMatch(/^circle_ws_test_/);
     expect(body.walletSet).toMatchObject({
@@ -1082,6 +1094,54 @@ describe('Section 9 Circle treasury foundation', () => {
     });
     expect(wallets.statusCode, wallets.body).toBe(200);
     expect(wallets.json<WalletsResponse>().wallets).toHaveLength(5);
+
+    const sources = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/sources`,
+    });
+    expect(sources.statusCode, sources.body).toBe(200);
+    const sourceRails = sources.json<{ readonly sources: ReadonlyArray<{ readonly rail: string }> }>()
+      .sources.map((source) => source.rail)
+      .sort();
+    expect(sourceRails).toEqual([
+      'exact_arbitrum',
+      'exact_avalanche',
+      'exact_base',
+      'exact_optimism',
+      'exact_polygon',
+      'gateway_arbitrum',
+      'gateway_avalanche',
+      'gateway_base',
+      'gateway_optimism',
+      'gateway_polygon',
+    ]);
+
+    const reconciled = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Testnet org treasury' },
+    });
+    expect(reconciled.statusCode, reconciled.body).toBe(201);
+    const sourcesAfterReconcile = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/sources`,
+    });
+    expect(sourcesAfterReconcile.json<{ readonly sources: readonly unknown[] }>().sources).toHaveLength(10);
+  });
+
+  it('rejects attempts to enable live payment mode while the product is testnet only', async () => {
+    const orgId = await createOrg(app);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/v1/orgs/${orgId}/payments/provider-mode`,
+      payload: { mode: 'live' },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: 'payment_mode_testnet_only',
+    });
   });
 
   it('returns live Circle wallet and Gateway balances for deployed chain wallets', async () => {
@@ -1164,13 +1224,22 @@ describe('Section 9 Circle treasury foundation', () => {
       chain: 'base',
       job_type: 'gateway.deposit',
       provider_ref: 'circle_tx_deposit_test_base',
-      status: 'submitted',
+      status: 'complete',
     });
     expect(deposit.json<ProviderJobResponse>().job.metadata).toMatchObject({
       amount_micros: '1250000',
       approval_transaction_id: 'circle_tx_approve_test_base',
       deposit_transaction_id: 'circle_tx_deposit_test_base',
+      gateway_depositor_address: '0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0',
     });
+
+    gatewayBalanceAddresses = [];
+    const balances = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/circle/balances`,
+    });
+    expect(balances.statusCode, balances.body).toBe(200);
+    expect(gatewayBalanceAddresses).toContain('0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0');
   });
 
   it('rejects Gateway deposit requests below Circle minimum', async () => {
@@ -1504,6 +1573,7 @@ describe('Section 9 Circle treasury foundation', () => {
     expect(bridgeTopUpCalls).toBe(1);
     expect(bridgeTopUpIdempotencyKeys).toEqual([prep.jobId.replace(/^cjob_/, '')]);
     expect(gatewayDepositCalls).toBe(1);
+
   });
 
   it('blocks non-Base Gateway x402 settlement after liquidity is ready until the rail is verified', async () => {
@@ -1834,6 +1904,21 @@ describe('Section 9 Circle treasury foundation', () => {
     });
     expect(bridgeTopUpCalls).toBe(0);
     expect(gatewayDepositCalls).toBe(1);
+
+    walletUsdcByChain.arbitrum = '0';
+    gatewayBalanceFailureChains.add('arbitrum');
+    const transientRetry = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/liquidity-jobs/${prep.jobId}/retry`,
+    });
+    expect(transientRetry.statusCode, transientRetry.body).toBe(202);
+    expect(transientRetry.json<ProviderJobResponse>().job).toMatchObject({
+      error_code: null,
+      provider_ref: 'circle_tx_deposit_test_arbitrum',
+      status: 'submitted',
+    });
+    expect(bridgeTopUpCalls).toBe(0);
+    expect(gatewayDepositCalls).toBe(1);
   });
 
   it('queues Gateway liquidity preparation when Circle Gateway balance lookup is transiently unavailable', async () => {
@@ -2021,6 +2106,126 @@ describe('Section 9 Circle treasury foundation', () => {
     );
   });
 
+  it('records the paid resource returned by a Gateway x402 provider', async () => {
+    gatewaySettlement = {
+      fulfillment: {
+        body: {
+          paid: true,
+          resource: 'Gateway paid resource',
+        },
+        status: 'delivered',
+      },
+      network: 'eip155:84532',
+      providerMode: 'test',
+      success: true,
+    };
+    const orgId = await createOrg(app);
+
+    const agentResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents`,
+      payload: { name: 'Gateway Fulfillment Agent' },
+    });
+    expect(agentResponse.statusCode, agentResponse.body).toBe(201);
+    const agentId = agentResponse.json<AgentResponse>().agent.id;
+
+    const connectionResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/connections`,
+      payload: { kind: 'agent_credential', name: 'Runtime credential' },
+    });
+    expect(connectionResponse.statusCode, connectionResponse.body).toBe(201);
+    const secret = connectionResponse.json<ConnectionCreateResponse>().secret;
+
+    const treasury = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Testnet org treasury' },
+    });
+    expect(treasury.statusCode, treasury.body).toBe(201);
+
+    const gatewayDeposit = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/gateway-deposits`,
+      payload: { amount_usdc: '0.50', chain: 'base' },
+    });
+    expect(gatewayDeposit.statusCode, gatewayDeposit.body).toBe(202);
+    gatewayBalanceAddresses = [];
+
+    const access = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/payment-access`,
+      payload: {
+        allowed_rails: ['gateway_base'],
+        budget_usdc: '5.00',
+        dedicated_wallet_required: false,
+        per_request_cap_usdc: '2.00',
+        status: 'active',
+      },
+    });
+    expect(access.statusCode, access.body).toBe(200);
+
+    const payment = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        accepts: [
+          {
+            amount: '1000',
+            asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+            extra: {
+              name: 'GatewayWalletBatched',
+              version: '1',
+              verifyingContract: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
+            },
+            network: 'eip155:84532',
+            payTo: '0x000000000000000000000000000000000000dEaD',
+            scheme: 'exact',
+          },
+        ],
+        resource: {
+          category: 'market-data',
+          mimeType: 'application/json',
+          method: 'GET',
+          url: 'https://seller.example.test/gateway',
+        },
+      },
+    });
+
+    expect(payment.statusCode, payment.body).toBe(200);
+    expect(gatewayBalanceAddresses).toContain('0x7d3f0acb46b1de6f4427d5464ead7b2b108102a0');
+    expect(payment.json()).toMatchObject({
+      payment: {
+        amount: '0.001',
+        fulfillment: {
+          body: {
+            paid: true,
+            resource: 'Gateway paid resource',
+          },
+          status: 'delivered',
+        },
+        providerMode: 'test',
+        rail: 'gateway_base',
+      },
+    });
+
+    const activity = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/activity`,
+    });
+    expect(activity.statusCode, activity.body).toBe(200);
+    expect(activity.json<AgentActivityFeedResponse>().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'payment.x402.submitted',
+          outcome: 'success',
+          summary: 'x402 resource delivered on gateway_base',
+        }),
+      ]),
+    );
+  });
+
   it('prepares exact-wallet liquidity before settlement when the target chain wallet is empty', async () => {
     const orgId = await createOrg(app);
 
@@ -2134,6 +2339,183 @@ describe('Section 9 Circle treasury foundation', () => {
       strategy: 'wallet_rebalance',
     });
     expect(bridgeTopUpCalls).toBe(1);
+  });
+
+  it('moves only an exact-wallet deficit and reuses the open preparation job for the same quote', async () => {
+    walletUsdcByChain.arbitrum = '20.00';
+    walletUsdcByChain.base = '30.00';
+    const orgId = await createOrg(app);
+
+    const agentResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents`,
+      payload: { name: 'Partially Funded Exact Agent' },
+    });
+    const agentId = agentResponse.json<AgentResponse>().agent.id;
+    const connectionResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/connections`,
+      payload: { kind: 'agent_credential', name: 'Runtime credential' },
+    });
+    const secret = connectionResponse.json<ConnectionCreateResponse>().secret;
+    await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Deficit-aware treasury' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/payment-access`,
+      payload: {
+        allowed_rails: ['exact_arbitrum'],
+        budget_usdc: '50.00',
+        dedicated_wallet_required: true,
+        per_request_cap_usdc: '25.00',
+        status: 'active',
+      },
+    });
+    const payload = {
+      accepts: [
+        {
+          amount: '20100000',
+          asset: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+          extra: { name: 'USDC', version: '2' },
+          network: 'eip155:421614',
+          payTo: '0x000000000000000000000000000000000000dEaD',
+          scheme: 'exact',
+        },
+      ],
+      resource: {
+        category: 'market-data',
+        mimeType: 'application/json',
+        method: 'GET',
+        url: `${appBaseUrl}/paid-resource-test`,
+      },
+    };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    const second = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+
+    expect(first.statusCode, first.body).toBe(409);
+    expect(second.statusCode, second.body).toBe(409);
+    const firstPrep = first.json<LiquidityPreparingResponse>();
+    const secondPrep = second.json<LiquidityPreparingResponse>();
+    expect(secondPrep.jobId).toBe(firstPrep.jobId);
+
+    const jobs = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/liquidity-jobs`,
+    });
+    const matchingJobs = jobs
+      .json<ProviderJobsResponse>()
+      .jobs.filter((job) => job.metadata.payment_quote_hash === jobs.json<ProviderJobsResponse>().jobs[0]?.metadata.payment_quote_hash);
+    expect(matchingJobs).toHaveLength(1);
+    expect(matchingJobs[0]).toMatchObject({
+      amount_usdc: '0.10',
+      chain: 'arbitrum',
+      status: 'queued',
+      metadata: {
+        destination_before_usdc: '20.00',
+        destination_target_usdc: '20.10',
+        strategy: 'wallet_rebalance',
+      },
+    });
+
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/liquidity-jobs/${firstPrep.jobId}/retry`,
+    });
+    expect(retry.statusCode, retry.body).toBe(202);
+    expect(bridgeTopUpAmounts).toEqual(['0.10']);
+    expect(walletUsdcByChain.arbitrum).toBe('20.1');
+  });
+
+  it('bridges only the destination-wallet deficit before a minimum Gateway deposit', async () => {
+    await markGatewayRailVerified(store, 'arbitrum');
+    gatewayUsdcByChain.arbitrum = '0.20';
+    walletUsdcByChain.arbitrum = '0.20';
+    const orgId = await createOrg(app);
+    const agentResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents`,
+      payload: { name: 'Partially Funded Gateway Agent' },
+    });
+    const agentId = agentResponse.json<AgentResponse>().agent.id;
+    const connectionResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/connections`,
+      payload: { kind: 'agent_credential', name: 'Runtime credential' },
+    });
+    const secret = connectionResponse.json<ConnectionCreateResponse>().secret;
+    await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Gateway deficit treasury' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/payment-access`,
+      payload: {
+        allowed_rails: ['gateway_arbitrum'],
+        budget_usdc: '5.00',
+        dedicated_wallet_required: false,
+        per_request_cap_usdc: '2.00',
+        status: 'active',
+      },
+    });
+
+    const payment = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        accepts: [
+          {
+            amount: '600000',
+            asset: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+            extra: { name: 'GatewayWalletBatched' },
+            network: 'eip155:421614',
+            payTo: '0x1111111111111111111111111111111111111111',
+            scheme: 'exact',
+          },
+        ],
+        resource: { category: 'market-data', url: 'https://seller.example.test/partial-gateway' },
+      },
+    });
+    expect(payment.statusCode, payment.body).toBe(409);
+    const prep = payment.json<LiquidityPreparingResponse>();
+    const jobs = await app.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/liquidity-jobs`,
+    });
+    const job = jobs.json<ProviderJobsResponse>().jobs.find((candidate) => candidate.id === prep.jobId);
+    expect(job).toMatchObject({
+      amount_usdc: '0.50',
+      metadata: {
+        destination_before_usdc: '0.20',
+        destination_target_usdc: '0.60',
+        destination_wallet_before_usdc: '0.20',
+        strategy: 'wallet_rebalance_then_gateway_deposit',
+      },
+    });
+
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/liquidity-jobs/${prep.jobId}/retry`,
+    });
+    expect(retry.statusCode, retry.body).toBe(202);
+    expect(bridgeTopUpAmounts).toEqual(['0.30']);
+    expect(gatewayUsdcByChain.arbitrum).toBe('0.7');
   });
 
   it('recommends and records bridge top-ups for exact-wallet chain liquidity based on request history', async () => {
@@ -2381,6 +2763,7 @@ describe('Section 9 Circle treasury foundation', () => {
         payload: { label: 'Gateway reconcile treasury' },
       });
       expect(treasury.statusCode, treasury.body).toBe(201);
+      gatewayUsdcByChain.base = '0';
 
       const deposit = await app.inject({
         method: 'POST',

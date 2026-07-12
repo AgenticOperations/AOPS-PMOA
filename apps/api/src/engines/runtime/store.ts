@@ -2,8 +2,9 @@ import type pg from 'pg';
 import { createApprovalRequest, recordActivity } from '../approvals/store.js';
 import { IdentityError } from '../identity/errors.js';
 import { authenticateConnection, type ConnectionAuthResult } from '../identity/store.js';
+import { completeProductOnboardingFlow } from '../identity/onboarding-progress.js';
 import { checkPolicyDecision } from '../policy/store.js';
-import { runtimeActionSchemas, runtimeContractVersion } from './action-contract.js';
+import { runtimeActionIds, runtimeActionSchemas, runtimeContractVersion } from './action-contract.js';
 import { normalizeRuntimeCheck } from './normalizer.js';
 import type { RuntimeCheckInput, RuntimeDecisionResponse, RuntimeOnboardResponse } from './types.js';
 
@@ -40,6 +41,11 @@ export async function onboardRuntime(pool: pg.Pool, auth: ConnectionAuthResult):
     summary: 'Runtime contract issued',
     payload: { contract_version: runtimeContractVersion },
   });
+  await completeProductOnboardingFlow(pool, auth.org_id, 'runtime_test', {
+    agent_id: auth.agent_id,
+    connection_id: auth.connection_id,
+    source: 'runtime_onboarded',
+  });
 
   return {
     agent: {
@@ -72,6 +78,13 @@ export async function checkRuntimePolicy(
   input: RuntimeCheckInput,
 ): Promise<RuntimeDecisionResponse> {
   const normalized = normalizeRuntimeCheck(input);
+  if (normalized.action !== null && !runtimeActionIds().includes(normalized.action)) {
+    throw new IdentityError(
+      'unsupported_runtime_action',
+      400,
+      'Agent runtime checks only support HTTP requests, x402 authorization, and tool calls.',
+    );
+  }
   const target = { type: 'agent' as const, id: auth.agent_id };
   if (!normalized.ok) {
     const activity = await recordActivity(pool, {

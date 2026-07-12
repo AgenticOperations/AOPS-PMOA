@@ -218,6 +218,12 @@ export type CircleGatewayX402SettlementInput = {
 
 export type CircleGatewayX402SettlementResult = {
   readonly errorReason?: string | undefined;
+  readonly fulfillment?: {
+    readonly body?: unknown;
+    readonly errorReason?: string | undefined;
+    readonly httpStatus?: number | undefined;
+    readonly status: 'delivered' | 'failed' | 'not_requested';
+  } | undefined;
   readonly network: string;
   readonly payer?: string | undefined;
   readonly providerMode: ProviderMode;
@@ -277,6 +283,7 @@ export type CircleGatewayDepositResult = {
   readonly amountMicros: string;
   readonly approvalTransactionId: string;
   readonly depositTransactionId: string;
+  readonly gatewayDepositorAddress: string;
   readonly gatewayWalletAddress: string;
   readonly providerMode: ProviderMode;
   readonly usdcAddress: string;
@@ -656,6 +663,7 @@ export function createDeveloperControlledCircleTreasuryProvider(): CircleTreasur
         amountMicros: amountAtomic,
         approvalTransactionId: approvalId,
         depositTransactionId: depositId,
+        gatewayDepositorAddress: address,
         gatewayWalletAddress: config.gatewayWallet,
         providerMode: mode,
         usdcAddress: config.usdc,
@@ -922,17 +930,7 @@ export function createCircleAgentWalletTreasuryProvider(options: {
         circleWalletId: agentWalletId({ address: wallet.address, chain, mode }),
       };
     },
-    getGatewayBalance: async ({ address, chain, mode }) => {
-      const balance = await executor.gatewayBalance({ address, chain, mode });
-      return {
-        available: balance.available,
-        domain: balance.domain,
-        providerMode: mode,
-        total: balance.total,
-        withdrawable: balance.withdrawable,
-        withdrawing: balance.withdrawing,
-      };
-    },
+    getGatewayBalance: fetchGatewayBalanceFromApi,
     getWalletBalances: async ({ mode, walletId }) => {
       const parsed = parseAgentWalletId(walletId);
       const balances = await executor.walletBalance({
@@ -964,6 +962,7 @@ export function createCircleAgentWalletTreasuryProvider(options: {
         amountMicros: amountAtomic,
         approvalTransactionId,
         depositTransactionId,
+        gatewayDepositorAddress: deposit.backingEOA ?? address,
         gatewayWalletAddress: deposit.gatewayWalletAddress ?? config.gatewayWallet,
         providerMode: mode,
         usdcAddress: config.usdc,
@@ -1029,6 +1028,9 @@ export function createCircleAgentWalletTreasuryProvider(options: {
           url: resource.url,
         });
         return {
+          fulfillment: payment.response === undefined
+            ? { status: 'not_requested' }
+            : { body: payment.response, status: 'delivered' },
           network: requirements.network,
           providerMode: mode,
           success: true,
