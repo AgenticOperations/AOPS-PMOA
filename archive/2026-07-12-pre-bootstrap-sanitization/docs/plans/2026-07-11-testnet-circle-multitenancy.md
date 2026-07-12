@@ -107,8 +107,8 @@ After successful Circle authentication, create or reconcile the existing treasur
 - API integration tests for RBAC, cross-org access denial, testnet-only enforcement, retries, and expired sessions.
 - Worker tests with a fake CLI executable and separate temporary profiles.
 - Browser QA through CDP 9223.
-- Existing Ryuk and OpenAssets org regression.
-- Fresh `abhinavpangaria2001@gmail.com` onboarding with real OTP, wallet discovery, faucet, treasury, exact x402, Gateway x402, and rebalancing.
+- Existing QA organizations A and B regression.
+- Fresh QA-user onboarding with real OTP, wallet discovery, faucet, treasury, exact x402, Gateway x402, and rebalancing.
 
 ## Completion Gate
 

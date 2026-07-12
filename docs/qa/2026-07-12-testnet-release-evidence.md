@@ -22,23 +22,25 @@ No credential secret, OTP, session token, Circle profile, or worker token is inc
 | Lint | Pass | `npm run verify`, all workspaces |
 | Typecheck | Pass | `npm run verify`, all workspaces |
 | Production build | Pass | API, Next.js web, standalone MCP, and shared packages |
+| Bootstrap suite | Pass | 10 tests |
+| Shared config/contracts | Pass | 2 files, 2 tests |
 | Database migrations | Pass | 2 files, 6 tests |
-| API suite | Pass | 35 files, 195 tests |
+| API suite | Pass | 35 files, 196 tests |
 | MCP suite | Pass | 2 files, 11 tests |
-| Web suite | Pass | 19 files, 72 tests |
+| Web suite | Pass | 24 files, 101 tests |
 | Docker image | Pass | `agentops-pmoa:testnet-qa`, manifest `sha256:cdda114b6d9cbab1289017a29b72c985ac0540dbcb10a23a72f2e235982a6f73` |
 | Diff whitespace | Pass | `git diff --check` |
 
-Source: local release run on 2026-07-12 and `package.json` `verify` script.
+Source: fresh local release run on 2026-07-12 using the `package.json` `verify` script.
 
 ## Production-Mode Recovery
 
 - Built web, API, and Circle worker started from compiled output on ports `3005`, `8080`, and `8090`.
 - Duplicate development watchers were stopped before the production-mode run.
-- After restarting the Circle worker, Ryuk's organization restored its encrypted organization-scoped Circle profile without another OTP.
+- After restarting the Circle worker, QA organization A restored its encrypted organization-scoped Circle profile without another OTP.
 - The browser showed the same masked wallet address, five chains, and `10/10 rails ready` after restart.
 - An unauthenticated request to the worker's private command surface returned `401 circle_worker_unauthorized`.
-- The production browser loaded Overview, Agents, Controls, Operations, Approvals, Settings, Treasury, Sources & Rails, Agent Access, Liquidity, and Activity & Evidence for the Abhinav organization with the expected page heading and no application error.
+- The production browser loaded Overview, Agents, Controls, Operations, Approvals, Settings, Treasury, Sources & Rails, Agent Access, Liquidity, and Activity & Evidence for QA organization C with the expected page heading and no application error.
 
 Source: Chrome CDP browser session on `9223`, built process logs, and [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/deployment/testnet-circle-worker]].
 
@@ -46,9 +48,9 @@ Source: Chrome CDP browser session on `9223`, built process logs, and [[10-Proje
 
 | Scenario | Result |
 |---|---|
-| Duplicate org submission for Ryuk | Returned the existing org with HTTP 200; org count stayed 1 |
-| Ryuk reads OpenAssets Circle wallets | 404 `not_found` |
-| Ryuk reads Abhinav Circle wallets | 404 `not_found` |
+| Duplicate org submission for QA organization A | Returned the existing org with HTTP 200; org count stayed 1 |
+| QA organization A reads organization B Circle wallets | 404 `not_found` |
+| QA organization A reads organization C Circle wallets | 404 `not_found` |
 | Missing runtime credential | 401 `invalid_connection` |
 | Invalid runtime credential | 401 `invalid_connection` |
 | Policy creation without operator session | 401 `unauthorized` |
@@ -60,20 +62,20 @@ Source: authenticated Chrome calls from the API origin and sanitized `/tmp/agent
 
 ## Organization Regressions
 
-### Ryuk
+### QA organization A
 
 - Encrypted Circle session reconnected after OTP and restored again after worker restart.
 - Browser showed five chain wallets and all ten exact/Gateway rails ready.
 - Browser payment ledger contains successful testnet exact and Gateway proof records for Base, Arbitrum, Polygon, Optimism, and Avalanche.
 - A fresh browser `Run proof` action created a completed Base Gateway rail-verification provider job.
 
-### OpenAssets
+### QA organization B
 
 - Browser revision flow edited, validated, and activated `QA deny weather requests` as policy version 2.
 - Standalone MCP call for a weather HTTP request returned `deny`, `policy_denied`, and matched policy version 2.
 - Non-weather request remained allowed in the earlier regression ledger.
 
-### Abhinav
+### QA organization C
 
 - Fresh Google user created one organization through the product UI.
 - Circle OTP was completed through onboarding; the product synchronized one wallet across Base, Arbitrum, Polygon, Optimism, and Avalanche and created ten real sources.

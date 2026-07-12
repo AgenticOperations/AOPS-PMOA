@@ -314,7 +314,7 @@ Do not mark a feature passed from code inspection alone. A pass requires live br
 ### Circle Treasury Setup
 
 - [ ] Create Circle treasury for org.
-- [ ] OTP flow is handled by pausing and requesting OTP for `ryuk9525@gmail.com` when Circle requires it.
+- [ ] OTP flow is handled by pausing and requesting OTP for the designated QA account when Circle requires it.
 - [ ] Circle wallet set is created or reused idempotently.
 - [ ] Five chain wallets exist for Base, Arbitrum, Polygon, Optimism, Avalanche.
 - [ ] Wallet records show correct mode, chain, address, account type, status, and external wallet id.
@@ -501,9 +501,8 @@ For every executed test case, record:
 
 Pause and ask the user when:
 
-- [ ] Google/Circle OTP is required for `ryuk9525@gmail.com`.
+- [ ] Google/Circle OTP is required for the designated QA account.
 - [ ] Testnet faucet funds are exhausted or chain balance cannot be recovered.
 - [ ] Circle provider returns an external-system blocker that cannot be fixed in product code.
 - [ ] A bug appears architectural or too large to fix inline without changing accepted scope.
 - [ ] The checklist needs product-scope revision before execution.
-

@@ -23,6 +23,7 @@ This dated archive contains historical BUILD-PMOA artifacts moved during the 202
 | `docs/reference-map.md` | Legacy BUILD-to-PMOA reference map |
 | `docs/superpowers/plans/` | Completed or superseded implementation plans |
 | `docs/wireframes/` | Superseded Controls wireframe |
+| `qa-test` | Historical unchecked browser QA checklist superseded by the accepted release evidence |
 
 ## Current Sources of Truth
 

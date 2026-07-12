@@ -8,7 +8,7 @@ describe('TreasuryActivity', () => {
       <TreasuryActivity
         activeTab="payments"
         auditEvents={[]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
         paymentEvents={[
           {
             id: 'pay_1',
@@ -48,7 +48,7 @@ describe('TreasuryActivity', () => {
 
   it('shows an empty state on the ledger tab when there are no payment events', () => {
     render(
-      <TreasuryActivity activeTab="payments" auditEvents={[]} orgSlug="openassets-qa-workspace" paymentEvents={[]} providerJobs={[]} reservations={[]} routeObservations={[]} />,
+      <TreasuryActivity activeTab="payments" auditEvents={[]} orgSlug="sample-qa-workspace" paymentEvents={[]} providerJobs={[]} reservations={[]} routeObservations={[]} />,
     );
 
     expect(screen.getByText('No payments evidence')).toBeInTheDocument();

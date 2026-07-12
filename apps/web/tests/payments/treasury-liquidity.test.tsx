@@ -41,7 +41,7 @@ describe('TreasuryLiquidity', () => {
             updated_at: '2026-07-08T08:00:00.000Z',
           },
         ]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
         providerState="ready"
         reconcileJobsAction={async () => {}}
         rebalanceRecommendations={[]}
@@ -69,7 +69,7 @@ describe('TreasuryLiquidity', () => {
         cancelLiquidityJobAction={async () => {}}
         capabilities={[capability]}
         liquidityJobs={[]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
         providerState="ready"
         reconcileJobsAction={async () => {}}
         rebalanceRecommendations={[]}
@@ -91,7 +91,7 @@ describe('TreasuryLiquidity', () => {
           status: 'queued', amount_usdc: '0.05', provider_ref: null, error_code: null, metadata: {},
           created_at: '2026-07-08T08:00:00.000Z', updated_at: '2026-07-08T08:00:00.000Z',
         }]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
         providerState="unavailable"
         reconcileJobsAction={async () => {}}
         rebalanceRecommendations={[]}

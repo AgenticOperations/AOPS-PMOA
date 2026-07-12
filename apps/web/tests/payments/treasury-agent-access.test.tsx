@@ -64,7 +64,7 @@ describe('TreasuryAgentAccess', () => {
         ]}
         agents={[agent]}
         capabilities={[capability]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
       />,
     );
 
@@ -80,7 +80,7 @@ describe('TreasuryAgentAccess', () => {
         accounts={[]}
         agents={[]}
         capabilities={[capability]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
       />,
     );
 
@@ -128,7 +128,7 @@ describe('TreasuryAgentAccess', () => {
         ]}
         agents={[agent, secondAgent]}
         capabilities={[capability, avalancheCapability]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
       />,
     );
 
@@ -174,7 +174,7 @@ describe('TreasuryAgentAccess', () => {
       accessAction: async () => {},
       agents: [agent, secondAgent],
       capabilities: [capability, avalancheCapability],
-      orgSlug: 'openassets-qa-workspace',
+      orgSlug: 'sample-qa-workspace',
     };
     const { rerender } = render(
       <TreasuryAgentAccess {...props} accounts={[firstAccount, secondAccount]} />,

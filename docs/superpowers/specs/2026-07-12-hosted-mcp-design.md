@@ -11,7 +11,7 @@ tags: [mcp, hosted-mcp, runtime, credentials, production]
 
 ## Status
 
-Approved architecture, awaiting written-spec review. This specification defines the first production-usable hosted MCP surface for AOPS. It does not authorize implementation until Abhinav approves this written version and the validation spikes in this document pass.
+Approved architecture, awaiting written-spec review. This specification defines the first production-usable hosted MCP surface for AOPS. It does not authorize implementation until the product owner approves this written version and the validation spikes in this document pass.
 
 ## Outcome
 

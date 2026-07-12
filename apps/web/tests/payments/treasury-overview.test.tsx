@@ -13,7 +13,7 @@ describe('TreasuryOverview', () => {
         balances={[]}
         circleConnectionState="disconnected"
         failedJobs={[]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
         overview={{
           mode: 'test',
           totals: { gateway_usdc: '0', wallet_usdc: '0', treasury_usdc: '0' },
@@ -48,7 +48,7 @@ describe('TreasuryOverview', () => {
     expect(screen.getByText('Unavailable')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Circle connection required/ })).toHaveAttribute(
       'href',
-      '/onboarding/openassets-qa-workspace',
+      '/onboarding/sample-qa-workspace',
     );
   });
 
@@ -60,7 +60,7 @@ describe('TreasuryOverview', () => {
         balances={[]}
         circleConnectionState="unavailable"
         failedJobs={[]}
-        orgSlug="openassets-qa-workspace"
+        orgSlug="sample-qa-workspace"
         overview={{
           mode: 'test',
           totals: { gateway_usdc: '0', wallet_usdc: '0', treasury_usdc: '0' },
