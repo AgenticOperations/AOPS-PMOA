@@ -4,6 +4,8 @@ import type { ZodTypeAny } from 'zod';
 import type { AgentOpsRuntimeClient } from './tools.js';
 import { createAgentOpsTools } from './tools.js';
 
+export const AGENTOPS_MCP_INSTRUCTIONS = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Call the matching check tool first, follow approval requirements, and record the final outcome. Actions sent outside AOPS are not governed by this connection.';
+
 type ToolRegistrar = (
   name: string,
   config: {
@@ -18,6 +20,8 @@ export function buildAgentOpsMcpServer(client: AgentOpsRuntimeClient): McpServer
   const server = new McpServer({
     name: 'agentops',
     version: '0.0.0',
+  }, {
+    instructions: AGENTOPS_MCP_INSTRUCTIONS,
   });
   const registerTool = server.registerTool.bind(server) as ToolRegistrar;
 
