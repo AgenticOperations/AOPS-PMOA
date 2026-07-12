@@ -8,7 +8,10 @@ WEB_ENV="$ROOT_DIR/apps/web/.env.local"
 RUNTIME_DIR="$ROOT_DIR/.runtime"
 LOG_DIR="$RUNTIME_DIR/logs"
 RUN_ONLY=false
+SERVICE_NAMES=()
 SERVICE_PIDS=()
+FAILED_SERVICE_NAME=''
+FAILED_SERVICE_STATUS=''
 
 usage() {
   cat <<'EOF'
@@ -27,12 +30,14 @@ Without arguments:
 EOF
 }
 
-case "${1:-}" in
-  '') ;;
-  --run-only) RUN_ONLY=true ;;
-  -h|--help) usage; exit 0 ;;
-  *) usage >&2; exit 2 ;;
-esac
+if [[ "${AGENTOPS_SETUP_LIB_ONLY:-false}" != true ]]; then
+  case "${1:-}" in
+    '') ;;
+    --run-only) RUN_ONLY=true ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+fi
 
 log() { printf '\n[agentOps] %s\n' "$*"; }
 fail() { printf '\n[agentOps] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -191,8 +196,51 @@ port_available_for_app() {
 start_service() {
   local name="$1"; shift
   "$@" >"$LOG_DIR/$name.log" 2>&1 &
+  SERVICE_NAMES+=("$name")
   SERVICE_PIDS+=("$!")
   printf '%s\n' "$!" >"$RUNTIME_DIR/$name.pid"
+}
+
+wait_for_service_health() {
+  local label="$1" url="$2" timeout="$3" probe_pid index pid status
+  FAILED_SERVICE_NAME=''
+  FAILED_SERVICE_STATUS=''
+
+  node "$ROOT_DIR/scripts/wait-for-http.mjs" "$label" "$url" "$timeout" &
+  probe_pid="$!"
+
+  while kill -0 "$probe_pid" 2>/dev/null; do
+    for index in "${!SERVICE_PIDS[@]}"; do
+      pid="${SERVICE_PIDS[$index]}"
+      if ! kill -0 "$pid" 2>/dev/null; then
+        if wait "$pid"; then status=0; else status="$?"; fi
+        FAILED_SERVICE_NAME="${SERVICE_NAMES[$index]}"
+        FAILED_SERVICE_STATUS="$status"
+        kill "$probe_pid" 2>/dev/null || true
+        wait "$probe_pid" 2>/dev/null || true
+        return 1
+      fi
+    done
+    sleep 0.1
+  done
+
+  if wait "$probe_pid"; then
+    for index in "${!SERVICE_PIDS[@]}"; do
+      pid="${SERVICE_PIDS[$index]}"
+      if ! kill -0 "$pid" 2>/dev/null; then
+        if wait "$pid"; then status=0; else status="$?"; fi
+        FAILED_SERVICE_NAME="${SERVICE_NAMES[$index]}"
+        FAILED_SERVICE_STATUS="$status"
+        return 1
+      fi
+    done
+    return 0
+  else
+    status="$?"
+  fi
+  FAILED_SERVICE_NAME="$label health check"
+  FAILED_SERVICE_STATUS="$status"
+  return 1
 }
 
 shutdown() {
@@ -226,16 +274,16 @@ start_application() {
 
   log 'Starting API, Hosted MCP, Circle worker, and web console.'
   start_service api npm run dev:api
-  start_service mcp npm run dev:mcp:http
+  start_service mcp env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://localhost:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005 npm run dev:mcp:http
   start_service circle-worker npm run dev:circle-worker
   start_service web npm --workspace @agentops-pmoa/web run dev -- --port 3005
 
-  if ! node "$ROOT_DIR/scripts/wait-for-http.mjs" API http://127.0.0.1:8080/healthz 90000 ||
-     ! node "$ROOT_DIR/scripts/wait-for-http.mjs" 'Hosted MCP' http://127.0.0.1:8070/healthz 90000 ||
-     ! node "$ROOT_DIR/scripts/wait-for-http.mjs" 'Circle worker' http://127.0.0.1:8090/healthz 90000 ||
-     ! node "$ROOT_DIR/scripts/wait-for-http.mjs" Web http://127.0.0.1:3005/ 90000; then
+  if ! wait_for_service_health API http://127.0.0.1:8080/healthz 90000 ||
+     ! wait_for_service_health 'Hosted MCP' http://127.0.0.1:8070/healthz 90000 ||
+     ! wait_for_service_health 'Circle worker' http://127.0.0.1:8090/healthz 90000 ||
+     ! wait_for_service_health Web http://127.0.0.1:3005/ 90000; then
     show_failure_logs
-    fail 'One or more services failed startup health checks.'
+    fail "Startup readiness failed for $FAILED_SERVICE_NAME (status $FAILED_SERVICE_STATUS)."
   fi
 
   cat <<EOF
@@ -254,13 +302,18 @@ EOF
   while true; do
     for index in "${!SERVICE_PIDS[@]}"; do
       if ! kill -0 "${SERVICE_PIDS[$index]}" 2>/dev/null; then
+        if wait "${SERVICE_PIDS[$index]}"; then status=0; else status="$?"; fi
         show_failure_logs
-        fail 'An agentOps service stopped unexpectedly.'
+        fail "Service ${SERVICE_NAMES[$index]} stopped unexpectedly with status $status."
       fi
     done
     sleep 2
   done
 }
+
+if [[ "${AGENTOPS_SETUP_LIB_ONLY:-false}" == true ]]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 cd "$ROOT_DIR"
 validate_node

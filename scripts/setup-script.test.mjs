@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -44,11 +45,15 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
   assert.equal(serviceCalls.length, 4);
   assert.deepEqual(services, new Map([
     ['api', 'npm run dev:api'],
-    ['mcp', 'npm run dev:mcp:http'],
+    [
+      'mcp',
+      'env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://localhost:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005 npm run dev:mcp:http',
+    ],
     ['circle-worker', 'npm run dev:circle-worker'],
     ['web', 'npm --workspace @agentops-pmoa/web run dev -- --port 3005'],
   ]));
 
+  assert.match(source, /SERVICE_NAMES\+=\("\$name"\)/);
   assert.match(source, /"\$@" >"\$LOG_DIR\/\$name\.log" 2>&1 &/);
   assert.match(source, />"\$RUNTIME_DIR\/\$name\.pid"/);
   assert.equal(`${serviceCalls.find(({ name }) => name === 'mcp').name}.log`, 'mcp.log');
@@ -67,12 +72,95 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
   }
 
   const lastStart = Math.max(...serviceCalls.map(({ name }) => source.indexOf(`start_service ${name} `)));
-  const firstHealth = source.indexOf('wait-for-http.mjs');
+  const firstHealth = source.indexOf('wait_for_service_health API');
   assert.ok(lastStart < firstHealth, 'all four services must start before readiness health checks');
 
   assert.match(source, /Hosted MCP:\s+http:\/\/localhost:8070\/mcp/);
   assert.match(source, /Hosted MCP health:\s+http:\/\/127\.0\.0\.1:8070\/healthz/);
   assert.match(source, /stop all four application services/);
+});
+
+test('sourced supervisor helpers monitor health, exits, logs, pids, and shutdown', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'agentops-supervisor-'));
+  const runtime = path.join(temporaryRoot, 'runtime');
+  const portFile = path.join(temporaryRoot, 'port');
+  const mockRoot = path.join(temporaryRoot, 'mock-root');
+  const probeMarker = path.join(temporaryRoot, 'probe-started');
+  const quote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
+  const server = [
+    "const fs = require('node:fs');",
+    "const http = require('node:http');",
+    "const server = http.createServer((request, response) => { response.writeHead(200); response.end('ok'); });",
+    `server.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[1], String(server.address().port)));`,
+  ].join(' ');
+  await mkdir(path.join(mockRoot, 'scripts'), { recursive: true });
+  await writeFile(
+    path.join(mockRoot, 'scripts', 'wait-for-http.mjs'),
+    "import fs from 'node:fs'; fs.writeFileSync(process.env.PROBE_MARKER, 'started'); setTimeout(() => process.exit(0), 50);\n",
+  );
+  const exitsAfterProbeStarts = [
+    "const fs = require('node:fs');",
+    'const marker = process.argv[1];',
+    "const poll = () => fs.existsSync(marker) ? setTimeout(() => process.exit(7), 20) : setTimeout(poll, 1);",
+    'poll();',
+  ].join(' ');
+  const script = `
+    export AGENTOPS_SETUP_LIB_ONLY=true
+    source ${quote(setup)}
+    RUNTIME_DIR=${quote(runtime)}
+    LOG_DIR="$RUNTIME_DIR/logs"
+    mkdir -p "$LOG_DIR"
+    trap shutdown EXIT INT TERM
+
+    start_service healthy node -e ${quote(server)} ${quote(portFile)}
+    healthy_pid="\${SERVICE_PIDS[0]}"
+    for _ in {1..100}; do
+      [[ -s ${quote(portFile)} ]] && break
+      sleep 0.02
+    done
+    [[ -s ${quote(portFile)} ]]
+    port="$(<${quote(portFile)})"
+    wait_for_service_health Healthy "http://127.0.0.1:$port/healthz" 5000
+    [[ -f "$RUNTIME_DIR/healthy.pid" ]]
+    [[ -f "$LOG_DIR/healthy.log" ]]
+
+    ROOT_DIR=${quote(mockRoot)}
+    export PROBE_MARKER=${quote(probeMarker)}
+    start_service doomed node -e ${quote(exitsAfterProbeStarts)} ${quote(probeMarker)}
+    doomed_pid="\${SERVICE_PIDS[1]}"
+    started="$(node -e 'process.stdout.write(String(Date.now()))')"
+    if wait_for_service_health SuccessfulProbe http://127.0.0.1:1/healthz 10000; then
+      exit 20
+    fi
+    elapsed="$(( $(node -e 'process.stdout.write(String(Date.now()))') - started ))"
+    [[ "$FAILED_SERVICE_NAME" == doomed ]]
+    [[ "$FAILED_SERVICE_STATUS" == 7 ]]
+    [[ "$elapsed" -lt 3000 ]]
+    [[ -f "$RUNTIME_DIR/doomed.pid" ]]
+    [[ -f "$LOG_DIR/doomed.log" ]]
+    printf 'failure=%s:%s elapsed=%s\n' "$FAILED_SERVICE_NAME" "$FAILED_SERVICE_STATUS" "$elapsed"
+
+    shutdown
+    trap - EXIT
+    [[ ! -e "$RUNTIME_DIR/healthy.pid" ]]
+    [[ ! -e "$RUNTIME_DIR/doomed.pid" ]]
+    ! kill -0 "$healthy_pid" 2>/dev/null
+    ! kill -0 "$doomed_pid" 2>/dev/null
+    printf 'shutdown=clean\n'
+  `;
+
+  try {
+    const result = spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.match(result.stdout, /failure=doomed:7 elapsed=\d+/);
+    assert.match(result.stdout, /shutdown=clean/);
+    assert.doesNotMatch(result.stdout + result.stderr, /AGENTOPS_MCP_CREDENTIAL/);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
 });
 
 test('setup rejects unsupported arguments before changing the environment', () => {
