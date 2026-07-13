@@ -4,6 +4,12 @@ import {
   type RequestListener,
   type Server,
 } from "node:http";
+import {
+  createServer as createHttpsServer,
+  request as requestHttps,
+  type RequestOptions,
+} from "node:https";
+import type { TLSSocket } from "node:tls";
 
 import { encodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -83,6 +89,24 @@ const validPaymentRequired = {
     },
   ],
 };
+
+const TLS_KEY = `-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIPpDbYk0sgAw6D6GkesVzGFUt7cO9oq/PqW6yxp9AKZWoAoGCCqGSM49
+AwEHoUQDQgAEpuUaBsC2zyV3ScxVwNLw8LfBHhQFOkJx8BLkXjcaco5BjClNk1oZ
+p74EaN309NNFXFjayQNVqkMVfZTYq9q/Eg==
+-----END EC PRIVATE KEY-----`;
+
+const TLS_CERT = `-----BEGIN CERTIFICATE-----
+MIIBojCCAUegAwIBAgIUZBQESGrH6klS9i6gCjWbLqSQbGswCgYIKoZIzj0EAwIw
+GDEWMBQGA1UEAwwNbWVyY2hhbnQudGVzdDAgFw0yNjA3MTMxMTA1MTJaGA8yMTI2
+MDYxOTExMDUxMlowGDEWMBQGA1UEAwwNbWVyY2hhbnQudGVzdDBZMBMGByqGSM49
+AgEGCCqGSM49AwEHA0IABKblGgbAts8ld0nMVcDS8PC3wR4UBTpCcfAS5F43GnKO
+QYwpTZNaGae+BGjd9PTTRVxY2skDVapDFX2U2KvavxKjbTBrMB0GA1UdDgQWBBRa
+8UOuvWYZ2TNk3NATq9DNT7J4ijAfBgNVHSMEGDAWgBRa8UOuvWYZ2TNk3NATq9DN
+T7J4ijAYBgNVHREEETAPgg1tZXJjaGFudC50ZXN0MA8GA1UdEwEB/wQFMAMBAf8w
+CgYIKoZIzj0EAwIDSQAwRgIhAPbWpmEP3DZ8Bs4dohi5gpBB404hUuSGNnskgtpC
+azWjAiEAsLKNkAjnjHiHpWlgqTDo/1AnTzJQNqHQeQUi/4XeqOQ=
+-----END CERTIFICATE-----`;
 
 function responseForDiscovery(
   overrides: Partial<PaidHttpResponse> = {},
@@ -624,18 +648,54 @@ describe("executeBoundedHttpRequest", () => {
   });
 
   it("destroys timed-out requests with an explicit error", async () => {
+    let resolveResponseClosed!: (writableFinished: boolean) => void;
+    const responseClosed = new Promise<boolean>((resolve) => {
+      resolveResponseClosed = resolve;
+    });
     await expect(
-      executeLocalHttp(() => undefined, { timeoutMs: 20 }),
+      executeLocalHttp((_request, outgoing) => {
+        outgoing.once("close", () => {
+          resolveResponseClosed(outgoing.writableFinished);
+        });
+      }, { timeoutMs: 20 }),
     ).rejects.toMatchObject({ code: "request_timeout" });
+    await expect(responseClosed).resolves.toBe(false);
   });
 
   it("destroys responses immediately above the default 1 MiB byte limit", async () => {
+    let resolveResponseClosed!: (writableFinished: boolean) => void;
+    const responseClosed = new Promise<boolean>((resolve) => {
+      resolveResponseClosed = resolve;
+    });
     await expect(
       executeLocalHttp((_request, outgoing) => {
         outgoing.setHeader("Content-Type", "application/octet-stream");
-        outgoing.end(Buffer.alloc(1024 * 1024 + 1));
+        const interval = setInterval(() => {
+          outgoing.write(Buffer.alloc(64 * 1024));
+        }, 1);
+        outgoing.once("close", () => {
+          clearInterval(interval);
+          resolveResponseClosed(outgoing.writableFinished);
+        });
       }),
     ).rejects.toMatchObject({ code: "response_too_large" });
+    await expect(responseClosed).resolves.toBe(false);
+  });
+
+  it("returns an intact response at the exact 1 MiB byte limit", async () => {
+    const payload = Buffer.alloc(1024 * 1024, 0xa5);
+    const response = await executeLocalHttp((_request, outgoing) => {
+      outgoing.setHeader("Content-Type", "application/octet-stream");
+      outgoing.end(payload);
+    });
+
+    expect(response).toMatchObject({
+      status: 200,
+      bodyEncoding: "base64",
+      sizeBytes: 1024 * 1024,
+      truncated: false,
+    });
+    expect(Buffer.from(String(response.body), "base64")).toEqual(payload);
   });
 
   it("uses the pinned resolver without a second upstream resolution", async () => {
@@ -659,6 +719,70 @@ describe("executeBoundedHttpRequest", () => {
     expect(response.body).toBe("pinned");
     expect(upstreamResolver).toHaveBeenCalledTimes(1);
     expect(pinnedResolver).toHaveBeenCalledWith("merchant.test");
+  });
+
+  it("keeps the validated hostname for TLS SNI and Host while connecting to the pinned IP", async () => {
+    let resolveReceivedTls!: (value: {
+      readonly host: string | undefined;
+      readonly servername: string | false | null;
+    }) => void;
+    const receivedTls = new Promise<{
+      readonly host: string | undefined;
+      readonly servername: string | false | null;
+    }>((resolve) => {
+      resolveReceivedTls = resolve;
+    });
+    const server = createHttpsServer(
+      { cert: TLS_CERT, key: TLS_KEY },
+      (request, outgoing) => {
+        resolveReceivedTls({
+          host: request.headers.host,
+          servername: (request.socket as TLSSocket).servername,
+        });
+        outgoing.setHeader("Content-Type", "text/plain");
+        outgoing.end("secure and pinned");
+      },
+    );
+    openServers.add(server);
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Test HTTPS server did not bind to TCP");
+    }
+
+    const url = `https://merchant.test:${address.port}/paid`;
+    const pinnedResolver = vi.fn(() => Promise.resolve(["127.0.0.1"]));
+    let connectorOptions: RequestOptions | undefined;
+    const response = await executeBoundedHttpRequest(
+      normalizePaidHttpRequest({ url, method: "GET", headers: [] }),
+      {
+        url,
+        hostname: "merchant.test",
+        addresses: ["127.0.0.1"],
+        resolveHostname: pinnedResolver,
+      },
+      {
+        requestConnector: (requestUrl, requestOptions, onResponse) => {
+          connectorOptions = requestOptions;
+          return requestHttps(
+            requestUrl,
+            { ...requestOptions, ca: TLS_CERT },
+            onResponse,
+          );
+        },
+      },
+    );
+
+    expect(response.body).toBe("secure and pinned");
+    expect(pinnedResolver).toHaveBeenCalledWith("merchant.test");
+    expect(connectorOptions?.servername).toBe("merchant.test");
+    await expect(receivedTls).resolves.toEqual({
+      host: `merchant.test:${address.port}`,
+      servername: "merchant.test",
+    });
   });
 
   it("never reuses a shared socket that bypasses the pinned resolver", async () => {
