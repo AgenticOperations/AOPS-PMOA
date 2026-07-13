@@ -22,18 +22,31 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
   const sheetIdRef = React.useRef(Symbol('sheet'));
   const [mounted, setMounted] = React.useState(false);
 
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
+  // Tracks whether we are in the DOM (stays true during exit animation).
+  const [rendered, setRendered] = React.useState(false);
+  // Drive the data-state attribute to trigger CSS enter/exit animations.
+  const [animState, setAnimState] = React.useState<'open' | 'closed'>('closed');
+
+  React.useEffect(() => { setMounted(true); }, []);
 
   React.useEffect(() => {
     onOpenChangeRef.current = onOpenChange;
   }, [onOpenChange]);
 
   React.useEffect(() => {
-    if (!open) {
-      return undefined;
+    if (open) {
+      setRendered(true);
+      // Let the DOM paint the closed state first, then flip to open.
+      requestAnimationFrame(() => setAnimState('open'));
+    } else {
+      // Flip to closed — CSS exit animation plays, onAnimationEnd unmounts.
+      setAnimState('closed');
     }
+  }, [open]);
+
+  // Focus management + scroll lock.
+  React.useEffect(() => {
+    if (!open) return undefined;
 
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
@@ -57,9 +70,7 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
     focusFirst();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (openSheetStack.at(-1) !== sheetId) {
-        return;
-      }
+      if (openSheetStack.at(-1) !== sheetId) return;
 
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -67,9 +78,7 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
         return;
       }
 
-      if (event.key !== 'Tab' || panelRef.current === null) {
-        return;
-      }
+      if (event.key !== 'Tab' || panelRef.current === null) return;
 
       const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(focusableSelector));
       if (focusable.length === 0) {
@@ -99,12 +108,18 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
     };
   }, [open]);
 
-  if (!open || !mounted) {
-    return null;
-  }
+  // After exit animation ends, remove from DOM.
+  const handleAnimationEnd = (event: React.AnimationEvent<HTMLElement>) => {
+    // Only unmount after the panel's own exit animation (not child animations).
+    if (event.target === event.currentTarget && animState === 'closed') {
+      setRendered(false);
+    }
+  };
+
+  if (!mounted || !rendered) return null;
 
   return createPortal(
-    <div className="sheet-root" data-side={side}>
+    <div className="sheet-root" data-side={side} data-state={animState}>
       <button
         aria-label="Dismiss panel"
         className="sheet-backdrop"
@@ -115,6 +130,7 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
         aria-labelledby={labelledBy}
         aria-modal="true"
         className={cn('sheet-panel', side === 'left' && 'sheet-panel-left', panelClassName)}
+        onAnimationEnd={handleAnimationEnd}
         ref={panelRef}
         role="dialog"
         tabIndex={-1}
@@ -158,7 +174,13 @@ function SheetCloseButton({
   readonly onClick: () => void;
 }) {
   return (
-    <button aria-label={ariaLabel} className={cn('sheet-close', className)} disabled={disabled} onClick={onClick} type="button">
+    <button
+      aria-label={ariaLabel}
+      className={cn('sheet-close', className)}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
       <IconX aria-hidden="true" size={17} />
     </button>
   );
