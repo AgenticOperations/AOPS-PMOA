@@ -344,6 +344,29 @@ export type PaidHttpUrlPolicy = {
   readonly resolveHostname?: PaidHttpDnsResolver;
 };
 
+export function deriveTestnetPaidHttpAllowOrigins(
+  enabled: boolean,
+  publicApiBaseUrl: string,
+): readonly string[] {
+  if (!enabled || publicApiBaseUrl.length === 0) return [];
+  try {
+    const parsed = new URL(publicApiBaseUrl);
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      parsed.username.length > 0 ||
+      parsed.password.length > 0 ||
+      parsed.pathname !== '/' ||
+      parsed.search.length > 0 ||
+      parsed.hash.length > 0
+    ) {
+      return [];
+    }
+    return [parsed.origin];
+  } catch {
+    return [];
+  }
+}
+
 export type ValidatedPaidHttpDestination = {
   readonly url: string;
   readonly hostname: string;

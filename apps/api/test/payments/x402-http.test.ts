@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertPaidHttpUrlAllowed,
   canonicalPaidHttpRequestHash,
+  deriveTestnetPaidHttpAllowOrigins,
   executeBoundedHttpRequest,
   normalizePaidHttpRequest,
   paymentRequiredFromResponse,
@@ -425,6 +426,22 @@ describe("canonicalPaidHttpRequestHash", () => {
     expect(first).toMatch(/^[a-f0-9]{64}$/);
     expect(equivalent).toBe(first);
     expect(changed).not.toBe(first);
+  });
+});
+
+describe("deriveTestnetPaidHttpAllowOrigins", () => {
+  it.each([
+    ["fixture disabled", false, "http://127.0.0.1:8080", []],
+    ["fixture origin missing", true, "", []],
+    ["fixture URL is not an exact origin", true, "http://127.0.0.1:8080/api", []],
+    [
+      "explicit local fixture origin",
+      true,
+      "http://127.0.0.1:8080",
+      ["http://127.0.0.1:8080"],
+    ],
+  ])("derives the paid HTTP allowlist when %s", (_label, enabled, publicApiBaseUrl, expected) => {
+    expect(deriveTestnetPaidHttpAllowOrigins(enabled, publicApiBaseUrl)).toEqual(expected);
   });
 });
 

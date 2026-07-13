@@ -53,7 +53,15 @@ function canonicalDeveloperInput(rail: 'exact' | 'gateway' = 'exact') {
       url: request.url,
     },
     mode: 'test' as const,
+    ...(rail === 'gateway'
+      ? { payerAddress: '0x1b3e1e392732d37ecba66916be7650c8f214358b' }
+      : {}),
     request,
+    resource: {
+      description: `Canonical ${rail} test resource`,
+      mimeType: 'application/json',
+      url: request.url,
+    },
     requirements: {
       amount: '10000',
       asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
@@ -741,7 +749,7 @@ describe('Circle treasury provider configuration', () => {
     const receipt = {
       success: true,
       network: 'eip155:84532',
-      payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      payer: '0x1b3e1e392732d37ecba66916be7650c8f214358b',
       transaction: '0xgateway',
     };
     const executeHttpRequest = vi.fn(() => Promise.resolve({
@@ -774,7 +782,16 @@ describe('Circle treasury provider configuration', () => {
     });
     const encodedProof = replayedRequest?.headers?.[1]?.[1] as string;
     const proof = JSON.parse(Buffer.from(encodedProof, 'base64').toString('utf8')) as Record<string, unknown>;
-    expect(proof).toMatchObject({ accepted: input.requirements, x402Version: 2 });
+    expect(proof).toMatchObject({
+      accepted: input.requirements,
+      payload: {
+        authorization: {
+          from: input.payerAddress,
+        },
+      },
+      resource: input.resource,
+      x402Version: 2,
+    });
     expect(destination).toBe(input.destination);
     const source = await readFile(
       new URL('../../src/engines/payments/circle-provider.ts', import.meta.url),

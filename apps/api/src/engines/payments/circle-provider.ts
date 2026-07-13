@@ -230,7 +230,9 @@ export type CircleCanonicalX402SettlementInput = CircleX402WalletIdentity & {
   readonly attemptId: string;
   readonly destination: ValidatedPaidHttpDestination;
   readonly mode: ProviderMode;
+  readonly payerAddress?: string | undefined;
   readonly request: PaidHttpRequest;
+  readonly resource?: NonNullable<PaymentPayload['resource']> | undefined;
   readonly requirements: CircleGatewayX402Requirements;
 };
 
@@ -901,7 +903,7 @@ async function executeSignedX402(input: {
   try {
     const normalized = normalizePaidHttpRequest(request);
     const signer = {
-      address: walletAddress as `0x${string}`,
+      address: (input.settlement.payerAddress ?? walletAddress) as `0x${string}`,
       signTypedData: input.signTypedData,
     };
     const normalizedRequirements = {
@@ -912,6 +914,7 @@ async function executeSignedX402(input: {
     const paymentPayload: PaymentPayload = {
       ...created,
       accepted: normalizedRequirements,
+      resource: input.settlement.resource ?? { url: normalized.url },
     };
     const proof = encodePaymentSignatureHeader(paymentPayload);
     paidRequest = {
@@ -949,7 +952,7 @@ async function executeSignedX402(input: {
   const result = developerResponseResult({
     mode,
     network: requirements.network,
-    expectedPayer: walletAddress,
+    expectedPayer: input.settlement.payerAddress ?? walletAddress,
     response,
   });
   return { ...result, httpStatus: response.status };

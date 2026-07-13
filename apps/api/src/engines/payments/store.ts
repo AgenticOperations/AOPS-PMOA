@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type { Redis } from 'ioredis';
+import type { PaymentPayload } from '@x402/core/types';
 import { readCachedBalances, writeCachedBalances } from './balances-cache.js';
 import { gatewayDepositSatisfied, resolveGatewayDepositorAddress } from './circle-liquidity-worker.js';
 import { sha256Hex } from '../evidence/canonical-json.js';
@@ -650,6 +651,34 @@ function x402Resource(input: RuntimeX402PaymentInput): {
     url,
     category: stringValue(resource.category),
     domain: domainFromUrl(url) ?? stringValue(resource.domain),
+  };
+}
+
+function x402ProviderResource(
+  input: RuntimeX402PaymentInput,
+): NonNullable<PaymentPayload['resource']> {
+  const resource = input.resource ?? {};
+  const url = stringValue(resource.url);
+  if (url === null) {
+    throw conflict(
+      'payment_attempt_state_conflict',
+      'The x402 payment quote is missing its resource URL.',
+    );
+  }
+  const description = stringValue(resource.description);
+  const mimeType = stringValue(resource.mimeType);
+  const serviceName = stringValue(resource.serviceName);
+  const iconUrl = stringValue(resource.iconUrl);
+  const tags = Array.isArray(resource.tags) && resource.tags.every((tag) => typeof tag === 'string')
+    ? resource.tags
+    : undefined;
+  return {
+    url,
+    ...(description === null ? {} : { description }),
+    ...(mimeType === null ? {} : { mimeType }),
+    ...(serviceName === null ? {} : { serviceName }),
+    ...(tags === undefined ? {} : { tags }),
+    ...(iconUrl === null ? {} : { iconUrl }),
   };
 }
 
@@ -5529,9 +5558,10 @@ async function assertPaidHttpPreSubmitReady(
   auth: ConnectionAuthResult,
   prepared: PreparedPaidHttpPayment,
   provider: CircleTreasuryProvider,
-): Promise<void> {
+): Promise<string | undefined> {
   const { mode, paymentInput, quote, resource, source } = prepared;
-  if (source.provider === 'simulation') return;
+  if (source.provider === 'simulation') return undefined;
+  let gatewayPayerAddress: string | undefined;
 
   const capability = await getCircleChainCapability(pool, mode, quote.chain);
   const readinessFailure = railVerificationFailure(capability, quote);
@@ -5576,6 +5606,7 @@ async function assertPaidHttpPreSubmitReady(
     try {
       const chainWallet = await activeCircleWallet(pool, auth.org_id, mode, quote.chain);
       const gatewayDepositorAddress = resolveGatewayDepositorAddress(chainWallet.address, chainWallet.metadata);
+      gatewayPayerAddress = gatewayDepositorAddress;
       const balance = await provider.getGatewayBalance({
         address: gatewayDepositorAddress,
         chain: quote.chain,
@@ -5623,6 +5654,7 @@ async function assertPaidHttpPreSubmitReady(
       );
     }
   }
+  return gatewayPayerAddress;
 }
 
 async function markPaidHttpAttemptRetryable(
@@ -5751,8 +5783,9 @@ export async function payRuntimeX402(
   }
   if (freshAttempt) await options.orchestrationHooks?.afterReserved?.();
   if (prepared.approvalRequired !== undefined) throw prepared.approvalRequired;
+  let payerAddress: string | undefined;
   try {
-    await assertPaidHttpPreSubmitReady(pool, auth, prepared, provider);
+    payerAddress = await assertPaidHttpPreSubmitReady(pool, auth, prepared, provider);
   } catch (error) {
     await markPaidHttpAttemptRetryable(
       pool,
@@ -5790,7 +5823,9 @@ export async function payRuntimeX402(
             attemptId: prepared.attempt.id,
             destination: prepared.destination,
             mode: prepared.mode,
+            ...(payerAddress === undefined ? {} : { payerAddress }),
             request: input.request,
+            resource: x402ProviderResource(prepared.paymentInput),
             requirements: prepared.quote.x402Requirements,
             walletAddress: prepared.source.address as string,
             walletId: prepared.source.external_wallet_id as string,
@@ -5799,7 +5834,9 @@ export async function payRuntimeX402(
             attemptId: prepared.attempt.id,
             destination: prepared.destination,
             mode: prepared.mode,
+            ...(payerAddress === undefined ? {} : { payerAddress }),
             request: input.request,
+            resource: x402ProviderResource(prepared.paymentInput),
             requirements: prepared.quote.x402Requirements,
             walletAddress: prepared.source.address as string,
             walletId: prepared.source.external_wallet_id as string,

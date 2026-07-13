@@ -10,6 +10,7 @@ import {
   createCircleWorkerTreasuryProvider,
 } from './engines/payments/circle-worker-client.js';
 import { createX402ResultCryptoCodec } from './engines/payments/x402-result-crypto.js';
+import { deriveTestnetPaidHttpAllowOrigins } from './engines/payments/x402-http.js';
 import { createHttpReadinessCheck, createReadinessProbe } from './readiness.js';
 import { installGracefulShutdown } from './shutdown.js';
 
@@ -86,6 +87,12 @@ const app = buildApp({
         }
       : {}),
     pool,
+    paidHttpUrlPolicy: {
+      allowHttpOrigins: deriveTestnetPaidHttpAllowOrigins(
+        env.enableTestnetX402Fixtures,
+        env.publicApiBaseUrl,
+      ),
+    },
     redis,
     resultCrypto: env.x402ResultEncryptionKey.length > 0
       ? createX402ResultCryptoCodec(env.x402ResultEncryptionKey)

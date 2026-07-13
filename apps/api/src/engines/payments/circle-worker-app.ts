@@ -8,6 +8,7 @@ import {
   type CircleTreasuryProvider,
 } from './circle-provider.js';
 import {
+  deriveTestnetPaidHttpAllowOrigins,
   PaidHttpError,
   revalidatePaidHttpDestination,
 } from './x402-http.js';
@@ -60,25 +61,10 @@ export type CircleWorkerRouteDeps = {
 export function deriveCircleWorkerPaidHttpAllowOrigins(
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] {
-  if (environment.ENABLE_TESTNET_X402_FIXTURES !== 'true') return [];
-  const configured = environment.PUBLIC_API_BASE_URL;
-  if (configured === undefined || configured.length === 0) return [];
-  try {
-    const parsed = new URL(configured);
-    if (
-      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
-      parsed.username.length > 0 ||
-      parsed.password.length > 0 ||
-      parsed.pathname !== '/' ||
-      parsed.search.length > 0 ||
-      parsed.hash.length > 0
-    ) {
-      return [];
-    }
-    return [parsed.origin];
-  } catch {
-    return [];
-  }
+  return deriveTestnetPaidHttpAllowOrigins(
+    environment.ENABLE_TESTNET_X402_FIXTURES === 'true',
+    environment.PUBLIC_API_BASE_URL ?? '',
+  );
 }
 
 function bearerToken(request: FastifyRequest): string | null {
