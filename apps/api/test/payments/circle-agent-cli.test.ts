@@ -526,13 +526,64 @@ describe('Circle Agent Wallet CLI executor', () => {
   });
 
   it.each([
-    ['invalid UTF-8', Buffer.from([0xff]).toString('base64')],
-    ['NUL bytes', Buffer.from('before\0after', 'utf8').toString('base64')],
-  ])('fails closed on base64 bodies containing %s', async (_label, value) => {
+    [
+      'an invalid URL',
+      {
+        headers: [],
+        method: 'GET',
+        url: 'ftp://x402.example.test/data',
+      },
+    ],
+    [
+      'an invalid header',
+      {
+        headers: [['x-trace', 'unsafe\r\nvalue']],
+        method: 'POST',
+        url: 'https://x402.example.test/data',
+      },
+    ],
+    [
+      'an invalid base64 body',
+      {
+        body: { kind: 'base64', value: '***' },
+        headers: [],
+        method: 'POST',
+        url: 'https://x402.example.test/data',
+      },
+    ],
+  ] as const)('classifies %s as a typed pre-submit failure', async (_label, request) => {
     const { calls, runner } = runnerFrom([{ data: { response: 'must not run' } }]);
     const executor = createCircleAgentCliExecutor({ runner });
 
-    await expect(executor.payService({
+    const failure = await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_invalid_request_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'exact',
+      request,
+      timeoutSeconds: 30,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CircleAgentCliPaidRequestError);
+    expect(failure).toMatchObject({
+      attemptId: 'attempt_invalid_request_1',
+      classification: 'pre_submit',
+      code: 'circle_cli_paid_request_pre_submit',
+    });
+    expect((failure as Error).message).toBe('circle_cli_paid_request_pre_submit');
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    ['invalid UTF-8', Buffer.from([0xff]).toString('base64')],
+    ['NUL bytes', Buffer.from('before\0after', 'utf8').toString('base64')],
+  ])('classifies base64 bodies containing %s as typed pre-submit failures', async (_label, value) => {
+    const { calls, runner } = runnerFrom([{ data: { response: 'must not run' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const failure = await executor.payService({
       address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
       attemptId: 'attempt_binary_1',
       chain: 'base',
@@ -546,7 +597,15 @@ describe('Circle Agent Wallet CLI executor', () => {
         url: 'https://x402.example.test/binary',
       },
       timeoutSeconds: 30,
-    })).rejects.toThrow('circle_cli_paid_body_binary_unsupported');
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CircleAgentCliPaidRequestError);
+    expect(failure).toMatchObject({
+      attemptId: 'attempt_binary_1',
+      classification: 'pre_submit',
+      code: 'circle_cli_paid_request_pre_submit',
+    });
+    expect((failure as Error).message).toBe('circle_cli_paid_request_pre_submit');
     expect(calls).toHaveLength(0);
   });
 
@@ -616,6 +675,38 @@ describe('Circle Agent Wallet CLI executor', () => {
       code: 'circle_cli_paid_request_ambiguous_post_submit',
       processCode: 1,
     });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('classifies malformed stdout from a completed paid request as ambiguous post-submit', async () => {
+    const { calls, runner } = runnerFrom(['not-json']);
+    const executor = createCircleAgentCliExecutor({ maxRetries: 3, retryDelayMs: 1, runner });
+
+    const failure = await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_malformed_stdout_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'exact',
+      request: {
+        headers: [],
+        method: 'POST',
+        url: 'https://x402.example.test/malformed',
+      },
+      timeoutSeconds: 30,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CircleAgentCliPaidRequestError);
+    expect(failure).toMatchObject({
+      attemptId: 'attempt_malformed_stdout_1',
+      classification: 'ambiguous_post_submit',
+      code: 'circle_cli_paid_request_ambiguous_post_submit',
+    });
+    expect((failure as Error).message).toBe('circle_cli_paid_request_ambiguous_post_submit');
+    expect((failure as Error).cause).toBeInstanceOf(Error);
+    expect(Object.keys(failure as object)).not.toContain('cause');
+    expect(JSON.stringify(failure)).not.toContain('not-json');
     expect(calls).toHaveLength(1);
   });
 

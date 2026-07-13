@@ -103,11 +103,12 @@ export class CircleAgentCliPaidRequestError extends Error {
       readonly killed: boolean;
       readonly signal: string | null;
     },
+    cause: unknown,
   ) {
     const code = classification === 'pre_submit'
       ? 'circle_cli_paid_request_pre_submit'
       : 'circle_cli_paid_request_ambiguous_post_submit';
-    super(code);
+    super(code, { cause });
     this.attemptId = attemptId;
     this.classification = classification;
     this.code = code;
@@ -549,12 +550,18 @@ const PRE_SUBMIT_PROCESS_CODES = new Set([
   'ERR_INVALID_ARG_VALUE',
 ]);
 
-function paidRequestErrorFrom(error: unknown, attemptId: string): CircleAgentCliPaidRequestError {
+function paidRequestErrorFrom(
+  error: unknown,
+  attemptId: string,
+  forcedClassification?: CircleAgentCliPaidRequestFailureClassification,
+): CircleAgentCliPaidRequestError {
   const metadata = paidRequestErrorMetadata(error);
-  const classification = typeof metadata.code === 'string' && PRE_SUBMIT_PROCESS_CODES.has(metadata.code)
-    ? 'pre_submit'
-    : 'ambiguous_post_submit';
-  return new CircleAgentCliPaidRequestError(attemptId, classification, metadata);
+  const classification = forcedClassification ?? (
+    typeof metadata.code === 'string' && PRE_SUBMIT_PROCESS_CODES.has(metadata.code)
+      ? 'pre_submit'
+      : 'ambiguous_post_submit'
+  );
+  return new CircleAgentCliPaidRequestError(attemptId, classification, metadata, error);
 }
 
 function loginChallengeFrom(value: unknown, expectedEmail: string): { readonly email: string; readonly requestId: string } {
@@ -809,8 +816,10 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
       const paymentChain = circleBlockchainForChain(input.mode, input.chain);
       const isPaidRequest = 'request' in input;
       const attemptId = isPaidRequest ? input.attemptId : 'legacy_circle_cli_paid_request';
-      const args = isPaidRequest
-        ? (() => {
+      let args: readonly string[];
+      try {
+        args = isPaidRequest
+          ? (() => {
             const normalized = normalizePaidHttpRequest(input.request);
             const data = paidRequestData(normalized.body);
             return [
@@ -837,7 +846,7 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
               'json',
             ];
           })()
-        : [
+          : [
             'services',
             'pay',
             input.url,
@@ -850,13 +859,21 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
             '--output',
             'json',
           ];
+      } catch (error) {
+        throw paidRequestErrorFrom(error, attemptId, 'pre_submit');
+      }
       let result: CircleCliResult;
       try {
         result = await runner({ args, command, environment, timeoutMs });
       } catch (error) {
         throw paidRequestErrorFrom(error, attemptId);
       }
-      const value = parseJson(result.stdout);
+      let value: unknown;
+      try {
+        value = parseJson(result.stdout);
+      } catch (error) {
+        throw paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
+      }
       return servicePaymentFrom(value);
     },
     status: async () => {
