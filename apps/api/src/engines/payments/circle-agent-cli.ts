@@ -1,4 +1,8 @@
 import { execFile } from 'node:child_process';
+import { constants } from 'node:fs';
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, rm, symlink } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { PaymentChain, PaymentMode } from './types.js';
 import { normalizePaidHttpRequest, type PaidHttpRequest } from './x402-http.js';
 
@@ -115,6 +119,18 @@ export class CircleAgentCliPaidRequestError extends Error {
     this.processCode = metadata.code;
     this.signal = metadata.signal;
   }
+}
+
+export type CircleAgentCliPaidRequestDebug = Readonly<Record<string, unknown>>;
+
+const PAID_REQUEST_DEBUG = new WeakMap<CircleAgentCliPaidRequestError, CircleAgentCliPaidRequestDebug>();
+
+export function takeCircleAgentCliPaidRequestDebug(
+  error: CircleAgentCliPaidRequestError,
+): CircleAgentCliPaidRequestDebug | undefined {
+  const debug = PAID_REQUEST_DEBUG.get(error);
+  PAID_REQUEST_DEBUG.delete(error);
+  return debug;
 }
 
 export type CircleAgentTransfer = {
@@ -563,6 +579,101 @@ function paidRequestErrorFrom(
   return new CircleAgentCliPaidRequestError(attemptId, classification, metadata);
 }
 
+const PAID_REQUEST_SHARED_HOME_ENTRIES = [
+  'config.json',
+  'terms.json',
+  'profiles',
+] as const;
+const PAID_REQUEST_DEBUG_FILENAME = /^payment-[A-Za-z0-9_-]{1,128}\.json$/;
+const MAX_PAID_REQUEST_DEBUG_BYTES = 256 * 1024;
+
+function configuredPath(value: string | undefined): string | undefined {
+  return value !== undefined && value.trim().length > 0 ? value : undefined;
+}
+
+function sourceCircleCliHome(environment: NodeJS.ProcessEnv | undefined): string {
+  const explicitHome = configuredPath(environment?.CIRCLE_CLI_HOME) ??
+    configuredPath(process.env.CIRCLE_CLI_HOME);
+  if (explicitHome !== undefined) return explicitHome;
+  const userHome = configuredPath(environment?.HOME) ?? configuredPath(process.env.HOME) ?? homedir();
+  return join(userHome, '.circle-cli');
+}
+
+async function createIsolatedPaidRequestHome(sourceHome: string): Promise<string> {
+  const isolatedHome = await mkdtemp(join(tmpdir(), 'agentops-circle-paid-'));
+  try {
+    await chmod(isolatedHome, 0o700);
+    await mkdir(join(isolatedHome, 'payments'), { mode: 0o700 });
+    for (const entryName of PAID_REQUEST_SHARED_HOME_ENTRIES) {
+      const source = join(sourceHome, entryName);
+      let sourceStat;
+      try {
+        sourceStat = await lstat(source);
+      } catch (error) {
+        if (paidRequestErrorMetadata(error).code === 'ENOENT') continue;
+        throw error;
+      }
+      await symlink(
+        source,
+        join(isolatedHome, entryName),
+        sourceStat.isDirectory() ? 'dir' : 'file',
+      );
+    }
+    return isolatedHome;
+  } catch (error) {
+    try {
+      await rm(isolatedHome, { force: true, recursive: true });
+    } catch {
+      // The public failure remains sanitized even when best-effort setup cleanup fails.
+    }
+    throw error;
+  }
+}
+
+async function readPaidRequestDebug(
+  isolatedHome: string,
+): Promise<CircleAgentCliPaidRequestDebug | undefined> {
+  const paymentsDirectory = join(isolatedHome, 'payments');
+  const paymentsStat = await lstat(paymentsDirectory);
+  if (!paymentsStat.isDirectory() || paymentsStat.isSymbolicLink()) return undefined;
+  const entries = await readdir(paymentsDirectory, { withFileTypes: true });
+  const candidates = entries.filter((entry) => (
+    entry.isFile() && PAID_REQUEST_DEBUG_FILENAME.test(entry.name)
+  ));
+  if (candidates.length !== 1) return undefined;
+
+  const candidate = candidates[0];
+  if (candidate === undefined) return undefined;
+  const handle = await open(
+    join(paymentsDirectory, candidate.name),
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
+  try {
+    const fileStat = await handle.stat();
+    if (!fileStat.isFile() || fileStat.size <= 0 || fileStat.size > MAX_PAID_REQUEST_DEBUG_BYTES) {
+      return undefined;
+    }
+    const content = await handle.readFile({ encoding: 'utf8' });
+    const parsed = JSON.parse(content) as unknown;
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    return parsed as CircleAgentCliPaidRequestDebug;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function privatelyCapturePaidRequestDebug(
+  isolatedHome: string,
+  error: CircleAgentCliPaidRequestError,
+): Promise<void> {
+  try {
+    const debug = await readPaidRequestDebug(isolatedHome);
+    if (debug !== undefined) PAID_REQUEST_DEBUG.set(error, debug);
+  } catch {
+    // Capture is best-effort; the externally visible error remains sanitized and ambiguous.
+  }
+}
+
 function loginChallengeFrom(value: unknown, expectedEmail: string): { readonly email: string; readonly requestId: string } {
   const item = record(cliData(value));
   const message = stringField(item.message) ?? '';
@@ -861,19 +972,75 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
       } catch (error) {
         throw paidRequestErrorFrom(error, attemptId, 'pre_submit');
       }
-      let result: CircleCliResult;
-      try {
-        result = await runner({ args, command, environment, timeoutMs });
-      } catch (error) {
-        throw paidRequestErrorFrom(error, attemptId);
+      if (!isPaidRequest) {
+        let result: CircleCliResult;
+        try {
+          result = await runner({ args, command, environment, timeoutMs });
+        } catch (error) {
+          throw paidRequestErrorFrom(error, attemptId);
+        }
+        try {
+          return servicePaymentFrom(parseJson(result.stdout));
+        } catch (error) {
+          throw paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
+        }
       }
-      let value: unknown;
+
+      let isolatedHome: string;
       try {
-        value = parseJson(result.stdout);
+        isolatedHome = await createIsolatedPaidRequestHome(sourceCircleCliHome(environment));
       } catch (error) {
-        throw paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
+        throw paidRequestErrorFrom(error, attemptId, 'pre_submit');
       }
-      return servicePaymentFrom(value);
+
+      const isolatedEnvironment: NodeJS.ProcessEnv = {
+        ...environment,
+        CIRCLE_CLI_HOME: isolatedHome,
+      };
+      let failure: CircleAgentCliPaidRequestError | undefined;
+      let payment: CircleAgentServicePayment | undefined;
+      try {
+        let result: CircleCliResult | undefined;
+        try {
+          result = await runner({
+            args,
+            command,
+            environment: isolatedEnvironment,
+            timeoutMs,
+          });
+        } catch (error) {
+          failure = paidRequestErrorFrom(error, attemptId);
+        }
+
+        if (failure === undefined && result !== undefined) {
+          try {
+            payment = servicePaymentFrom(parseJson(result.stdout));
+          } catch (error) {
+            failure = paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
+          }
+        }
+        if (failure?.classification === 'ambiguous_post_submit') {
+          await privatelyCapturePaidRequestDebug(isolatedHome, failure);
+        }
+      } finally {
+        try {
+          await rm(isolatedHome, { force: true, recursive: true });
+        } catch (error) {
+          if (failure === undefined) {
+            failure = paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
+          }
+        }
+      }
+
+      if (failure !== undefined) throw failure;
+      if (payment === undefined) {
+        throw paidRequestErrorFrom(
+          new Error('circle_cli_paid_request_missing_result'),
+          attemptId,
+          'ambiguous_post_submit',
+        );
+      }
+      return payment;
     },
     status: async () => {
       const value = await runJson(['wallet', 'status', '--type', 'agent', '--output', 'json']);

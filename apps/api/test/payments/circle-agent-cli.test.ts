@@ -1,3 +1,6 @@
+import { access, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import {
@@ -5,6 +8,7 @@ import {
   circleBlockchainForChain,
   createCircleAgentCliExecutor,
   gatewayBalanceBlockchainForChain,
+  takeCircleAgentCliPaidRequestDebug,
   type CircleCliInvocation,
   type CircleCliRunner,
 } from '../../src/engines/payments/circle-agent-cli.js';
@@ -712,6 +716,152 @@ describe('Circle Agent Wallet CLI executor', () => {
     expect(inspect(failure)).not.toContain('not-json');
     expect(JSON.stringify(failure)).not.toContain('not-json');
     expect(calls).toHaveLength(1);
+  });
+
+  it('isolates, privately captures, and removes Circle CLI payment debug after an ambiguous failure', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'agentops-circle-source-'));
+    const sourceHome = join(sourceRoot, 'circle-home');
+    const sourcePayments = join(sourceHome, 'payments');
+    let isolatedHome: string | undefined;
+    let exposedConfig: string | undefined;
+    let exposedTerms: string | undefined;
+    let exposedProfile: string | undefined;
+    let isolatedMode: number | undefined;
+    let exposedEntriesAreLinks: boolean | undefined;
+    try {
+      await mkdir(join(sourceHome, 'profiles'), { recursive: true, mode: 0o700 });
+      await mkdir(sourcePayments, { recursive: true, mode: 0o700 });
+      await writeFile(join(sourceHome, 'config.json'), '{"auth":"source-config"}', { mode: 0o600 });
+      await writeFile(join(sourceHome, 'terms.json'), '{"accepted":true}', { mode: 0o600 });
+      await writeFile(join(sourceHome, 'profiles', 'active.json'), '{"profile":"source-profile"}', { mode: 0o600 });
+      await writeFile(join(sourcePayments, 'existing.json'), '{"source":"untouched"}', { mode: 0o600 });
+
+      const runner: CircleCliRunner = async (invocation) => {
+        isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+        if (isolatedHome === undefined) throw new Error('missing isolated Circle CLI home');
+        isolatedMode = (await stat(isolatedHome)).mode & 0o777;
+        exposedEntriesAreLinks = (
+          (await lstat(join(isolatedHome, 'config.json'))).isSymbolicLink() &&
+          (await lstat(join(isolatedHome, 'terms.json'))).isSymbolicLink() &&
+          (await lstat(join(isolatedHome, 'profiles'))).isSymbolicLink()
+        );
+        exposedConfig = await readFile(join(isolatedHome, 'config.json'), 'utf8');
+        exposedTerms = await readFile(join(isolatedHome, 'terms.json'), 'utf8');
+        exposedProfile = await readFile(join(isolatedHome, 'profiles', 'active.json'), 'utf8');
+        await mkdir(join(isolatedHome, 'payments'), { recursive: true, mode: 0o700 });
+        await writeFile(
+          join(isolatedHome, 'payments', 'payment-attempt-private.json'),
+          JSON.stringify({
+            paymentHeader: 'SENTINEL_PAYMENT_HEADER',
+            paymentPayload: 'SENTINEL_PAYMENT_PAYLOAD',
+          }),
+          { mode: 0o600 },
+        );
+        throw Object.assign(new Error('SENTINEL_SECRET_STDERR'), {
+          code: 1,
+          killed: false,
+          signal: null,
+        });
+      };
+      const executor = createCircleAgentCliExecutor({
+        environment: { CIRCLE_CLI_HOME: sourceHome },
+        runner,
+      });
+
+      const failure = await executor.payService({
+        address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        attemptId: 'attempt_private_debug_1',
+        chain: 'base',
+        maxAmount: '0.01',
+        mode: 'test',
+        rail: 'exact',
+        request: {
+          headers: [],
+          method: 'POST',
+          url: 'https://x402.example.test/private-debug',
+        },
+        timeoutSeconds: 30,
+      }).catch((error: unknown) => error);
+
+      expect(isolatedHome).toBeDefined();
+      expect(isolatedHome).not.toBe(sourceHome);
+      expect(isolatedMode).toBe(0o700);
+      expect(exposedEntriesAreLinks).toBe(true);
+      expect(exposedConfig).toBe('{"auth":"source-config"}');
+      expect(exposedTerms).toBe('{"accepted":true}');
+      expect(exposedProfile).toBe('{"profile":"source-profile"}');
+      expect(await readdir(sourcePayments)).toEqual(['existing.json']);
+      await expect(access(isolatedHome as string)).rejects.toThrow();
+      expect(failure).toBeInstanceOf(CircleAgentCliPaidRequestError);
+      expect(failure).toMatchObject({
+        attemptId: 'attempt_private_debug_1',
+        classification: 'ambiguous_post_submit',
+        code: 'circle_cli_paid_request_ambiguous_post_submit',
+        processCode: 1,
+        signal: null,
+      });
+      expect(inspect(failure)).not.toContain('SENTINEL_');
+      expect(JSON.stringify(failure)).not.toContain('SENTINEL_');
+      expect(takeCircleAgentCliPaidRequestDebug(failure as CircleAgentCliPaidRequestError)).toEqual({
+        paymentHeader: 'SENTINEL_PAYMENT_HEADER',
+        paymentPayload: 'SENTINEL_PAYMENT_PAYLOAD',
+      });
+      expect(takeCircleAgentCliPaidRequestDebug(failure as CircleAgentCliPaidRequestError)).toBeUndefined();
+    } finally {
+      if (isolatedHome !== undefined && isolatedHome !== sourceHome) {
+        await rm(isolatedHome, { force: true, recursive: true });
+      }
+      await rm(sourceRoot, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    ['success', JSON.stringify({ data: { response: 'ok' } }), false],
+    ['malformed stdout', 'not-json', true],
+  ])('removes the isolated Circle CLI home after %s', async (_label, stdout, expectsFailure) => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'agentops-circle-cleanup-'));
+    const sourceHome = join(sourceRoot, 'circle-home');
+    let isolatedHome: string | undefined;
+    try {
+      await mkdir(sourceHome, { recursive: true, mode: 0o700 });
+      const runner: CircleCliRunner = (invocation) => {
+        isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+        return Promise.resolve({ stderr: '', stdout });
+      };
+      const executor = createCircleAgentCliExecutor({
+        environment: { CIRCLE_CLI_HOME: sourceHome },
+        runner,
+      });
+
+      const outcome = await executor.payService({
+        address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        attemptId: `attempt_cleanup_${expectsFailure ? 'malformed' : 'success'}`,
+        chain: 'base',
+        maxAmount: '0.01',
+        mode: 'test',
+        rail: 'exact',
+        request: {
+          headers: [],
+          method: 'POST',
+          url: 'https://x402.example.test/cleanup',
+        },
+        timeoutSeconds: 30,
+      }).catch((error: unknown) => error);
+
+      expect(isolatedHome).toBeDefined();
+      expect(isolatedHome).not.toBe(sourceHome);
+      await expect(access(isolatedHome as string)).rejects.toThrow();
+      if (expectsFailure) {
+        expect(outcome).toMatchObject({ classification: 'ambiguous_post_submit' });
+      } else {
+        expect(outcome).toMatchObject({ response: 'ok' });
+      }
+    } finally {
+      if (isolatedHome !== undefined && isolatedHome !== sourceHome) {
+        await rm(isolatedHome, { force: true, recursive: true });
+      }
+      await rm(sourceRoot, { force: true, recursive: true });
+    }
   });
 
   it('submits a real testnet USDC transfer for exact x402 settlement', async () => {
