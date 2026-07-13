@@ -64,9 +64,10 @@ function stableJsonStringify(value: unknown): string {
 
     let result: string;
     if (Array.isArray(current)) {
-      result = `[${current
-        .map((item, index) => serialize(item, String(index)) ?? 'null')
-        .join(',')}]`;
+      result = `[${Array.from(
+        current,
+        (item, index) => serialize(item, String(index)) ?? 'null',
+      ).join(',')}]`;
     } else {
       const entries = Object.keys(current)
         .sort()
@@ -118,7 +119,8 @@ export function normalizePaidHttpRequest(
     const normalizedName = name.toLowerCase();
     if (
       DENIED_PAID_HTTP_HEADERS.has(normalizedName) ||
-      normalizedName.startsWith('proxy-')
+      normalizedName.startsWith('proxy-') ||
+      normalizedName.startsWith('x-payment-')
     ) {
       throw new TypeError(`Paid HTTP header is not allowed: ${name}`);
     }

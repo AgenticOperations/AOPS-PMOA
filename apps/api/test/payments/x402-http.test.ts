@@ -39,6 +39,25 @@ describe("normalizePaidHttpRequest", () => {
     expect(first.body).toEqual(second.body);
   });
 
+  it("serializes sparse and undefined array entries as JSON null", () => {
+    const sparse: unknown[] = [];
+    sparse[1] = 1;
+
+    const normalized = normalizePaidHttpRequest({
+      url: "https://example.com/pay",
+      method: "POST",
+      headers: [],
+      body: {
+        kind: "json",
+        value: { sparse, explicit: [undefined, 1] },
+      },
+    });
+
+    expect(new TextDecoder().decode(normalized.body)).toBe(
+      '{"explicit":[null,1],"sparse":[null,1]}',
+    );
+  });
+
   it("encodes text as UTF-8 and decodes base64 bodies", () => {
     const text = normalizePaidHttpRequest({
       url: "https://example.com/pay",
@@ -58,6 +77,23 @@ describe("normalizePaidHttpRequest", () => {
     );
     expect(Array.from(base64.body ?? [])).toEqual([0, 1, 255]);
   });
+
+  it.each(["PUT", "PATCH", "DELETE"] as const)(
+    "normalizes %s requests with bodies",
+    (method) => {
+      const normalized = normalizePaidHttpRequest({
+        url: "https://example.com/pay",
+        method,
+        headers: [["Content-Type", "text/plain"]],
+        body: { kind: "text", value: `payload-${method}` },
+      });
+
+      expect(normalized.method).toBe(method);
+      expect(new TextDecoder().decode(normalized.body)).toBe(
+        `payload-${method}`,
+      );
+    },
+  );
 
   it("rejects invalid URLs, methods, encodings, and GET bodies", () => {
     expect(() =>
@@ -137,6 +173,9 @@ describe("normalizePaidHttpRequest", () => {
       "PAYMENT-RESPONSE",
       "Payment-Required",
       "X-Payment",
+      "x-payment-signature",
+      "X-PAYMENT-RESPONSE",
+      "X-Payment-Required",
     ]) {
       expect(() =>
         normalizePaidHttpRequest({
