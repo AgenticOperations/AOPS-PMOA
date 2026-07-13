@@ -131,6 +131,87 @@ describe('Circle Agent Wallet CLI executor', () => {
     });
   });
 
+  it.each([
+    ['test', 'BASE-SEPOLIA', true],
+    ['live', 'BASE', false],
+  ] as const)('signs typed data without submitting payment in %s mode', async (
+    mode,
+    blockchain,
+    testnet,
+  ) => {
+    const signature = `0x${'11'.repeat(65)}`;
+    const { calls, runner } = runnerFrom([{ data: { signature } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+    const data = JSON.stringify({
+      domain: { chainId: mode === 'test' ? 84532 : 8453, name: 'USDC', version: '2' },
+      message: { value: '10000' },
+      primaryType: 'TransferWithAuthorization',
+      types: { TransferWithAuthorization: [] },
+    });
+
+    const result = await (executor as unknown as {
+      signTypedData(input: {
+        readonly address: string;
+        readonly attemptId: string;
+        readonly chain: 'base';
+        readonly data: string;
+        readonly mode: typeof mode;
+      }): Promise<{ readonly signature: string }>;
+    }).signTypedData({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: `attempt_sign_${mode}`,
+      chain: 'base',
+      data,
+      mode,
+    });
+
+    expect(result).toEqual({ signature });
+    expect(calls[0]?.args).toEqual([
+      'wallet',
+      'sign',
+      'typed-data',
+      data,
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      blockchain,
+      ...(testnet ? ['--testnet'] : []),
+      '--output',
+      'json',
+    ]);
+    expect(calls[0]?.args).not.toContain('services');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('sanitizes typed-data signing failures as stable pre-submit errors', async () => {
+    const secretTypedData = '{"message":{"private":"never expose this typed data"}}';
+    const { calls, runner } = runnerFrom([
+      new Error(`raw CLI stderr echoed ${secretTypedData}`),
+    ]);
+    const executor = createCircleAgentCliExecutor({ maxRetries: 0, runner });
+    const signTypedData = executor.signTypedData;
+    if (signTypedData === undefined) throw new Error('signTypedData executor method missing');
+
+    const failure = await signTypedData({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_sign_failure',
+      chain: 'base',
+      data: secretTypedData,
+      mode: 'test',
+    }).catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({
+      attemptId: 'attempt_sign_failure',
+      classification: 'pre_submit',
+      code: 'circle_cli_typed_data_signing_failed',
+      message: 'circle_cli_typed_data_signing_failed',
+      name: 'CircleAgentCliSignTypedDataError',
+    });
+    expect(inspect(failure)).not.toContain('never expose this typed data');
+    expect(inspect(failure)).not.toContain('raw CLI stderr');
+    expect(calls).toHaveLength(1);
+  });
+
   it('submits a Base Sepolia eco Gateway deposit without native-gas direct deposit arguments', async () => {
     const { calls, runner } = runnerFrom([
       {

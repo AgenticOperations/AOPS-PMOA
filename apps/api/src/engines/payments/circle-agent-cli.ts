@@ -150,6 +150,16 @@ export class CircleAgentCliPaidRequestError extends Error {
   }
 }
 
+export class CircleAgentCliSignTypedDataError extends Error {
+  readonly classification = 'pre_submit' as const;
+  readonly code = 'circle_cli_typed_data_signing_failed' as const;
+  override readonly name = 'CircleAgentCliSignTypedDataError';
+
+  constructor(readonly attemptId: string) {
+    super('circle_cli_typed_data_signing_failed');
+  }
+}
+
 export type CircleAgentCliPaidRequestDebug = Readonly<Record<string, unknown>>;
 
 const PAID_REQUEST_DEBUG = new WeakMap<CircleAgentCliPaidRequestError, CircleAgentCliPaidRequestDebug>();
@@ -252,6 +262,10 @@ export type CircleAgentContractExecution = {
   readonly transaction: string | null;
 };
 
+export type CircleAgentTypedDataSignature = {
+  readonly signature: string;
+};
+
 export type CircleAgentCliExecutor = {
   readonly bridgeUsdc: (input: {
     readonly amount: string;
@@ -325,6 +339,13 @@ export type CircleAgentCliExecutor = {
         readonly url: string;
       }
   ) => Promise<CircleAgentServicePayment>;
+  readonly signTypedData?: ((input: {
+    readonly address: string;
+    readonly attemptId: string;
+    readonly chain: PaymentChain;
+    readonly data: string;
+    readonly mode: PaymentMode;
+  }) => Promise<CircleAgentTypedDataSignature>) | undefined;
   readonly status: () => Promise<{
     readonly live: CircleAgentSession;
     readonly test: CircleAgentSession;
@@ -891,6 +912,13 @@ function contractExecutionFrom(value: unknown): CircleAgentContractExecution {
   return transferFrom(value);
 }
 
+function typedDataSignatureFrom(value: unknown): CircleAgentTypedDataSignature {
+  const data = cliData(value);
+  const signature = stringField(record(data).signature ?? data);
+  if (signature === null) throw new Error('circle_cli_typed_data_signature_missing');
+  return { signature };
+}
+
 function assertEcoDepositChain(chain: PaymentChain): void {
   if (chain !== 'base') {
     throw new Error('circle_gateway_eco_deposit_only_supports_base_source');
@@ -1214,6 +1242,26 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
         );
       }
       return payment;
+    },
+    signTypedData: async ({ address, attemptId, chain, data, mode }) => {
+      try {
+        const value = await runJson([
+          'wallet',
+          'sign',
+          'typed-data',
+          data,
+          '--address',
+          address,
+          '--chain',
+          circleBlockchainForChain(mode, chain),
+          ...modeArgs(mode),
+          '--output',
+          'json',
+        ]);
+        return typedDataSignatureFrom(value);
+      } catch {
+        throw new CircleAgentCliSignTypedDataError(attemptId);
+      }
     },
     status: async () => {
       const value = await runJson(['wallet', 'status', '--type', 'agent', '--output', 'json']);

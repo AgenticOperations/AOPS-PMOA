@@ -680,18 +680,10 @@ function agentWalletErrorResult(input: {
   });
 }
 
-type DeveloperX402Executor = typeof executeBoundedHttpRequest;
+type X402HttpExecutor = typeof executeBoundedHttpRequest;
 
 type DeveloperControlledProviderOptions = {
-  readonly executeHttpRequest?: DeveloperX402Executor | undefined;
-};
-
-type DeveloperX402SignerClient = {
-  readonly signTypedData: (input: {
-    readonly walletId: string;
-    readonly data: string;
-    readonly memo: string;
-  }) => Promise<{ readonly data?: { readonly signature?: string | undefined } | undefined }>;
+  readonly executeHttpRequest?: X402HttpExecutor | undefined;
 };
 
 function settlementErrorCode(error: unknown, fallback: string): string {
@@ -792,9 +784,8 @@ function developerResponseResult(input: {
   });
 }
 
-async function executeDeveloperX402(input: {
-  readonly client: DeveloperX402SignerClient;
-  readonly executor: DeveloperX402Executor;
+async function executeSignedX402(input: {
+  readonly executor: X402HttpExecutor;
   readonly settlement: CircleCanonicalX402SettlementInput;
   readonly createPayload: (
     signer: {
@@ -803,24 +794,15 @@ async function executeDeveloperX402(input: {
     },
     requirements: PaymentRequirements,
   ) => Promise<Pick<PaymentPayload, 'x402Version' | 'payload'>>;
-  readonly memo: string;
+  readonly signTypedData: (payload: SignTypedDataPayload) => Promise<`0x${string}`>;
 }): Promise<CircleGatewayX402SettlementResult> {
-  const { mode, request, requirements, walletAddress, walletId } = input.settlement;
+  const { mode, request, requirements, walletAddress } = input.settlement;
   let paidRequest: NormalizedPaidHttpRequest;
   try {
     const normalized = normalizePaidHttpRequest(request);
     const signer = {
       address: walletAddress as `0x${string}`,
-      signTypedData: async (payload: SignTypedDataPayload): Promise<`0x${string}`> => {
-        const response = await input.client.signTypedData({
-          walletId,
-          data: JSON.stringify(normalizeTypedDataForCircle(payload)),
-          memo: input.memo,
-        });
-        const signature = response.data?.signature;
-        if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
-        return signature as `0x${string}`;
-      },
+      signTypedData: input.signTypedData,
     };
     const normalizedRequirements = {
       ...requirements,
@@ -1036,13 +1018,21 @@ export function createDeveloperControlledCircleTreasuryProvider(
       const { mode } = input;
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
-      return executeDeveloperX402({
-        client,
+      return executeSignedX402({
         executor: options.executeHttpRequest ?? executeBoundedHttpRequest,
         settlement: input,
         createPayload: (signer, requirements) =>
           new ExactEvmScheme(signer).createPaymentPayload(2, requirements),
-        memo: 'agentOps exact x402 payment authorization',
+        signTypedData: async (payload) => {
+          const response = await client.signTypedData({
+            walletId: input.walletId,
+            data: JSON.stringify(normalizeTypedDataForCircle(payload)),
+            memo: 'agentOps exact x402 payment authorization',
+          });
+          const signature = response.data?.signature;
+          if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
+          return signature as `0x${string}`;
+        },
       });
     },
     settleGatewayX402: async (input) => {
@@ -1059,8 +1049,7 @@ export function createDeveloperControlledCircleTreasuryProvider(
       const { mode } = input;
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
-      return executeDeveloperX402({
-        client,
+      return executeSignedX402({
         executor: options.executeHttpRequest ?? executeBoundedHttpRequest,
         settlement: input,
         createPayload: async (signer, requirements) => {
@@ -1070,7 +1059,16 @@ export function createDeveloperControlledCircleTreasuryProvider(
             payload: created.payload as unknown as Record<string, unknown>,
           };
         },
-        memo: 'agentOps Gateway x402 payment authorization',
+        signTypedData: async (payload) => {
+          const response = await client.signTypedData({
+            walletId: input.walletId,
+            data: JSON.stringify(normalizeTypedDataForCircle(payload)),
+            memo: 'agentOps Gateway x402 payment authorization',
+          });
+          const signature = response.data?.signature;
+          if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
+          return signature as `0x${string}`;
+        },
       });
     },
   };
@@ -1131,8 +1129,10 @@ function healthFromSession(mode: ProviderMode, executor: CircleAgentCliExecutor)
 
 export function createCircleAgentWalletTreasuryProvider(options: {
   readonly executor?: CircleAgentCliExecutor | undefined;
+  readonly executeHttpRequest?: X402HttpExecutor | undefined;
 } = {}): CircleTreasuryProvider {
   const executor = options.executor ?? createCircleAgentCliExecutor();
+  const executeHttpRequest = options.executeHttpRequest ?? executeBoundedHttpRequest;
   return {
     bridgeWalletTopUp: async ({ amount, fromAddress, fromChain, idempotencyKey, mode, toAddress, toChain }) => {
       try {
@@ -1234,26 +1234,36 @@ export function createCircleAgentWalletTreasuryProvider(options: {
     settleExactX402: async (input) => {
       const { mode, requirements, walletAddress } = input;
       const chain = chainFromGatewayNetwork(requirements.network);
-      try {
-        const payment = isCanonicalSettlementInput(input)
-          ? await executor.payService({
+      if (isCanonicalSettlementInput(input)) {
+        return executeSignedX402({
+          executor: executeHttpRequest,
+          settlement: input,
+          createPayload: (signer, normalizedRequirements) =>
+            new ExactEvmScheme(signer).createPaymentPayload(2, normalizedRequirements),
+          signTypedData: async (payload) => {
+            if (executor.signTypedData === undefined) {
+              throw new Error('circle_cli_typed_data_signing_unavailable');
+            }
+            const signed = await executor.signTypedData({
               address: walletAddress,
               attemptId: input.attemptId,
               chain,
-              maxAmount: formatMicros(BigInt(requirements.amount)),
+              data: JSON.stringify(normalizeTypedDataForCircle(payload)),
               mode,
-              rail: 'exact',
-              request: input.request,
-              timeoutSeconds: 30,
-            })
-          : await executor.payService({
-              address: walletAddress,
-              chain,
-              maxAmount: formatMicros(BigInt(requirements.amount)),
-              mode,
-              rail: 'exact',
-              url: input.resource.url,
             });
+            return signed.signature as `0x${string}`;
+          },
+        });
+      }
+      try {
+        const payment = await executor.payService({
+          address: walletAddress,
+          chain,
+          maxAmount: formatMicros(BigInt(requirements.amount)),
+          mode,
+          rail: 'exact',
+          url: input.resource.url,
+        });
         return agentWalletSettlementResult({
           mode,
           network: requirements.network,
@@ -1272,26 +1282,41 @@ export function createCircleAgentWalletTreasuryProvider(options: {
     settleGatewayX402: async (input) => {
       const { mode, requirements, walletAddress } = input;
       const chain = chainFromGatewayNetwork(requirements.network);
-      try {
-        const payment = isCanonicalSettlementInput(input)
-          ? await executor.payService({
+      if (isCanonicalSettlementInput(input)) {
+        return executeSignedX402({
+          executor: executeHttpRequest,
+          settlement: input,
+          createPayload: async (signer, normalizedRequirements) => {
+            const created = await new BatchEvmScheme(signer).createPaymentPayload(2, normalizedRequirements);
+            return {
+              ...created,
+              payload: created.payload as unknown as Record<string, unknown>,
+            };
+          },
+          signTypedData: async (payload) => {
+            if (executor.signTypedData === undefined) {
+              throw new Error('circle_cli_typed_data_signing_unavailable');
+            }
+            const signed = await executor.signTypedData({
               address: walletAddress,
               attemptId: input.attemptId,
               chain,
-              maxAmount: formatMicros(BigInt(requirements.amount)),
+              data: JSON.stringify(normalizeTypedDataForCircle(payload)),
               mode,
-              rail: 'gateway',
-              request: input.request,
-              timeoutSeconds: 30,
-            })
-          : await executor.payService({
-              address: walletAddress,
-              chain,
-              maxAmount: formatMicros(BigInt(requirements.amount)),
-              mode,
-              rail: 'gateway',
-              url: input.resource.url,
             });
+            return signed.signature as `0x${string}`;
+          },
+        });
+      }
+      try {
+        const payment = await executor.payService({
+          address: walletAddress,
+          chain,
+          maxAmount: formatMicros(BigInt(requirements.amount)),
+          mode,
+          rail: 'gateway',
+          url: input.resource.url,
+        });
         return agentWalletSettlementResult({
           mode,
           network: requirements.network,
