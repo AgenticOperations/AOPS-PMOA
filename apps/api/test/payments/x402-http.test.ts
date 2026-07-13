@@ -10,6 +10,7 @@ import {
   type RequestOptions,
 } from "node:https";
 import type { TLSSocket } from "node:tls";
+import { gzipSync } from "node:zlib";
 
 import { encodePaymentRequiredHeader } from "@x402/core/http";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +21,7 @@ import {
   executeBoundedHttpRequest,
   normalizePaidHttpRequest,
   paymentRequiredFromResponse,
+  type PaidHttpExecutionOptions,
   type PaidHttpResponse,
 } from "../../src/engines/payments/x402-http.js";
 
@@ -55,7 +57,7 @@ async function startHttpServer(
 
 async function executeLocalHttp(
   handler: RequestListener,
-  options: { readonly timeoutMs?: number; readonly maxResponseBytes?: number } = {},
+  options: PaidHttpExecutionOptions = {},
 ) {
   const { origin } = await startHttpServer(handler);
   const url = `${origin}/paid?a=1&a=2`;
@@ -339,10 +341,14 @@ describe("normalizePaidHttpRequest", () => {
       "Host",
       "CONTENT-LENGTH",
       "Connection",
+      "TE",
+      "Trailer",
       "Transfer-Encoding",
       "Upgrade",
+      "Keep-Alive",
       "Proxy-Authorization",
       "proxy-anything",
+      "Accept-Encoding",
       "Payment-Signature",
       "PAYMENT-RESPONSE",
       "Payment-Required",
@@ -358,6 +364,30 @@ describe("normalizePaidHttpRequest", () => {
           headers: [[name, "blocked"]],
         }),
       ).toThrow(/header/i);
+    }
+  });
+
+  it("rejects invalid header names before request construction", () => {
+    for (const name of ["", "bad header", "bad:header", "bad\nheader"]) {
+      expect(() =>
+        normalizePaidHttpRequest({
+          url: "https://example.com/pay",
+          method: "GET",
+          headers: [[name, "value"]],
+        }),
+      ).toThrow(/header name/i);
+    }
+  });
+
+  it("rejects CR, LF, and NUL in header values before request construction", () => {
+    for (const value of ["one\rtwo", "one\ntwo", "one\0two"]) {
+      expect(() =>
+        normalizePaidHttpRequest({
+          url: "https://example.com/pay",
+          method: "GET",
+          headers: [["X-Test", value]],
+        }),
+      ).toThrow(/header value/i);
     }
   });
 });
@@ -538,6 +568,35 @@ describe("assertPaidHttpUrlAllowed", () => {
 });
 
 describe("executeBoundedHttpRequest", () => {
+  it("forces identity response encoding on the wire", async () => {
+    const response = await executeLocalHttp((request, outgoing) => {
+      outgoing.setHeader("Content-Type", "text/plain");
+      outgoing.end(request.headers["accept-encoding"] ?? "missing");
+    });
+
+    expect(response.body).toBe("identity");
+  });
+
+  it("rejects non-identity content encoding before decoding the body", async () => {
+    await expect(
+      executeLocalHttp((_request, outgoing) => {
+        outgoing.setHeader("Content-Type", "application/json");
+        outgoing.setHeader("Content-Encoding", "gzip");
+        outgoing.end(gzipSync('{"ok":true}'));
+      }),
+    ).rejects.toMatchObject({ code: "unsupported_content_encoding" });
+  });
+
+  it("maps synchronous connector construction failures to a stable error", async () => {
+    await expect(
+      executeLocalHttp(() => undefined, {
+        requestConnector: () => {
+          throw new TypeError("Node rejected request construction");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "request_failed" });
+  });
+
   it("decodes JSON and preserves ordered safe response headers", async () => {
     const response = await executeLocalHttp((_request, outgoing) => {
       outgoing.writeHead(200, [

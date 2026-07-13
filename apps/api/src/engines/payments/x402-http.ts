@@ -33,13 +33,18 @@ const DENIED_PAID_HTTP_HEADERS = new Set([
   'host',
   'content-length',
   'connection',
+  'te',
+  'trailer',
   'transfer-encoding',
   'upgrade',
+  'keep-alive',
+  'accept-encoding',
   'payment-signature',
   'payment-response',
   'payment-required',
   'x-payment',
 ]);
+const PAID_HTTP_HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 function bodyLimitError(): RangeError {
   return new RangeError('Paid HTTP body exceeds the 256 KiB decoded limit');
@@ -221,7 +226,13 @@ export function normalizePaidHttpRequest(
   if (request.method === 'GET' && request.body !== undefined) {
     throw new TypeError('GET paid HTTP requests cannot include a body');
   }
-  for (const [name] of request.headers) {
+  for (const [name, value] of request.headers) {
+    if (typeof name !== 'string' || !PAID_HTTP_HEADER_NAME.test(name)) {
+      throw new TypeError(`Invalid paid HTTP header name: ${String(name)}`);
+    }
+    if (typeof value !== 'string' || /[\r\n\0]/.test(value)) {
+      throw new TypeError(`Invalid paid HTTP header value for: ${name}`);
+    }
     const normalizedName = name.toLowerCase();
     if (
       DENIED_PAID_HTTP_HEADERS.has(normalizedName) ||
@@ -583,6 +594,7 @@ export type PaidHttpErrorCode =
   | 'redirect_not_supported'
   | 'request_timeout'
   | 'response_too_large'
+  | 'unsupported_content_encoding'
   | 'invalid_json'
   | 'invalid_destination'
   | 'request_failed';
@@ -660,6 +672,18 @@ function firstHeader(
   return headers.find(
     ([name]) => name.toLowerCase() === normalizedSearchedName,
   )?.[1];
+}
+
+function hasUnsupportedContentEncoding(
+  headers: readonly (readonly [string, string])[],
+): boolean {
+  return headers
+    .filter(([name]) => name.toLowerCase() === 'content-encoding')
+    .some(([, value]) =>
+      value
+        .split(',')
+        .some((encoding) => encoding.trim().toLowerCase() !== 'identity'),
+    );
 }
 
 function decodeResponseBody(
@@ -846,6 +870,7 @@ export function executeBoundedHttpRequest(
     value,
   ]);
   rawRequestHeaders.push('Host', parsedUrl.host);
+  rawRequestHeaders.push('Accept-Encoding', 'identity');
   if (request.body !== undefined) {
     rawRequestHeaders.push('Content-Length', String(request.body.byteLength));
   }
@@ -897,6 +922,15 @@ export function executeBoundedHttpRequest(
           incomingResponse = response;
           const status = response.statusCode ?? 0;
           const headers = safeResponseHeaders(response.rawHeaders);
+          if (hasUnsupportedContentEncoding(headers)) {
+            fail(
+              new PaidHttpError(
+                'unsupported_content_encoding',
+                'Paid HTTP response content encoding is not supported',
+              ),
+            );
+            return;
+          }
           if (
             status >= 300 &&
             status < 400 &&
@@ -987,11 +1021,15 @@ export function executeBoundedHttpRequest(
       clientRequest.end();
     } catch (error) {
       fail(
-        error instanceof Error
+        error instanceof PaidHttpError
           ? error
-          : new PaidHttpError('request_failed', 'Paid HTTP request failed', {
-              cause: error,
-            }),
+          : new PaidHttpError(
+              'request_failed',
+              'Paid HTTP request construction failed',
+              {
+                cause: error,
+              },
+            ),
       );
     }
   });
