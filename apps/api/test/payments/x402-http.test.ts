@@ -1,10 +1,103 @@
-import { describe, expect, it, vi } from "vitest";
+import {
+  createServer,
+  request as requestHttp,
+  type RequestListener,
+  type Server,
+} from "node:http";
+
+import { encodePaymentRequiredHeader } from "@x402/core/http";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertPaidHttpUrlAllowed,
   canonicalPaidHttpRequestHash,
+  executeBoundedHttpRequest,
   normalizePaidHttpRequest,
+  paymentRequiredFromResponse,
+  type PaidHttpResponse,
 } from "../../src/engines/payments/x402-http.js";
+
+const openServers = new Set<Server>();
+
+afterEach(async () => {
+  await Promise.all(
+    Array.from(openServers, (server) =>
+      new Promise<void>((resolve) => server.close(() => resolve())),
+    ),
+  );
+  openServers.clear();
+});
+
+async function startHttpServer(
+  handler: RequestListener,
+): Promise<{ readonly origin: string; readonly port: number }> {
+  const server = createServer(handler);
+  openServers.add(server);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("Test HTTP server did not bind to TCP");
+  }
+  return {
+    origin: `http://merchant.test:${address.port}`,
+    port: address.port,
+  };
+}
+
+async function executeLocalHttp(
+  handler: RequestListener,
+  options: { readonly timeoutMs?: number; readonly maxResponseBytes?: number } = {},
+) {
+  const { origin } = await startHttpServer(handler);
+  const url = `${origin}/paid?a=1&a=2`;
+  const destination = await assertPaidHttpUrlAllowed(url, {
+    allowHttpOrigins: [origin],
+    resolveHostname: () => Promise.resolve(["127.0.0.1"]),
+  });
+  return executeBoundedHttpRequest(
+    normalizePaidHttpRequest({ url, method: "GET", headers: [] }),
+    destination,
+    options,
+  );
+}
+
+const validPaymentRequired = {
+  x402Version: 2,
+  resource: {
+    url: "https://merchant.test/paid",
+    description: "Test resource",
+    mimeType: "application/json",
+  },
+  accepts: [
+    {
+      scheme: "exact",
+      network: "eip155:8453" as `${string}:${string}`,
+      asset: "0x0000000000000000000000000000000000000001",
+      amount: "1000",
+      payTo: "0x0000000000000000000000000000000000000002",
+      maxTimeoutSeconds: 60,
+      extra: {},
+    },
+  ],
+};
+
+function responseForDiscovery(
+  overrides: Partial<PaidHttpResponse> = {},
+): PaidHttpResponse {
+  return {
+    status: 402,
+    headers: [],
+    contentType: "application/json",
+    bodyEncoding: "json",
+    body: validPaymentRequired,
+    sizeBytes: 1,
+    truncated: false,
+    ...overrides,
+  };
+}
 
 describe("normalizePaidHttpRequest", () => {
   it("preserves repeated and encoded query parameters", () => {
@@ -417,5 +510,267 @@ describe("assertPaidHttpUrlAllowed", () => {
         resolveHostname: () => Promise.resolve(["3ff1::1"]),
       }),
     ).resolves.toMatchObject({ addresses: ["3ff1::1"] });
+  });
+});
+
+describe("executeBoundedHttpRequest", () => {
+  it("decodes JSON and preserves ordered safe response headers", async () => {
+    const response = await executeLocalHttp((_request, outgoing) => {
+      outgoing.writeHead(200, [
+        "Content-Type",
+        "application/problem+json; charset=utf-8",
+        "X-First",
+        "one",
+        "Set-Cookie",
+        "session=opaque; HttpOnly",
+        "Set-Cookie",
+        "preference=opaque; Secure",
+        "Connection",
+        "X-Hop",
+        "X-Hop",
+        "do-not-return",
+      ]);
+      outgoing.end('{"ok":true,"count":2}');
+    });
+
+    expect(response).toMatchObject({
+      status: 200,
+      contentType: "application/problem+json; charset=utf-8",
+      bodyEncoding: "json",
+      body: { ok: true, count: 2 },
+      sizeBytes: 21,
+      truncated: false,
+    });
+    expect(
+      response.headers.filter(([name]) =>
+        ["x-first", "set-cookie"].includes(name.toLowerCase()),
+      ),
+    ).toEqual([
+      ["X-First", "one"],
+      ["Set-Cookie", "session=opaque; HttpOnly"],
+      ["Set-Cookie", "preference=opaque; Secure"],
+    ]);
+    expect(response.headers.map(([name]) => name.toLowerCase())).not.toContain(
+      "connection",
+    );
+    expect(response.headers.map(([name]) => name.toLowerCase())).not.toContain(
+      "x-hop",
+    );
+  });
+
+  it("decodes valid UTF-8 text responses", async () => {
+    const response = await executeLocalHttp((_request, outgoing) => {
+      outgoing.setHeader("Content-Type", "text/plain; charset=utf-8");
+      outgoing.end("paid ✓");
+    });
+
+    expect(response).toMatchObject({
+      status: 200,
+      bodyEncoding: "text",
+      body: "paid ✓",
+      sizeBytes: 8,
+    });
+  });
+
+  it("encodes binary responses as base64", async () => {
+    const response = await executeLocalHttp((_request, outgoing) => {
+      outgoing.setHeader("Content-Type", "application/octet-stream");
+      outgoing.end(Buffer.from([0, 1, 2, 254, 255]));
+    });
+
+    expect(response).toMatchObject({
+      status: 200,
+      bodyEncoding: "base64",
+      body: "AAEC/v8=",
+      sizeBytes: 5,
+    });
+  });
+
+  it("preserves 422 responses as normal results", async () => {
+    const response = await executeLocalHttp((_request, outgoing) => {
+      outgoing.writeHead(422, { "Content-Type": "application/json" });
+      outgoing.end('{"error":"invalid input"}');
+    });
+
+    expect(response).toMatchObject({
+      status: 422,
+      bodyEncoding: "json",
+      body: { error: "invalid input" },
+    });
+  });
+
+  it("preserves 500 responses as normal results", async () => {
+    const response = await executeLocalHttp((_request, outgoing) => {
+      outgoing.writeHead(500, { "Content-Type": "text/plain" });
+      outgoing.end("upstream failed");
+    });
+
+    expect(response).toMatchObject({
+      status: 500,
+      bodyEncoding: "text",
+      body: "upstream failed",
+    });
+  });
+
+  it("rejects redirects instead of following Location", async () => {
+    await expect(
+      executeLocalHttp((_request, outgoing) => {
+        outgoing.writeHead(307, {
+          Location: "https://other-origin.test/steal-proof",
+        });
+        outgoing.end();
+      }),
+    ).rejects.toMatchObject({ code: "redirect_not_supported" });
+  });
+
+  it("destroys timed-out requests with an explicit error", async () => {
+    await expect(
+      executeLocalHttp(() => undefined, { timeoutMs: 20 }),
+    ).rejects.toMatchObject({ code: "request_timeout" });
+  });
+
+  it("destroys responses immediately above the default 1 MiB byte limit", async () => {
+    await expect(
+      executeLocalHttp((_request, outgoing) => {
+        outgoing.setHeader("Content-Type", "application/octet-stream");
+        outgoing.end(Buffer.alloc(1024 * 1024 + 1));
+      }),
+    ).rejects.toMatchObject({ code: "response_too_large" });
+  });
+
+  it("uses the pinned resolver without a second upstream resolution", async () => {
+    const { origin } = await startHttpServer((_request, outgoing) => {
+      outgoing.setHeader("Content-Type", "text/plain");
+      outgoing.end("pinned");
+    });
+    const url = `${origin}/paid`;
+    const upstreamResolver = vi.fn(() => Promise.resolve(["127.0.0.1"]));
+    const validated = await assertPaidHttpUrlAllowed(url, {
+      allowHttpOrigins: [origin],
+      resolveHostname: upstreamResolver,
+    });
+    const pinnedResolver = vi.fn(validated.resolveHostname);
+
+    const response = await executeBoundedHttpRequest(
+      normalizePaidHttpRequest({ url, method: "GET", headers: [] }),
+      { ...validated, resolveHostname: pinnedResolver },
+    );
+
+    expect(response.body).toBe("pinned");
+    expect(upstreamResolver).toHaveBeenCalledTimes(1);
+    expect(pinnedResolver).toHaveBeenCalledWith("merchant.test");
+  });
+
+  it("never reuses a shared socket that bypasses the pinned resolver", async () => {
+    const { origin } = await startHttpServer((_request, outgoing) => {
+      outgoing.setHeader("Content-Type", "text/plain");
+      outgoing.end("connected");
+    });
+    const url = `${origin}/paid`;
+    await new Promise<void>((resolve, reject) => {
+      const primingRequest = requestHttp(
+        url,
+        {
+          lookup: (_hostname, options, callback) => {
+            if (typeof options !== "number" && options.all) {
+              callback(null, [{ address: "127.0.0.1", family: 4 }]);
+            } else {
+              callback(null, "127.0.0.1", 4);
+            }
+          },
+        },
+        (response) => {
+          response.resume();
+          response.once("end", resolve);
+        },
+      );
+      primingRequest.once("error", reject);
+      primingRequest.end();
+    });
+
+    const validated = await assertPaidHttpUrlAllowed(url, {
+      allowHttpOrigins: [origin],
+      resolveHostname: () => Promise.resolve(["127.0.0.1"]),
+    });
+    const pinnedResolver = vi.fn(validated.resolveHostname);
+    await executeBoundedHttpRequest(
+      normalizePaidHttpRequest({ url, method: "GET", headers: [] }),
+      { ...validated, resolveHostname: pinnedResolver },
+    );
+
+    expect(pinnedResolver).toHaveBeenCalledWith("merchant.test");
+  });
+
+  it("returns an explicit error for invalid JSON responses", async () => {
+    await expect(
+      executeLocalHttp((_request, outgoing) => {
+        outgoing.setHeader("Content-Type", "application/json");
+        outgoing.end('{"incomplete":');
+      }),
+    ).rejects.toMatchObject({ code: "invalid_json" });
+  });
+});
+
+describe("paymentRequiredFromResponse", () => {
+  it("decodes a v2 PAYMENT-REQUIRED response header", () => {
+    const encoded = encodePaymentRequiredHeader(validPaymentRequired);
+
+    expect(
+      paymentRequiredFromResponse(
+        responseForDiscovery({
+          headers: [["PAYMENT-REQUIRED", encoded]],
+          bodyEncoding: "text",
+          body: "ignored header fallback body",
+        }),
+      ),
+    ).toEqual(validPaymentRequired);
+  });
+
+  it("falls back to the current JSON response body", () => {
+    expect(paymentRequiredFromResponse(responseForDiscovery())).toEqual(
+      validPaymentRequired,
+    );
+  });
+
+  it("rejects non-402 responses", () => {
+    expect(() =>
+      paymentRequiredFromResponse(responseForDiscovery({ status: 200 })),
+    ).toThrowError(expect.objectContaining({ code: "not_payment_required" }));
+  });
+
+  it("rejects a missing payment quote", () => {
+    expect(() =>
+      paymentRequiredFromResponse(
+        responseForDiscovery({
+          contentType: "text/plain",
+          bodyEncoding: "text",
+          body: "Payment required",
+        }),
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "payment_required_missing" }),
+    );
+  });
+
+  it("rejects an invalid payment quote", () => {
+    expect(() =>
+      paymentRequiredFromResponse(
+        responseForDiscovery({ headers: [["Payment-Required", "not-base64"]] }),
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "payment_required_invalid" }),
+    );
+  });
+
+  it("rejects a payment quote with no accepted payment options", () => {
+    expect(() =>
+      paymentRequiredFromResponse(
+        responseForDiscovery({
+          body: { ...validPaymentRequired, accepts: [] },
+        }),
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "payment_required_empty_accepts" }),
+    );
   });
 });

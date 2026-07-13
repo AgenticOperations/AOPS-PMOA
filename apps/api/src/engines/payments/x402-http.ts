@@ -1,6 +1,16 @@
 import { createHash, type Hash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import {
+  request as requestHttp,
+  type ClientRequest,
+  type IncomingMessage,
+  type RequestOptions,
+} from 'node:http';
+import { request as requestHttps } from 'node:https';
 import { isIP } from 'node:net';
+
+import { decodePaymentRequiredHeader } from '@x402/core/http';
+import type { PaymentRequired } from '@x402/core/types';
 
 export type PaidHttpBody =
   | { readonly kind: 'json'; readonly value: unknown }
@@ -549,4 +559,525 @@ export async function assertPaidHttpUrlAllowed(
     addresses,
     resolveHostname,
   });
+}
+
+export const DEFAULT_PAID_HTTP_RESPONSE_BYTES = 1024 * 1024;
+export const DEFAULT_PAID_HTTP_TIMEOUT_MS = 15_000;
+export const PAID_HTTP_PAYMENT_TIMEOUT_MS = 30_000;
+
+export type PaidHttpResponse = {
+  readonly status: number;
+  readonly headers: readonly (readonly [string, string])[];
+  readonly contentType: string | undefined;
+  readonly bodyEncoding: 'json' | 'text' | 'base64';
+  readonly body: unknown;
+  readonly sizeBytes: number;
+  readonly truncated: false;
+};
+
+export type PaidHttpErrorCode =
+  | 'not_payment_required'
+  | 'payment_required_missing'
+  | 'payment_required_invalid'
+  | 'payment_required_empty_accepts'
+  | 'redirect_not_supported'
+  | 'request_timeout'
+  | 'response_too_large'
+  | 'invalid_json'
+  | 'invalid_destination'
+  | 'request_failed';
+
+export class PaidHttpError extends Error {
+  override readonly name = 'PaidHttpError';
+
+  constructor(
+    readonly code: PaidHttpErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
+export type PaidHttpExecutionOptions = {
+  readonly timeoutMs?: number;
+  readonly maxResponseBytes?: number;
+  readonly requestConnector?: PaidHttpRequestConnector;
+};
+
+export type PaidHttpRequestConnector = (
+  url: URL,
+  options: RequestOptions,
+  onResponse: (response: IncomingMessage) => void,
+) => ClientRequest;
+
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'proxy-connection',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function safeResponseHeaders(
+  rawHeaders: readonly string[],
+): readonly (readonly [string, string])[] {
+  const connectionHeaders = new Set<string>();
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    if (rawHeaders[index]?.toLowerCase() !== 'connection') continue;
+    for (const name of (rawHeaders[index + 1] ?? '').split(',')) {
+      const normalized = name.trim().toLowerCase();
+      if (normalized !== '') connectionHeaders.add(normalized);
+    }
+  }
+
+  const headers: (readonly [string, string])[] = [];
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    const name = rawHeaders[index];
+    const value = rawHeaders[index + 1];
+    if (name === undefined || value === undefined) continue;
+    const normalized = name.toLowerCase();
+    if (
+      HOP_BY_HOP_RESPONSE_HEADERS.has(normalized) ||
+      connectionHeaders.has(normalized)
+    ) {
+      continue;
+    }
+    headers.push([name, value]);
+  }
+  return headers;
+}
+
+function firstHeader(
+  headers: readonly (readonly [string, string])[],
+  searchedName: string,
+): string | undefined {
+  const normalizedSearchedName = searchedName.toLowerCase();
+  return headers.find(
+    ([name]) => name.toLowerCase() === normalizedSearchedName,
+  )?.[1];
+}
+
+function decodeResponseBody(
+  bytes: Buffer,
+  contentType: string | undefined,
+): Pick<PaidHttpResponse, 'body' | 'bodyEncoding'> {
+  const mediaType = contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  const json =
+    mediaType === 'application/json' ||
+    (mediaType.startsWith('application/') && mediaType.endsWith('+json'));
+  if (json) {
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      return { bodyEncoding: 'json', body: JSON.parse(text) as unknown };
+    } catch (error) {
+      throw new PaidHttpError(
+        'invalid_json',
+        'Paid HTTP response declared JSON but was not valid UTF-8 JSON',
+        { cause: error },
+      );
+    }
+  }
+
+  const text =
+    mediaType.startsWith('text/') ||
+    mediaType === 'application/javascript' ||
+    mediaType === 'application/x-www-form-urlencoded' ||
+    mediaType === 'application/xml' ||
+    mediaType === 'application/xhtml+xml' ||
+    mediaType.endsWith('+xml');
+  if (text) {
+    try {
+      return {
+        bodyEncoding: 'text',
+        body: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+      };
+    } catch {
+      // Invalid UTF-8 is returned losslessly as binary below.
+    }
+  }
+
+  return { bodyEncoding: 'base64', body: bytes.toString('base64') };
+}
+
+function pinnedLookup(
+  destination: ValidatedPaidHttpDestination,
+): NonNullable<RequestOptions['lookup']> {
+  const validatedAddresses = new Set(destination.addresses);
+
+  return (hostname, options, callback) => {
+    const requestedHostname = hostname.replace(/^\[|\]$/g, '');
+    if (requestedHostname !== destination.hostname) {
+      callback(
+        new PaidHttpError(
+          'invalid_destination',
+          `Paid HTTP connector attempted to resolve an unvalidated hostname: ${hostname}`,
+        ),
+        '',
+        0,
+      );
+      return;
+    }
+
+    void destination
+      .resolveHostname(requestedHostname)
+      .then((resolved) => {
+        const addresses = resolved.map((entry) =>
+          typeof entry === 'string' ? entry : entry.address,
+        );
+        if (
+          addresses.length === 0 ||
+          addresses.some(
+            (address) =>
+              isIP(address.replace(/^\[|\]$/g, '').split('%', 1)[0] ?? '') ===
+                0 || !validatedAddresses.has(address),
+          )
+        ) {
+          throw new PaidHttpError(
+            'invalid_destination',
+            'Pinned paid HTTP resolver returned an unvalidated address',
+          );
+        }
+
+        const lookupOptions =
+          typeof options === 'number' ? { family: options } : options;
+        const candidates = addresses
+          .map((address) => ({
+            address,
+            family: isIP(
+              address.replace(/^\[|\]$/g, '').split('%', 1)[0] ?? '',
+            ) as 4 | 6,
+          }))
+          .filter(
+            ({ family }) =>
+              lookupOptions.family === undefined ||
+              lookupOptions.family === 0 ||
+              lookupOptions.family === family,
+          );
+        if (candidates.length === 0) {
+          throw new PaidHttpError(
+            'invalid_destination',
+            'Pinned paid HTTP destination has no address for the requested family',
+          );
+        }
+
+        if (lookupOptions.all) callback(null, candidates);
+        else {
+          const [candidate] = candidates;
+          if (candidate === undefined) return;
+          callback(null, candidate.address, candidate.family);
+        }
+      })
+      .catch((error: unknown) => {
+        callback(
+          error instanceof Error
+            ? error
+            : new PaidHttpError(
+                'invalid_destination',
+                'Pinned paid HTTP resolution failed',
+                { cause: error },
+              ),
+          '',
+          0,
+        );
+      });
+  };
+}
+
+const defaultPaidHttpRequestConnector: PaidHttpRequestConnector = (
+  url,
+  options,
+  onResponse,
+) =>
+  (url.protocol === 'https:' ? requestHttps : requestHttp)(
+    url,
+    options,
+    onResponse,
+  );
+
+function boundedPositiveInteger(
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const selected = value ?? fallback;
+  if (!Number.isSafeInteger(selected) || selected <= 0) {
+    throw new TypeError(`${name} must be a positive safe integer`);
+  }
+  return selected;
+}
+
+export function executeBoundedHttpRequest(
+  request: NormalizedPaidHttpRequest,
+  destination: ValidatedPaidHttpDestination,
+  options: PaidHttpExecutionOptions = {},
+): Promise<PaidHttpResponse> {
+  const parsedUrl = new URL(request.url);
+  if (
+    parsedUrl.href !== new URL(destination.url).href ||
+    parsedUrl.hostname.replace(/^\[|\]$/g, '') !== destination.hostname ||
+    destination.addresses.length === 0
+  ) {
+    return Promise.reject(
+      new PaidHttpError(
+        'invalid_destination',
+        'Paid HTTP request does not match its validated pinned destination',
+      ),
+    );
+  }
+
+  const timeoutMs = boundedPositiveInteger(
+    options.timeoutMs,
+    DEFAULT_PAID_HTTP_TIMEOUT_MS,
+    'Paid HTTP timeout',
+  );
+  const maxResponseBytes = boundedPositiveInteger(
+    options.maxResponseBytes,
+    DEFAULT_PAID_HTTP_RESPONSE_BYTES,
+    'Paid HTTP response byte limit',
+  );
+  const rawRequestHeaders = request.headers.flatMap(([name, value]) => [
+    name,
+    value,
+  ]);
+  rawRequestHeaders.push('Host', parsedUrl.host);
+  if (request.body !== undefined) {
+    rawRequestHeaders.push('Content-Length', String(request.body.byteLength));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let clientRequest: ClientRequest | undefined;
+    let incomingResponse: IncomingMessage | undefined;
+    const timer = setTimeout(() => {
+      fail(
+        new PaidHttpError(
+          'request_timeout',
+          `Paid HTTP request exceeded its ${timeoutMs} ms timeout`,
+        ),
+      );
+    }, timeoutMs);
+
+    function fail(error: Error): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      incomingResponse?.destroy(error);
+      clientRequest?.destroy(error);
+      reject(error);
+    }
+
+    function succeed(response: PaidHttpResponse): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(response);
+    }
+
+    try {
+      clientRequest = (
+        options.requestConnector ?? defaultPaidHttpRequestConnector
+      )(
+        parsedUrl,
+        {
+          agent: false,
+          method: request.method,
+          headers: rawRequestHeaders,
+          lookup: pinnedLookup(destination),
+          ...(parsedUrl.protocol === 'https:' && isIP(destination.hostname) === 0
+            ? { servername: destination.hostname }
+            : {}),
+        },
+        (response) => {
+          incomingResponse = response;
+          const status = response.statusCode ?? 0;
+          const headers = safeResponseHeaders(response.rawHeaders);
+          if (
+            status >= 300 &&
+            status < 400 &&
+            firstHeader(headers, 'location') !== undefined
+          ) {
+            fail(
+              new PaidHttpError(
+                'redirect_not_supported',
+                'Paid HTTP redirects are not supported',
+              ),
+            );
+            return;
+          }
+
+          const chunks: Buffer[] = [];
+          let sizeBytes = 0;
+          response.on('data', (chunk: Buffer | Uint8Array | string) => {
+            if (settled) return;
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            sizeBytes += bytes.byteLength;
+            if (sizeBytes > maxResponseBytes) {
+              fail(
+                new PaidHttpError(
+                  'response_too_large',
+                  `Paid HTTP response exceeded ${maxResponseBytes} bytes`,
+                ),
+              );
+              return;
+            }
+            chunks.push(bytes);
+          });
+          response.once('error', (error) => {
+            if (!settled) {
+              fail(
+                error instanceof PaidHttpError
+                  ? error
+                  : new PaidHttpError(
+                      'request_failed',
+                      'Paid HTTP response stream failed',
+                      { cause: error },
+                    ),
+              );
+            }
+          });
+          response.once('end', () => {
+            if (settled) return;
+            try {
+              const contentType = firstHeader(headers, 'content-type');
+              const decoded = decodeResponseBody(
+                Buffer.concat(chunks, sizeBytes),
+                contentType,
+              );
+              succeed({
+                status,
+                headers,
+                contentType,
+                ...decoded,
+                sizeBytes,
+                truncated: false,
+              });
+            } catch (error) {
+              fail(
+                error instanceof Error
+                  ? error
+                  : new PaidHttpError(
+                      'request_failed',
+                      'Paid HTTP response decoding failed',
+                      { cause: error },
+                    ),
+              );
+            }
+          });
+        },
+      );
+      clientRequest.once('error', (error) => {
+        if (settled) return;
+        fail(
+          error instanceof PaidHttpError
+            ? error
+            : new PaidHttpError(
+                'request_failed',
+                'Paid HTTP request failed',
+                { cause: error },
+              ),
+        );
+      });
+      if (request.body !== undefined) clientRequest.write(request.body);
+      clientRequest.end();
+    } catch (error) {
+      fail(
+        error instanceof Error
+          ? error
+          : new PaidHttpError('request_failed', 'Paid HTTP request failed', {
+              cause: error,
+            }),
+      );
+    }
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonemptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function validatedPaymentRequired(value: unknown): PaymentRequired {
+  if (!isRecord(value) || value.x402Version !== 2 || !isRecord(value.resource)) {
+    throw new PaidHttpError(
+      'payment_required_invalid',
+      'Payment-required quote is invalid',
+    );
+  }
+  if (!Array.isArray(value.accepts)) {
+    throw new PaidHttpError(
+      'payment_required_invalid',
+      'Payment-required quote is invalid',
+    );
+  }
+  if (value.accepts.length === 0) {
+    throw new PaidHttpError(
+      'payment_required_empty_accepts',
+      'Payment-required quote has no accepted payment options',
+    );
+  }
+  if (
+    !isNonemptyString(value.resource.url) ||
+    value.accepts.some(
+      (requirements) =>
+        !isRecord(requirements) ||
+        !isNonemptyString(requirements.scheme) ||
+        !isNonemptyString(requirements.network) ||
+        !isNonemptyString(requirements.asset) ||
+        !isNonemptyString(requirements.amount) ||
+        !isNonemptyString(requirements.payTo) ||
+        typeof requirements.maxTimeoutSeconds !== 'number' ||
+        !Number.isFinite(requirements.maxTimeoutSeconds) ||
+        requirements.maxTimeoutSeconds < 0 ||
+        !isRecord(requirements.extra),
+    )
+  ) {
+    throw new PaidHttpError(
+      'payment_required_invalid',
+      'Payment-required quote is invalid',
+    );
+  }
+  return value as PaymentRequired;
+}
+
+export function paymentRequiredFromResponse(
+  response: PaidHttpResponse,
+): PaymentRequired {
+  if (response.status !== 402) {
+    throw new PaidHttpError(
+      'not_payment_required',
+      `Expected HTTP 402 payment required, received ${response.status}`,
+    );
+  }
+
+  const encodedHeader = firstHeader(response.headers, 'payment-required');
+  if (encodedHeader !== undefined) {
+    let decoded: unknown;
+    try {
+      decoded = decodePaymentRequiredHeader(encodedHeader);
+    } catch (error) {
+      throw new PaidHttpError(
+        'payment_required_invalid',
+        'PAYMENT-REQUIRED header is invalid',
+        { cause: error },
+      );
+    }
+    return validatedPaymentRequired(decoded);
+  }
+
+  if (response.bodyEncoding !== 'json') {
+    throw new PaidHttpError(
+      'payment_required_missing',
+      'HTTP 402 response did not include a payment-required quote',
+    );
+  }
+  return validatedPaymentRequired(response.body);
 }
