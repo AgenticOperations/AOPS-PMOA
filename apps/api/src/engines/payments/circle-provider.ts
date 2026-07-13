@@ -429,8 +429,11 @@ export function assertCircleTestnetX402Authority(
       throw new Error('circle_worker_x402_authority_invalid');
     }
     const gatewayDomain = extra as Record<string, unknown>;
+    const verifyingContract = gatewayDomain.verifyingContract;
     if (
-      gatewayDomain.verifyingContract !== TESTNET_GATEWAY_WALLET ||
+      typeof verifyingContract !== 'string' ||
+      !/^0x[0-9a-fA-F]{40}$/.test(verifyingContract) ||
+      verifyingContract.toLowerCase() !== TESTNET_GATEWAY_WALLET.toLowerCase() ||
       gatewayDomain.name !== 'GatewayWalletBatched' ||
       gatewayDomain.version !== '1'
     ) {
@@ -816,7 +819,7 @@ function developerResponseResult(input: {
     decoded.success &&
     (decoded.network.length === 0 ||
       typeof decoded.transaction !== 'string' ||
-      decoded.transaction.length === 0 ||
+      decoded.transaction.trim().length === 0 ||
       typeof decoded.payer !== 'string' ||
       decoded.payer.trim().length === 0)
   ) {

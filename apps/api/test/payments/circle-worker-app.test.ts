@@ -365,7 +365,37 @@ describe('Circle worker internal API', () => {
     await app.close();
   });
 
-  it('rejects a request URL that differs from its validated destination before signing', async () => {
+  it('accepts a canonically equivalent request and destination URL', async () => {
+    const settleExactX402 = vi.fn(() => Promise.resolve({
+      network: 'eip155:84532',
+      providerMode: 'test' as const,
+      success: true,
+    }));
+    const { app } = buildWorker({ settleExactX402 });
+    const input = settlementInput({
+      addresses: ['8.8.8.8'],
+      hostname: 'merchant.example',
+      url: 'https://merchant.example/',
+    });
+    input.request.url = 'https://MERCHANT.EXAMPLE:443';
+
+    const response = await app.inject({
+      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
+      method: 'POST',
+      payload: { input, operation: 'settleExactX402', orgId: 'org_1' },
+      url: '/internal/circle/provider/execute',
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(settleExactX402).toHaveBeenCalledOnce();
+    await app.close();
+  });
+
+  it.each([
+    ['different path', 'https://merchant.example/other'],
+    ['different query', 'https://merchant.example/weather?paid=false'],
+    ['invalid URL', 'not a URL'],
+  ])('rejects a request URL with %s before signing', async (_label, requestUrl) => {
     const signTypedData = vi.fn();
     const settleExactX402 = vi.fn(async () => {
       await signTypedData();
@@ -377,7 +407,7 @@ describe('Circle worker internal API', () => {
       hostname: 'merchant.example',
       url: 'https://merchant.example/weather',
     });
-    input.request.url = 'https://attacker.example/paid';
+    input.request.url = requestUrl;
 
     const response = await app.inject({
       headers: { authorization: `Bearer ${WORKER_TOKEN}` },
@@ -426,6 +456,42 @@ describe('Circle worker internal API', () => {
   });
 
   it.each([
+    ['lowercase', '0x0077777d7eba4688bdef3e311b846f25870a19b9'],
+    ['checksummed', '0x0077777d7EBA4688BDeF3E311b846F25870A19B9'],
+  ])('accepts a %s testnet Gateway verifying contract', async (_label, verifyingContract) => {
+    const settleGatewayX402 = vi.fn(() => Promise.resolve({
+      network: 'eip155:84532',
+      providerMode: 'test' as const,
+      success: true,
+    }));
+    const { app } = buildWorker({ settleGatewayX402 });
+    const response = await app.inject({
+      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
+      method: 'POST',
+      payload: {
+        input: settlementInput({
+          addresses: ['8.8.8.8'],
+          hostname: 'merchant.example',
+          url: 'https://merchant.example/weather',
+        }, 'gateway', {
+          extra: {
+            name: 'GatewayWalletBatched',
+            version: '1',
+            verifyingContract,
+          },
+        }),
+        operation: 'settleGatewayX402',
+        orgId: 'org_1',
+      },
+      url: '/internal/circle/provider/execute',
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(settleGatewayX402).toHaveBeenCalledOnce();
+    await app.close();
+  });
+
+  it.each([
     ['mainnet network', 'settleExactX402', 'exact', {
       network: 'eip155:8453',
     }],
@@ -450,6 +516,13 @@ describe('Circle worker internal API', () => {
         name: 'GatewayWalletBatched',
         version: '1',
         verifyingContract: '0x0000000000000000000000000000000000000001',
+      },
+    }],
+    ['malformed Gateway contract', 'settleGatewayX402', 'gateway', {
+      extra: {
+        name: 'GatewayWalletBatched',
+        version: '1',
+        verifyingContract: '0x1234',
       },
     }],
     ['wrong Gateway name', 'settleGatewayX402', 'gateway', {

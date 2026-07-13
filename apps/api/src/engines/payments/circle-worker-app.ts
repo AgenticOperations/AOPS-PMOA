@@ -111,9 +111,25 @@ async function rehydrateSettlementInput(
   if (
     request === null ||
     typeof request !== 'object' ||
-    Array.isArray(request) ||
-    (request as Record<string, unknown>).url !== destination.url
+    Array.isArray(request)
   ) {
+    throw new PaidHttpError(
+      'invalid_destination',
+      'Paid HTTP request URL does not match its validated destination',
+    );
+  }
+  const requestUrl = (request as Record<string, unknown>).url;
+  let canonicalRequestUrl: string;
+  try {
+    if (typeof requestUrl !== 'string') throw new TypeError('Invalid request URL');
+    canonicalRequestUrl = new URL(requestUrl).href;
+  } catch {
+    throw new PaidHttpError(
+      'invalid_destination',
+      'Paid HTTP request URL does not match its validated destination',
+    );
+  }
+  if (canonicalRequestUrl !== destination.url) {
     throw new PaidHttpError(
       'invalid_destination',
       'Paid HTTP request URL does not match its validated destination',
