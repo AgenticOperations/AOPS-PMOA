@@ -44,6 +44,7 @@ export type CircleLiquidityWorkerDeps = {
   readonly listJobs: () => Promise<readonly CircleLiquidityJobCandidate[]>;
   readonly onError: (job: CircleLiquidityJobCandidate, error: unknown) => void;
   readonly processJob: (job: CircleLiquidityJobCandidate) => Promise<void>;
+  readonly purgeExpiredResults: () => Promise<number>;
 };
 
 export async function runCircleLiquidityWorkerPass(deps: CircleLiquidityWorkerDeps): Promise<number> {
@@ -57,6 +58,7 @@ export async function runCircleLiquidityWorkerPass(deps: CircleLiquidityWorkerDe
       deps.onError(job, error);
     }
   }
+  await deps.purgeExpiredResults();
   return processed;
 }
 

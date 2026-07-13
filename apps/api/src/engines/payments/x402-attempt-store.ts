@@ -160,6 +160,8 @@ const RESPONSE_METADATA_KEYS = new Set([
   'contentType',
   'statusCode',
 ]);
+const DEFAULT_RESULT_PURGE_BATCH_LIMIT = 100;
+const MAX_RESULT_PURGE_BATCH_LIMIT = 1_000;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -328,6 +330,35 @@ async function transition(
   return attemptFromRow(row);
 }
 
+export async function purgeExpiredX402Results(
+  pool: pg.Pool,
+  batchLimit = DEFAULT_RESULT_PURGE_BATCH_LIMIT,
+): Promise<number> {
+  if (!Number.isInteger(batchLimit) || batchLimit < 1) {
+    throw new RangeError('payment_attempt_purge_batch_limit_invalid');
+  }
+  const boundedBatchLimit = Math.min(batchLimit, MAX_RESULT_PURGE_BATCH_LIMIT);
+  const result = await pool.query<{ id: string }>(
+    `WITH expired AS (
+       SELECT id
+         FROM runtime_payment_attempts
+        WHERE result_expires_at <= now()
+        ORDER BY result_expires_at ASC, id ASC
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
+     )
+     UPDATE runtime_payment_attempts AS attempt
+        SET encrypted_result = NULL,
+            result_expires_at = NULL,
+            updated_at = now()
+       FROM expired
+      WHERE attempt.id = expired.id
+      RETURNING attempt.id`,
+    [boundedBatchLimit],
+  );
+  return result.rowCount ?? 0;
+}
+
 export function createPostgresX402AttemptStore(
   pool: pg.Pool,
   { resultCrypto }: X402AttemptStoreOptions,
@@ -428,7 +459,16 @@ export function createPostgresX402AttemptStore(
           'This idempotency key is already bound to a different payment request.',
         );
       }
-      return attemptFromRow(row);
+      const scrubbed = await client.query<X402AttemptRow>(
+        `UPDATE runtime_payment_attempts
+            SET encrypted_result = NULL,
+                result_expires_at = NULL,
+                updated_at = now()
+          WHERE id = $1 AND result_expires_at <= now()
+          RETURNING ${ATTEMPT_COLUMNS}`,
+        [row.id],
+      );
+      return attemptFromRow(scrubbed.rows[0] ?? row);
     }),
 
     markSubmitting: async (scope, attemptId) => transition(

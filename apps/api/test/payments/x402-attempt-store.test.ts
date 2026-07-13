@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IdentityError } from '../../src/engines/identity/errors.js';
 import {
   createPostgresX402AttemptStore,
+  purgeExpiredX402Results,
   type CreateX402AttemptInput,
   type X402AttemptStatus,
   type X402AttemptStore,
@@ -422,6 +423,119 @@ describe('Postgres x402 attempt store', () => {
       [created.id],
     );
     expect(scrubbed.rows[0]).toEqual({ encrypted_result: null, result_expires_at: null });
+  });
+
+  it('scrubs an expired encrypted result before returning a same-key create replay', async () => {
+    const idempotencyKey = nextKey('expired-create-replay');
+    const input = attemptInput(idempotencyKey, 'request-hash-expired-create-replay');
+    const created = await attempts.createAttempt(input);
+    await attempts.markSubmitting(ATTEMPT_SCOPE, created.id);
+    await attempts.finalizeSettled(ATTEMPT_SCOPE, created.id, {
+      result: paidResponse({ body: { secret: 'expired-create-secret' } }),
+    });
+    await pool.query(
+      `UPDATE runtime_payment_attempts
+          SET result_expires_at = now() - interval '1 second'
+        WHERE id = $1`,
+      [created.id],
+    );
+
+    const replayed = await attempts.createAttempt(input);
+
+    expect(replayed).toMatchObject({
+      encrypted_result: null,
+      id: created.id,
+      result_expires_at: null,
+      status: 'settled',
+    });
+    const stored = await pool.query<{
+      encrypted_result: unknown;
+      result_expires_at: Date | null;
+    }>(
+      `SELECT encrypted_result, result_expires_at
+         FROM runtime_payment_attempts
+        WHERE id = $1`,
+      [created.id],
+    );
+    expect(stored.rows[0]).toEqual({ encrypted_result: null, result_expires_at: null });
+  });
+
+  it('purges expired encrypted results in expiry order within a bounded batch', async () => {
+    const expiries = ['30 seconds', '20 seconds', '10 seconds'] as const;
+    const expiredIds: string[] = [];
+    for (const [index, expiry] of expiries.entries()) {
+      const created = await attempts.createAttempt(attemptInput(
+        nextKey(`purge-expired-${index}`),
+        `request-hash-purge-expired-${index}`,
+      ));
+      await attempts.markSubmitting(ATTEMPT_SCOPE, created.id);
+      await attempts.finalizeSettled(ATTEMPT_SCOPE, created.id, {
+        result: paidResponse({ body: { index } }),
+      });
+      await pool.query(
+        `UPDATE runtime_payment_attempts
+            SET result_expires_at = now() - $2::interval
+          WHERE id = $1`,
+        [created.id, expiry],
+      );
+      expiredIds.push(created.id);
+    }
+    const unexpired = await attempts.createAttempt(attemptInput(
+      nextKey('purge-unexpired'),
+      'request-hash-purge-unexpired',
+    ));
+    await attempts.markSubmitting(ATTEMPT_SCOPE, unexpired.id);
+    await attempts.finalizeSettled(ATTEMPT_SCOPE, unexpired.id, {
+      result: paidResponse({ body: { fresh: true } }),
+    });
+
+    await expect(purgeExpiredX402Results(pool, 2)).resolves.toBe(2);
+    const firstPass = await pool.query<{
+      encrypted_result: unknown;
+      id: string;
+      result_expires_at: Date | null;
+    }>(
+      `SELECT id, encrypted_result, result_expires_at
+         FROM runtime_payment_attempts
+        WHERE id = ANY($1::text[])
+        ORDER BY id`,
+      [[...expiredIds, unexpired.id]],
+    );
+    const firstPassById = new Map(firstPass.rows.map((row) => [row.id, row]));
+    for (const id of expiredIds.slice(0, 2)) {
+      expect(firstPassById.get(id)).toMatchObject({
+        encrypted_result: null,
+        result_expires_at: null,
+      });
+    }
+    const remainingExpired = firstPassById.get(expiredIds[2]!);
+    expect(remainingExpired?.encrypted_result).not.toBeNull();
+    expect(remainingExpired?.result_expires_at).toBeInstanceOf(Date);
+    const retainedUnexpired = firstPassById.get(unexpired.id);
+    expect(retainedUnexpired?.encrypted_result).not.toBeNull();
+    expect(retainedUnexpired?.result_expires_at).toBeInstanceOf(Date);
+
+    await expect(purgeExpiredX402Results(pool, 2)).resolves.toBe(1);
+    const finalRows = await pool.query<{
+      encrypted_result: unknown;
+      id: string;
+      result_expires_at: Date | null;
+    }>(
+      `SELECT id, encrypted_result, result_expires_at
+         FROM runtime_payment_attempts
+        WHERE id = ANY($1::text[])`,
+      [[...expiredIds, unexpired.id]],
+    );
+    const finalById = new Map(finalRows.rows.map((row) => [row.id, row]));
+    for (const id of expiredIds) {
+      expect(finalById.get(id)).toMatchObject({
+        encrypted_result: null,
+        result_expires_at: null,
+      });
+    }
+    const finalUnexpired = finalById.get(unexpired.id);
+    expect(finalUnexpired?.encrypted_result).not.toBeNull();
+    expect(finalUnexpired?.result_expires_at).toBeInstanceOf(Date);
   });
 
   it('enforces paired encrypted-result retention fields in PostgreSQL', async () => {

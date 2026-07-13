@@ -40,11 +40,13 @@ describe('Circle liquidity worker', () => {
       return Promise.resolve();
     });
     const onError = vi.fn();
+    const purgeExpiredResults = vi.fn(() => Promise.resolve(0));
 
     const processed = await runCircleLiquidityWorkerPass({
       listJobs: () => Promise.resolve(jobs),
       onError,
       processJob,
+      purgeExpiredResults,
     });
 
     expect(processJob.mock.calls.map(([job]) => job.id)).toEqual([
@@ -53,6 +55,21 @@ describe('Circle liquidity worker', () => {
       'cjob_third',
     ]);
     expect(onError).toHaveBeenCalledWith(jobs[1], expect.any(Error));
+    expect(purgeExpiredResults).toHaveBeenCalledOnce();
     expect(processed).toBe(2);
+  });
+
+  it('runs expired-result maintenance once even when there are no Circle jobs', async () => {
+    const purgeExpiredResults = vi.fn(() => Promise.resolve(7));
+
+    const processed = await runCircleLiquidityWorkerPass({
+      listJobs: () => Promise.resolve([]),
+      onError: vi.fn(),
+      processJob: vi.fn(),
+      purgeExpiredResults,
+    });
+
+    expect(purgeExpiredResults).toHaveBeenCalledOnce();
+    expect(processed).toBe(0);
   });
 });

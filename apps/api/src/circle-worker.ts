@@ -10,6 +10,7 @@ import { createPostgresCircleConnectionRepository } from './engines/payments/cir
 import { registerCircleWorkerRoutes } from './engines/payments/circle-worker-app.js';
 import { withPostgresCircleOrgLock } from './engines/payments/circle-org-lock.js';
 import { reconcileCircleProviderJobs, retryLiquidityJob } from './engines/payments/store.js';
+import { purgeExpiredX402Results } from './engines/payments/x402-attempt-store.js';
 
 const env = readApiEnv();
 const workerToken = env.circleWorkerToken;
@@ -102,6 +103,7 @@ try {
         await reconcileCircleProviderJobs(pool, operator, job.orgId, provider);
       }
     }),
+    purgeExpiredResults: () => purgeExpiredX402Results(pool),
   }, pollMs);
 } catch (error) {
   app.log.error(error);
