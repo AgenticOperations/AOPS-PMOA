@@ -632,6 +632,27 @@ describe('Circle treasury provider configuration', () => {
       expectedCode: 'payment_response_malformed',
     },
     {
+      label: 'missing payer',
+      receipt: {
+        success: true,
+        network: 'eip155:84532',
+        transaction: '0xsettled',
+      },
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_malformed',
+    },
+    {
+      label: 'empty payer',
+      receipt: {
+        success: true,
+        network: 'eip155:84532',
+        payer: '',
+        transaction: '0xsettled',
+      },
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_malformed',
+    },
+    {
       label: 'different payer',
       receipt: {
         success: true,

@@ -816,7 +816,9 @@ function developerResponseResult(input: {
     decoded.success &&
     (decoded.network.length === 0 ||
       typeof decoded.transaction !== 'string' ||
-      decoded.transaction.length === 0)
+      decoded.transaction.length === 0 ||
+      typeof decoded.payer !== 'string' ||
+      decoded.payer.trim().length === 0)
   ) {
     return canonicalSettlementResult({
       mode: input.mode,
