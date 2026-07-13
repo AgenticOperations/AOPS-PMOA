@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { PaymentChain, PaymentMode } from './types.js';
+import { normalizePaidHttpRequest, type PaidHttpRequest } from './x402-http.js';
 
 export type CircleCliInvocation = {
   readonly args: readonly string[];
@@ -67,10 +68,54 @@ export type CircleAgentGatewayDeposit = {
 };
 
 export type CircleAgentServicePayment = {
+  readonly payment: {
+    readonly amount: string | null;
+    readonly chain: string | null;
+    readonly receipt: unknown;
+    readonly scheme: string | null;
+    readonly seller: string | null;
+  } | null;
   readonly raw: unknown;
   readonly response?: unknown;
   readonly transaction: string | null;
 };
+
+export type CircleAgentCliPaidRequestFailureClassification =
+  | 'pre_submit'
+  | 'ambiguous_post_submit';
+
+export class CircleAgentCliPaidRequestError extends Error {
+  readonly attemptId: string;
+  readonly classification: CircleAgentCliPaidRequestFailureClassification;
+  readonly code:
+    | 'circle_cli_paid_request_pre_submit'
+    | 'circle_cli_paid_request_ambiguous_post_submit';
+  readonly killed: boolean;
+  override readonly name = 'CircleAgentCliPaidRequestError';
+  readonly processCode: number | string | null;
+  readonly signal: string | null;
+
+  constructor(
+    attemptId: string,
+    classification: CircleAgentCliPaidRequestFailureClassification,
+    metadata: {
+      readonly code: number | string | null;
+      readonly killed: boolean;
+      readonly signal: string | null;
+    },
+  ) {
+    const code = classification === 'pre_submit'
+      ? 'circle_cli_paid_request_pre_submit'
+      : 'circle_cli_paid_request_ambiguous_post_submit';
+    super(code);
+    this.attemptId = attemptId;
+    this.classification = classification;
+    this.code = code;
+    this.killed = metadata.killed;
+    this.processCode = metadata.code;
+    this.signal = metadata.signal;
+  }
+}
 
 export type CircleAgentTransfer = {
   readonly raw: unknown;
@@ -140,14 +185,26 @@ export type CircleAgentCliExecutor = {
     readonly chain: PaymentChain;
     readonly mode: PaymentMode;
   }) => Promise<CircleAgentWallet>;
-  readonly payService: (input: {
-    readonly address: string;
-    readonly chain: PaymentChain;
-    readonly maxAmount: string;
-    readonly mode: PaymentMode;
-    readonly rail: 'exact' | 'gateway';
-    readonly url: string;
-  }) => Promise<CircleAgentServicePayment>;
+  readonly payService: (input:
+    | {
+        readonly address: string;
+        readonly attemptId: string;
+        readonly chain: PaymentChain;
+        readonly maxAmount: string;
+        readonly mode: PaymentMode;
+        readonly rail: 'exact' | 'gateway';
+        readonly request: PaidHttpRequest;
+        readonly timeoutSeconds: number;
+      }
+    | {
+        readonly address: string;
+        readonly chain: PaymentChain;
+        readonly maxAmount: string;
+        readonly mode: PaymentMode;
+        readonly rail: 'exact' | 'gateway';
+        readonly url: string;
+      }
+  ) => Promise<CircleAgentServicePayment>;
   readonly status: () => Promise<{
     readonly live: CircleAgentSession;
     readonly test: CircleAgentSession;
@@ -226,12 +283,30 @@ async function defaultRunner(invocation: CircleCliInvocation): Promise<CircleCli
       },
       (error, stdout, stderr) => {
         if (error !== null) {
-          const processError = error as Error & { readonly killed?: boolean; readonly signal?: NodeJS.Signals | null };
+          const processError = error as Error & {
+            readonly code?: number | string | null;
+            readonly killed?: boolean;
+            readonly signal?: NodeJS.Signals | null;
+          };
           if (processError.killed === true && processError.signal !== null) {
-            reject(new Error(`circle_cli_process_timeout:${invocation.timeoutMs}`));
+            reject(Object.assign(
+              new Error(`circle_cli_process_timeout:${invocation.timeoutMs}`),
+              {
+                code: processError.code,
+                killed: processError.killed,
+                signal: processError.signal,
+              },
+            ));
             return;
           }
-          reject(new Error(stderr.trim().length > 0 ? stderr.trim() : error.message));
+          reject(Object.assign(
+            new Error(stderr.trim().length > 0 ? stderr.trim() : error.message),
+            {
+              code: processError.code,
+              killed: processError.killed,
+              signal: processError.signal,
+            },
+          ));
           return;
         }
         resolve({ stderr, stdout });
@@ -411,11 +486,75 @@ function gatewayDepositFrom(value: unknown): CircleAgentGatewayDeposit {
 
 function servicePaymentFrom(value: unknown): CircleAgentServicePayment {
   const item = record(cliData(value));
+  const payment = record(item.payment);
+  const hasPayment = item.payment !== null && typeof item.payment === 'object' && !Array.isArray(item.payment);
   return {
+    payment: hasPayment
+      ? {
+          amount: stringField(payment.amount) ?? (
+            typeof payment.amount === 'number' && Number.isFinite(payment.amount)
+              ? payment.amount.toString()
+              : null
+          ),
+          chain: stringField(payment.chain),
+          receipt: payment.receipt ?? null,
+          scheme: stringField(payment.scheme),
+          seller: stringField(payment.seller),
+        }
+      : null,
     raw: value,
     ...('response' in item ? { response: item.response } : {}),
     transaction: stringField(item.transaction ?? item.transactionHash ?? item.txHash),
   };
+}
+
+function paidRequestData(body: Uint8Array | undefined): string | undefined {
+  if (body === undefined) return undefined;
+  const bytes = Buffer.from(body);
+  const decoded = bytes.toString('utf8');
+  if (decoded.includes('\0') || !Buffer.from(decoded, 'utf8').equals(bytes)) {
+    throw new Error('circle_cli_paid_body_binary_unsupported');
+  }
+  return decoded;
+}
+
+function paidRequestErrorMetadata(error: unknown): {
+  readonly code: number | string | null;
+  readonly killed: boolean;
+  readonly signal: string | null;
+} {
+  if (!(error instanceof Error)) {
+    return { code: null, killed: false, signal: null };
+  }
+  const processError = error as Error & {
+    readonly code?: number | string | null;
+    readonly killed?: boolean;
+    readonly signal?: string | null;
+  };
+  return {
+    code: typeof processError.code === 'number' || typeof processError.code === 'string'
+      ? processError.code
+      : null,
+    killed: processError.killed === true,
+    signal: typeof processError.signal === 'string' ? processError.signal : null,
+  };
+}
+
+const PRE_SUBMIT_PROCESS_CODES = new Set([
+  'EACCES',
+  'ENOENT',
+  'ENOEXEC',
+  'ENOTDIR',
+  'ERR_INVALID_ARG_TYPE',
+  'ERR_INVALID_ARG_VALUE',
+]);
+
+function paidRequestErrorFrom(error: unknown, attemptId: string): CircleAgentCliPaidRequestError {
+  const metadata = paidRequestErrorMetadata(error);
+  const classification = typeof metadata.code === 'string' && PRE_SUBMIT_PROCESS_CODES.has(metadata.code)
+    ? 'pre_submit'
+    : 'ambiguous_post_submit';
+  return new CircleAgentCliPaidRequestError(attemptId, classification, metadata);
 }
 
 function loginChallengeFrom(value: unknown, expectedEmail: string): { readonly email: string; readonly requestId: string } {
@@ -666,21 +805,58 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
       ]);
       return walletFrom(value);
     },
-    payService: async ({ address, chain, maxAmount, mode, url }) => {
-      const paymentChain = circleBlockchainForChain(mode, chain);
-      const value = await runJson([
-        'services',
-        'pay',
-        url,
-        '--address',
-        address,
-        '--chain',
-        paymentChain,
-        '--max-amount',
-        maxAmount,
-        '--output',
-        'json',
-      ]);
+    payService: async (input) => {
+      const paymentChain = circleBlockchainForChain(input.mode, input.chain);
+      const isPaidRequest = 'request' in input;
+      const attemptId = isPaidRequest ? input.attemptId : 'legacy_circle_cli_paid_request';
+      const args = isPaidRequest
+        ? (() => {
+            const normalized = normalizePaidHttpRequest(input.request);
+            const data = paidRequestData(normalized.body);
+            return [
+              'services',
+              'pay',
+              normalized.url,
+              '--address',
+              input.address,
+              '--chain',
+              paymentChain,
+              '--max-amount',
+              input.maxAmount,
+              '--method',
+              normalized.method,
+              ...(data === undefined ? [] : ['--data', data]),
+              ...normalized.headers.flatMap(([name, headerValue]) => [
+                '--header',
+                `${name}: ${headerValue}`,
+              ]),
+              '--timeout',
+              input.timeoutSeconds.toString(),
+              ...modeArgs(input.mode),
+              '--output',
+              'json',
+            ];
+          })()
+        : [
+            'services',
+            'pay',
+            input.url,
+            '--address',
+            input.address,
+            '--chain',
+            paymentChain,
+            '--max-amount',
+            input.maxAmount,
+            '--output',
+            'json',
+          ];
+      let result: CircleCliResult;
+      try {
+        result = await runner({ args, command, environment, timeoutMs });
+      } catch (error) {
+        throw paidRequestErrorFrom(error, attemptId);
+      }
+      const value = parseJson(result.stdout);
       return servicePaymentFrom(value);
     },
     status: async () => {

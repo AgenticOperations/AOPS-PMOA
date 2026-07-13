@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CircleAgentCliPaidRequestError,
   circleBlockchainForChain,
   createCircleAgentCliExecutor,
   gatewayBalanceBlockchainForChain,
@@ -323,54 +324,37 @@ describe('Circle Agent Wallet CLI executor', () => {
     ]);
   });
 
-  it('routes exact x402 service payments through the native seller chain', async () => {
-    const { calls, runner } = runnerFrom([{ data: { transactionHash: '0xexact' } }]);
-    const executor = createCircleAgentCliExecutor({ runner });
-
-    await executor.payService({
-      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
-      chain: 'base',
-      maxAmount: '0.01',
-      mode: 'live',
-      rail: 'exact',
-      url: 'https://x402.example.test/data',
-    });
-
-    expect(calls[0]?.args).toEqual([
-      'services',
-      'pay',
-      'https://x402.example.test/data',
-      '--address',
-      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
-      '--chain',
-      'BASE',
-      '--max-amount',
-      '0.01',
-      '--output',
-      'json',
-    ]);
-  });
-
-  it('routes Gateway x402 service payments through the direct-deposit source chain', async () => {
+  it('passes the normalized JSON paid request to the Circle CLI in exact argument order', async () => {
     const { calls, runner } = runnerFrom([{
       data: {
-        payment: { receipt: null },
-        response: { paid: true, resource: 'Gateway result' },
-        transactionHash: '0xgateway',
+        payment: {
+          amount: '0.01',
+          chain: 'BASE-SEPOLIA',
+          receipt: { transactionHash: '0xexact' },
+          scheme: 'exact',
+          seller: '0xseller',
+        },
+        response: { paid: true },
+        transactionHash: '0xexact',
       },
     }]);
     const executor = createCircleAgentCliExecutor({ runner });
 
     const payment = await executor.payService({
       address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_exact_1',
       chain: 'base',
       maxAmount: '0.01',
       mode: 'test',
-      rail: 'gateway',
-      url: 'https://x402.example.test/data',
+      rail: 'exact',
+      request: {
+        body: { kind: 'json', value: { prompt: 'hello' } },
+        headers: [['content-type', 'application/json']],
+        method: 'POST',
+        url: 'https://x402.example.test/data',
+      },
+      timeoutSeconds: 30,
     });
-
-    expect(payment.response).toEqual({ paid: true, resource: 'Gateway result' });
 
     expect(calls[0]?.args).toEqual([
       'services',
@@ -382,9 +366,257 @@ describe('Circle Agent Wallet CLI executor', () => {
       'BASE-SEPOLIA',
       '--max-amount',
       '0.01',
+      '--method',
+      'POST',
+      '--data',
+      '{"prompt":"hello"}',
+      '--header',
+      'content-type: application/json',
+      '--timeout',
+      '30',
+      '--testnet',
       '--output',
       'json',
     ]);
+    expect(payment).toMatchObject({
+      payment: {
+        amount: '0.01',
+        chain: 'BASE-SEPOLIA',
+        receipt: { transactionHash: '0xexact' },
+        scheme: 'exact',
+        seller: '0xseller',
+      },
+      response: { paid: true },
+      transaction: '0xexact',
+    });
+  });
+
+  it('preserves text bodies and repeated header input order', async () => {
+    const output = {
+      data: {
+        payment: {
+          amount: '0.01',
+          chain: 'BASE-SEPOLIA',
+          receipt: { id: 'receipt_gateway' },
+          scheme: 'gateway',
+          seller: '0xseller',
+        },
+        response: 'Gateway result',
+        transactionHash: '0xgateway',
+      },
+    };
+    const { calls, runner } = runnerFrom([output]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    const payment = await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_gateway_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'gateway',
+      request: {
+        body: { kind: 'text', value: 'hello world' },
+        headers: [
+          ['x-trace', 'first'],
+          ['x-trace', 'second'],
+        ],
+        method: 'PUT',
+        url: 'https://x402.example.test/data',
+      },
+      timeoutSeconds: 45,
+    });
+
+    expect(payment.response).toBe('Gateway result');
+    expect(payment.payment).toEqual({
+      amount: '0.01',
+      chain: 'BASE-SEPOLIA',
+      receipt: { id: 'receipt_gateway' },
+      scheme: 'gateway',
+      seller: '0xseller',
+    });
+    expect(payment.transaction).toBe('0xgateway');
+    expect(payment.raw).toEqual(output);
+
+    expect(calls[0]?.args).toEqual([
+      'services',
+      'pay',
+      'https://x402.example.test/data',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE-SEPOLIA',
+      '--max-amount',
+      '0.01',
+      '--method',
+      'PUT',
+      '--data',
+      'hello world',
+      '--header',
+      'x-trace: first',
+      '--header',
+      'x-trace: second',
+      '--timeout',
+      '45',
+      '--testnet',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('decodes a valid UTF-8 base64 body for the CLI data argument', async () => {
+    const { calls, runner } = runnerFrom([{ data: { response: 'ok' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_base64_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'live',
+      rail: 'exact',
+      request: {
+        body: { kind: 'base64', value: Buffer.from('decoded text', 'utf8').toString('base64') },
+        headers: [],
+        method: 'PATCH',
+        url: 'https://x402.example.test/base64',
+      },
+      timeoutSeconds: 15,
+    });
+
+    expect(calls[0]?.args).toContain('decoded text');
+  });
+
+  it('omits data and header flags when the paid request has neither', async () => {
+    const { calls, runner } = runnerFrom([{ data: { response: 'ok' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_get_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'live',
+      rail: 'exact',
+      request: {
+        headers: [],
+        method: 'GET',
+        url: 'https://x402.example.test/no-body',
+      },
+      timeoutSeconds: 10,
+    });
+
+    expect(calls[0]?.args).toEqual([
+      'services',
+      'pay',
+      'https://x402.example.test/no-body',
+      '--address',
+      '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      '--chain',
+      'BASE',
+      '--max-amount',
+      '0.01',
+      '--method',
+      'GET',
+      '--timeout',
+      '10',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it.each([
+    ['invalid UTF-8', Buffer.from([0xff]).toString('base64')],
+    ['NUL bytes', Buffer.from('before\0after', 'utf8').toString('base64')],
+  ])('fails closed on base64 bodies containing %s', async (_label, value) => {
+    const { calls, runner } = runnerFrom([{ data: { response: 'must not run' } }]);
+    const executor = createCircleAgentCliExecutor({ runner });
+
+    await expect(executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_binary_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'exact',
+      request: {
+        body: { kind: 'base64', value },
+        headers: [],
+        method: 'POST',
+        url: 'https://x402.example.test/binary',
+      },
+      timeoutSeconds: 30,
+    })).rejects.toThrow('circle_cli_paid_body_binary_unsupported');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('classifies known spawn failures as pre-submit without retrying or exposing the runner message', async () => {
+    const runnerError = Object.assign(new Error('sensitive spawn failure'), {
+      code: 'ENOENT',
+      killed: false,
+      signal: null,
+    });
+    const { calls, runner } = runnerFrom([runnerError, { data: { response: 'must not retry' } }]);
+    const executor = createCircleAgentCliExecutor({ maxRetries: 3, retryDelayMs: 1, runner });
+
+    const failure = await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_pre_submit_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'exact',
+      request: {
+        headers: [],
+        method: 'POST',
+        url: 'https://x402.example.test/pre-submit',
+      },
+      timeoutSeconds: 30,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CircleAgentCliPaidRequestError);
+    expect(failure).toMatchObject({
+      attemptId: 'attempt_pre_submit_1',
+      classification: 'pre_submit',
+      code: 'circle_cli_paid_request_pre_submit',
+      processCode: 'ENOENT',
+    });
+    expect((failure as Error).message).not.toContain('sensitive spawn failure');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('classifies a started process failure as ambiguous post-submit without retrying', async () => {
+    const runnerError = Object.assign(new Error('Service returned error 503 after submission'), {
+      code: 1,
+      killed: false,
+      signal: null,
+    });
+    const { calls, runner } = runnerFrom([runnerError, { data: { response: 'must not retry' } }]);
+    const executor = createCircleAgentCliExecutor({ maxRetries: 3, retryDelayMs: 1, runner });
+
+    const failure = await executor.payService({
+      address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_ambiguous_1',
+      chain: 'base',
+      maxAmount: '0.01',
+      mode: 'test',
+      rail: 'gateway',
+      request: {
+        headers: [],
+        method: 'POST',
+        url: 'https://x402.example.test/ambiguous',
+      },
+      timeoutSeconds: 30,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CircleAgentCliPaidRequestError);
+    expect(failure).toMatchObject({
+      attemptId: 'attempt_ambiguous_1',
+      classification: 'ambiguous_post_submit',
+      code: 'circle_cli_paid_request_ambiguous_post_submit',
+      processCode: 1,
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it('submits a real testnet USDC transfer for exact x402 settlement', async () => {
