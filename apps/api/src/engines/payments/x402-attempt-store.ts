@@ -75,6 +75,11 @@ export type X402AttemptScope = {
   readonly orgId: string;
 };
 
+export type X402AttemptCleanupScope = {
+  readonly agentId: string;
+  readonly orgId: string;
+};
+
 type X402AttemptFinalizationInput = {
   readonly paymentMetadata?: X402PaymentMetadata | undefined;
   readonly responseMetadata?: X402SafeResponseMetadata | undefined;
@@ -98,6 +103,9 @@ export type X402AttemptStore = {
     idempotencyKey: string,
   ) => Promise<X402AttemptRecord | null>;
   readonly createAttempt: (input: CreateX402AttemptInput) => Promise<X402AttemptRecord>;
+  readonly cancelStrandedReservedAttempts: (
+    scope: X402AttemptCleanupScope,
+  ) => Promise<number>;
   readonly markSubmitting: (
     scope: X402AttemptScope,
     attemptId: string,
@@ -411,6 +419,89 @@ export function createPostgresX402AttemptStore(
 
   return {
     findAttempt,
+
+    cancelStrandedReservedAttempts: async (scope) => transaction(pool, async (client) => {
+      const candidates = await client.query<{
+        readonly amount_usdc: string;
+        readonly attempt_id: string;
+        readonly error_code: string;
+        readonly reservation_id: string;
+      }>(
+        `SELECT attempt.id AS attempt_id,
+                reservation.id AS reservation_id,
+                reservation.amount_usdc::text,
+                CASE
+                  WHEN approval.status = 'denied' THEN 'payment_approval_denied'
+                  WHEN approval.status = 'expired'
+                    OR (
+                      approval.status IN ('pending', 'approved')
+                      AND approval.expires_at <= now()
+                    )
+                    THEN 'payment_approval_expired'
+                  ELSE 'payment_reservation_expired'
+                END AS error_code
+           FROM runtime_payment_attempts AS attempt
+           JOIN payment_reservations AS reservation
+             ON reservation.reason_code = 'x402_attempt:' || attempt.id
+            AND reservation.org_id = attempt.org_id
+            AND reservation.agent_id = attempt.agent_id
+           LEFT JOIN approval_requests AS approval
+             ON approval.id = attempt.payment_metadata->>'approvalId'
+            AND approval.org_id = attempt.org_id
+            AND approval.agent_id = attempt.agent_id
+            AND approval.connection_id = attempt.connection_id
+          WHERE attempt.org_id = $1
+            AND attempt.agent_id = $2
+            AND attempt.status = 'reserved'
+            AND reservation.status = 'reserved'
+            AND (
+              reservation.expires_at <= now()
+              OR approval.status IN ('denied', 'expired')
+              OR (
+                approval.status IN ('pending', 'approved')
+                AND approval.expires_at <= now()
+              )
+            )
+          ORDER BY reservation.expires_at ASC, attempt.id ASC
+          FOR UPDATE OF attempt, reservation`,
+        [scope.orgId, scope.agentId],
+      );
+      let releasedCount = 0;
+      for (const candidate of candidates.rows) {
+        const released = await client.query(
+          `UPDATE payment_reservations
+              SET status = 'released', updated_at = now()
+            WHERE id = $1 AND org_id = $2 AND status = 'reserved'`,
+          [candidate.reservation_id, scope.orgId],
+        );
+        if (released.rowCount !== 1) continue;
+        const account = await client.query(
+          `UPDATE agent_payment_accounts
+              SET reserved_usdc = reserved_usdc - $3::numeric,
+                  updated_at = now()
+            WHERE org_id = $1
+              AND agent_id = $2
+              AND reserved_usdc >= $3::numeric`,
+          [scope.orgId, scope.agentId, candidate.amount_usdc],
+        );
+        if (account.rowCount !== 1) throw new Error('payment_attempt_reserved_budget_invalid');
+        const attempt = await client.query(
+          `UPDATE runtime_payment_attempts
+              SET status = 'failed',
+                  error_code = $4,
+                  finalized_at = now(),
+                  updated_at = now()
+            WHERE id = $1
+              AND org_id = $2
+              AND agent_id = $3
+              AND status = 'reserved'`,
+          [candidate.attempt_id, scope.orgId, scope.agentId, candidate.error_code],
+        );
+        if (attempt.rowCount !== 1) throw new Error('payment_attempt_state_conflict');
+        releasedCount += 1;
+      }
+      return releasedCount;
+    }),
 
     createAttempt: async (input) => transaction(pool, async (client) => {
       const validScope = await client.query<{ exists: boolean }>(

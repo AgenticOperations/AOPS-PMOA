@@ -171,6 +171,9 @@ describe('durable x402 paid HTTP flow', () => {
           .type('application/json')
           .send({ padding: 'x'.repeat(1024 * 1024) });
       }
+      if (request.url.startsWith('/free')) {
+        return reply.code(200).send({ available: true, privateDetail: 'must-not-leak' });
+      }
       const resourceUrl = new URL(request.url, merchantUrl).href;
       return reply.code(402).send({
         x402Version: 2,
@@ -562,6 +565,158 @@ describe('durable x402 paid HTTP flow', () => {
     expect(providerCalls).toBe(1);
   });
 
+  it('expires a stranded pre-submit reservation and releases its budget once', async () => {
+    providerOutcome = 'settled';
+    providerCalls = 0;
+    discoveryCalls = 0;
+    crashAfterReserved = true;
+    const { agentId, secret } = await createReadyBuyer('Expired Reservation', { budget: '0.01' });
+    const payload = {
+      idempotency_key: 'expired-reservation-key',
+      request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+    };
+    const crashed = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    expect(crashed.statusCode).toBe(500);
+    crashAfterReserved = false;
+    await store.pool.query(
+      `UPDATE payment_reservations
+          SET expires_at = now() - interval '1 second'
+        WHERE agent_id = $1 AND reason_code LIKE 'x402_attempt:%'`,
+      [agentId],
+    );
+
+    const firstReplay = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    const secondReplay = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+
+    expect(firstReplay.statusCode, firstReplay.body).toBe(200);
+    expect(secondReplay.json()).toEqual(firstReplay.json());
+    expect(firstReplay.json()).toMatchObject({
+      payment: { errorCode: 'payment_reservation_expired', status: 'failed' },
+    });
+    const state = await store.pool.query<{
+      attempt_status: string;
+      reservation_status: string;
+      reserved_usdc: string;
+      spent_usdc: string;
+    }>(
+      `SELECT attempt.status AS attempt_status,
+              reservation.status AS reservation_status,
+              account.reserved_usdc::text,
+              account.spent_usdc::text
+         FROM runtime_payment_attempts AS attempt
+         JOIN payment_reservations AS reservation
+           ON reservation.reason_code = 'x402_attempt:' || attempt.id
+         JOIN agent_payment_accounts AS account ON account.agent_id = attempt.agent_id
+        WHERE attempt.agent_id = $1 AND attempt.idempotency_key = $2`,
+      [agentId, payload.idempotency_key],
+    );
+    expect(state.rows[0]).toEqual({
+      attempt_status: 'failed',
+      reservation_status: 'released',
+      reserved_usdc: '0.000000',
+      spent_usdc: '0.000000',
+    });
+    expect(discoveryCalls).toBe(1);
+    expect(providerCalls).toBe(0);
+  });
+
+  it.each([
+    ['denied', 'payment_approval_denied'],
+    ['expired', 'payment_approval_expired'],
+  ] as const)('releases a pre-submit reservation when its approval is %s', async (
+    approvalState,
+    errorCode,
+  ) => {
+    providerOutcome = 'settled';
+    providerCalls = 0;
+    discoveryCalls = 0;
+    const { agentId, orgId, secret } = await createReadyBuyer(`Approval ${approvalState}`, {
+      budget: '0.01',
+    });
+    await activateApprovalPolicy(orgId, agentId);
+    const payload = {
+      idempotency_key: `approval-${approvalState}-key`,
+      request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+    };
+    const gated = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    expect(gated.statusCode, gated.body).toBe(409);
+    const approvalId = gated.json<{ approvalId: string }>().approvalId;
+    if (approvalState === 'denied') {
+      const denied = await api.inject({
+        method: 'POST',
+        url: `/v1/orgs/${orgId}/approvals/${approvalId}/deny`,
+        payload: { note: 'Denied for cleanup proof.' },
+      });
+      expect(denied.statusCode, denied.body).toBe(200);
+    } else {
+      await store.pool.query(
+        `UPDATE approval_requests SET expires_at = now() - interval '1 second' WHERE id = $1`,
+        [approvalId],
+      );
+    }
+
+    const firstReplay = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    const secondReplay = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+
+    expect(firstReplay.statusCode, firstReplay.body).toBe(200);
+    expect(secondReplay.json()).toEqual(firstReplay.json());
+    expect(firstReplay.json()).toMatchObject({
+      payment: { errorCode, status: 'failed' },
+    });
+    const state = await store.pool.query<{
+      attempt_status: string;
+      reservation_status: string;
+      reserved_usdc: string;
+    }>(
+      `SELECT attempt.status AS attempt_status,
+              reservation.status AS reservation_status,
+              account.reserved_usdc::text
+         FROM runtime_payment_attempts AS attempt
+         JOIN payment_reservations AS reservation
+           ON reservation.reason_code = 'x402_attempt:' || attempt.id
+         JOIN agent_payment_accounts AS account ON account.agent_id = attempt.agent_id
+        WHERE attempt.agent_id = $1 AND attempt.idempotency_key = $2`,
+      [agentId, payload.idempotency_key],
+    );
+    expect(state.rows[0]).toEqual({
+      attempt_status: 'failed',
+      reservation_status: 'released',
+      reserved_usdc: '0.000000',
+    });
+    expect(discoveryCalls).toBe(1);
+    expect(providerCalls).toBe(0);
+  });
+
   it.each([
     ['failed', 'failed', 'released', '0.000000'],
     ['unknown', 'unknown', 'reserved', '0.010000'],
@@ -587,6 +742,14 @@ describe('durable x402 paid HTTP flow', () => {
     });
     expect(first.statusCode, first.body).toBe(200);
     expect(first.json()).toMatchObject({ payment: { status: attemptStatus } });
+    if (outcome === 'unknown') {
+      await store.pool.query(
+        `UPDATE payment_reservations
+            SET expires_at = now() - interval '1 second'
+          WHERE agent_id = $1 AND reason_code LIKE 'x402_attempt:%'`,
+        [agentId],
+      );
+    }
     const state = await store.pool.query<{
       attempt_status: string;
       reservation_status: string;
@@ -698,6 +861,12 @@ describe('durable x402 paid HTTP flow', () => {
     });
     expect(crashed.statusCode).toBe(500);
     crashAfterSubmitting = false;
+    await store.pool.query(
+      `UPDATE payment_reservations
+          SET expires_at = now() - interval '1 second'
+        WHERE agent_id = $1 AND reason_code LIKE 'x402_attempt:%'`,
+      [agentId],
+    );
 
     const replay = await api.inject({
       method: 'POST',
@@ -779,11 +948,19 @@ describe('durable x402 paid HTTP flow', () => {
   });
 
   it.each([
-    ['redirect', '/redirect', 1],
-    ['timeout', '/timeout', 1],
-    ['oversized response', '/oversized', 1],
-    ['unsafe destination', 'https://unsafe.example.test/data', 0],
-  ] as const)('rejects a %s before creating a payment attempt', async (_case, resource, expectedDiscoveryCalls) => {
+    ['non-402 response', '/free', 1, 422, 'x402_payment_not_required', 'The upstream resource did not require an x402 payment.'],
+    ['redirect', '/redirect', 1, 400, 'x402_redirect_not_supported', 'Paid HTTP discovery redirects are not supported.'],
+    ['timeout', '/timeout', 1, 504, 'x402_request_timeout', 'Paid HTTP discovery timed out.'],
+    ['oversized response', '/oversized', 1, 413, 'x402_response_too_large', 'Paid HTTP discovery response exceeded the maximum size.'],
+    ['unsafe destination', 'https://unsafe.example.test/data', 0, 400, 'x402_invalid_destination', 'Paid HTTP destination is not allowed.'],
+  ] as const)('rejects a %s with a stable safe error before creating a payment attempt', async (
+    _case,
+    resource,
+    expectedDiscoveryCalls,
+    expectedStatus,
+    expectedCode,
+    expectedMessage,
+  ) => {
     providerCalls = 0;
     discoveryCalls = 0;
     const { agentId, secret } = await createReadyBuyer(`Rejected ${_case}`);
@@ -798,7 +975,10 @@ describe('durable x402 paid HTTP flow', () => {
       },
     });
 
-    expect(response.statusCode).toBe(500);
+    expect(response.statusCode, response.body).toBe(expectedStatus);
+    expect(response.json()).toEqual({ error: expectedCode, message: expectedMessage });
+    expect(response.body).not.toContain('privateDetail');
+    expect(response.body).not.toContain(url);
     expect(providerCalls).toBe(0);
     expect(discoveryCalls).toBe(expectedDiscoveryCalls);
     const attempts = await store.pool.query<{ count: string }>(
@@ -806,6 +986,35 @@ describe('durable x402 paid HTTP flow', () => {
       [agentId],
     );
     expect(attempts.rows[0]?.count).toBe('0');
+  });
+
+  it('accepts a 160-character idempotency key and rejects 161 characters before discovery', async () => {
+    discoveryCalls = 0;
+    const { secret } = await createReadyBuyer('Idempotency Boundary');
+    const request = {
+      url: `${new URL(merchantUrl).origin}/free`,
+      method: 'GET' as const,
+      headers: [] as const,
+    };
+
+    const accepted = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: { idempotency_key: 'a'.repeat(160), request },
+    });
+    const rejected = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: { idempotency_key: 'b'.repeat(161), request },
+    });
+
+    expect(accepted.statusCode, accepted.body).toBe(422);
+    expect(accepted.json()).toMatchObject({ error: 'x402_payment_not_required' });
+    expect(rejected.statusCode, rejected.body).toBe(400);
+    expect(rejected.json()).toMatchObject({ error: 'validation_error' });
+    expect(discoveryCalls).toBe(1);
   });
 
   it('caches binary privately and returns settled truth after result expiry without repayment', async () => {

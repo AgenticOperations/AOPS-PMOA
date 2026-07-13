@@ -36,7 +36,12 @@ function workerUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, '')}${path}`;
 }
 
-async function workerRequest<T>(options: WorkerClientOptions, path: string, body: unknown): Promise<T> {
+async function workerRequest<T>(
+  options: WorkerClientOptions,
+  path: string,
+  body: unknown,
+  transportFailureClassification?: 'ambiguous_post_submit',
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(workerUrl(options.baseUrl, path), {
@@ -49,11 +54,14 @@ async function workerRequest<T>(options: WorkerClientOptions, path: string, body
       signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
     });
   } catch {
-    throw new IdentityError(
+    const error = new IdentityError(
       'circle_worker_unavailable',
       503,
       'Circle Agent Wallet worker is unavailable.',
     );
+    throw transportFailureClassification === undefined
+      ? error
+      : Object.assign(error, { classification: transportFailureClassification });
   }
   const payload = await response.json() as { readonly error?: string; readonly message?: string } & T;
   if (!response.ok) {
@@ -74,13 +82,17 @@ export function createCircleWorkerConnectionClient(options: WorkerClientOptions)
 }
 
 export function createCircleWorkerTreasuryProvider(options: WorkerProviderOptions): CircleTreasuryProvider {
-  const execute = <T>(operation: string, input: { readonly mode: ProviderMode } & object): Promise<T> => {
+  const execute = <T>(
+    operation: string,
+    input: { readonly mode: ProviderMode } & object,
+    transportFailureClassification?: 'ambiguous_post_submit',
+  ): Promise<T> => {
     if (input.mode !== 'test') return Promise.reject(new Error('circle_worker_testnet_only'));
     return workerRequest<T>(options, '/internal/circle/provider/execute', {
       input,
       operation,
       orgId: options.orgId,
-    });
+    }, transportFailureClassification);
   };
   const assertOrg = (orgId: string): void => {
     if (orgId !== options.orgId) throw new Error('circle_worker_org_mismatch');
@@ -113,7 +125,15 @@ export function createCircleWorkerTreasuryProvider(options: WorkerProviderOption
     }),
     initiateGatewayDeposit: (input) => execute('initiateGatewayDeposit', input),
     requestTestnetFunds: (input) => execute('requestTestnetFunds', input),
-    settleExactX402: (input) => execute('settleExactX402', serializeSettlementInput(input)),
-    settleGatewayX402: (input) => execute('settleGatewayX402', serializeSettlementInput(input)),
+    settleExactX402: (input) => execute(
+      'settleExactX402',
+      serializeSettlementInput(input),
+      'ambiguous_post_submit',
+    ),
+    settleGatewayX402: (input) => execute(
+      'settleGatewayX402',
+      serializeSettlementInput(input),
+      'ambiguous_post_submit',
+    ),
   };
 }

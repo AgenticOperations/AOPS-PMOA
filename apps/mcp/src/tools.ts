@@ -103,7 +103,7 @@ const paidHttpRequestSchema = z.object({
   body: paidHttpBodySchema.optional(),
 }).strict();
 const paymentX402Schema = z.object({
-  idempotency_key: z.string().min(1).max(200).refine((value) => value.trim().length > 0, 'Idempotency key is required.'),
+  idempotency_key: z.string().min(1).max(160).refine((value) => value.trim().length > 0, 'Idempotency key is required.'),
   request: paidHttpRequestSchema,
 }).strict();
 const operationSchema = z.object({

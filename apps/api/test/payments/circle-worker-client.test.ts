@@ -4,6 +4,36 @@ import {
   createCircleWorkerTreasuryProvider,
 } from '../../src/engines/payments/circle-worker-client.js';
 
+function settlementInput(attemptId: string) {
+  const url = 'https://merchant.example/weather';
+  return {
+    attemptId,
+    destination: {
+      addresses: ['203.0.113.10'],
+      hostname: 'merchant.example',
+      resolveHostname: () => Promise.resolve(['203.0.113.10']),
+      url,
+    },
+    mode: 'test' as const,
+    request: {
+      headers: [] as const,
+      method: 'GET' as const,
+      url,
+    },
+    requirements: {
+      amount: '10000',
+      asset: '0xasset',
+      extra: {},
+      maxTimeoutSeconds: 300,
+      network: 'eip155:84532',
+      payTo: '0xpayto',
+      scheme: 'exact' as const,
+    },
+    walletAddress: '0xwallet',
+    walletId: 'wallet_1',
+  };
+}
+
 describe('Circle worker client', () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -134,11 +164,75 @@ describe('Circle worker client', () => {
       token: 'worker-secret',
     });
 
-    await expect(client.status({ orgId: 'org_1' })).rejects.toMatchObject({
+    const failure = await client.status({ orgId: 'org_1' }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
       code: 'circle_worker_unavailable',
       statusCode: 503,
     });
+    expect(failure).not.toHaveProperty('classification');
   });
+
+  it('keeps non-settlement provider transport failures generic', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))));
+    const provider = createCircleWorkerTreasuryProvider({
+      baseUrl: 'http://circle-worker:8090',
+      orgId: 'org_1',
+      token: 'worker-secret',
+    });
+
+    const failure = await provider.getWalletBalances({ mode: 'test', walletId: 'wallet_1' })
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: 'circle_worker_unavailable',
+      statusCode: 503,
+    });
+    expect(failure).not.toHaveProperty('classification');
+  });
+
+  it.each(['settleExactX402', 'settleGatewayX402'] as const)(
+    'classifies a network failure dispatching %s as ambiguous post-submit',
+    async (operation) => {
+      vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))));
+      const provider = createCircleWorkerTreasuryProvider({
+        baseUrl: 'http://circle-worker:8090',
+        orgId: 'org_1',
+        token: 'worker-secret',
+      });
+
+      await expect(provider[operation](settlementInput(`attempt_${operation}`))).rejects.toMatchObject({
+        classification: 'ambiguous_post_submit',
+        code: 'circle_worker_unavailable',
+        statusCode: 503,
+      });
+    },
+  );
+
+  it.each(['settleExactX402', 'settleGatewayX402'] as const)(
+    'classifies a timeout dispatching %s as ambiguous post-submit',
+    async (operation) => {
+      vi.stubGlobal('fetch', vi.fn((_input: string | URL | Request, init?: RequestInit) => (
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new Error('worker request aborted')),
+            { once: true },
+          );
+        })
+      )));
+      const provider = createCircleWorkerTreasuryProvider({
+        baseUrl: 'http://circle-worker:8090',
+        orgId: 'org_1',
+        timeoutMs: 20,
+        token: 'worker-secret',
+      });
+
+      await expect(provider[operation](settlementInput(`attempt_${operation}`))).rejects.toMatchObject({
+        classification: 'ambiguous_post_submit',
+        code: 'circle_worker_unavailable',
+        statusCode: 503,
+      });
+    },
+  );
 
   it('bounds an unavailable worker request with an abort timeout', async () => {
     let signal: AbortSignal | undefined;

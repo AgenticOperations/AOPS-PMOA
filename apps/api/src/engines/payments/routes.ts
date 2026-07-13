@@ -47,6 +47,7 @@ import {
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
 import {
+  PaidHttpError,
   type PaidHttpExecutionOptions,
   type PaidHttpExecutor,
   type PaidHttpUrlPolicy,
@@ -172,7 +173,7 @@ const paidHttpRequestSchema = z.object({
 }).strict();
 
 const runtimeX402Schema = z.object({
-  idempotency_key: z.string().trim().min(1).max(200),
+  idempotency_key: z.string().trim().min(1).max(160),
   request: paidHttpRequestSchema,
 }).strict();
 
@@ -271,6 +272,85 @@ function runtimeX402ResultCrypto(deps: RegisterPaymentRoutesDeps): X402ResultCry
   } catch {
     return undefined;
   }
+}
+
+function paidHttpPublicError(error: unknown): IdentityError | null {
+  if (error instanceof PaidHttpError) {
+    switch (error.code) {
+      case 'not_payment_required':
+        return new IdentityError(
+          'x402_payment_not_required',
+          422,
+          'The upstream resource did not require an x402 payment.',
+        );
+      case 'payment_required_missing':
+      case 'payment_required_invalid':
+      case 'payment_required_empty_accepts':
+        return new IdentityError(
+          'x402_payment_required_invalid',
+          422,
+          'The upstream resource returned an invalid x402 payment requirement.',
+        );
+      case 'redirect_not_supported':
+        return new IdentityError(
+          'x402_redirect_not_supported',
+          400,
+          'Paid HTTP discovery redirects are not supported.',
+        );
+      case 'request_timeout':
+        return new IdentityError(
+          'x402_request_timeout',
+          504,
+          'Paid HTTP discovery timed out.',
+        );
+      case 'response_too_large':
+        return new IdentityError(
+          'x402_response_too_large',
+          413,
+          'Paid HTTP discovery response exceeded the maximum size.',
+        );
+      case 'unsupported_content_encoding':
+        return new IdentityError(
+          'x402_unsupported_content_encoding',
+          422,
+          'The upstream resource used an unsupported content encoding.',
+        );
+      case 'invalid_json':
+        return new IdentityError(
+          'x402_invalid_response',
+          422,
+          'The upstream resource returned an invalid response.',
+        );
+      case 'invalid_destination':
+        return new IdentityError(
+          'x402_invalid_destination',
+          400,
+          'Paid HTTP destination is not allowed.',
+        );
+      case 'request_failed':
+        return new IdentityError(
+          'x402_request_failed',
+          502,
+          'Paid HTTP discovery failed.',
+        );
+    }
+  }
+  if (
+    error instanceof TypeError &&
+    (
+      error.message === 'Invalid paid HTTP URL' ||
+      error.message.startsWith('Paid HTTP URL') ||
+      error.message.startsWith('Paid HTTP hostname') ||
+      error.message.startsWith('Pinned paid HTTP destination')
+    )
+  ) {
+    return new IdentityError(
+      'x402_invalid_destination',
+      400,
+      'Paid HTTP destination is not allowed.',
+    );
+  }
+  return null;
 }
 
 export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymentRoutesDeps): void {
@@ -630,26 +710,32 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   app.post('/v1/runtime/payments/x402', async (request) => {
     const auth = await authenticateRuntimeConnection(deps.pool, requiredRuntimeBearerToken(request));
     const input = parseBody(runtimeX402Schema, request);
-    return payRuntimeX402(
-      deps.pool,
-      auth,
-      {
-        idempotency_key: input.idempotency_key,
-        request: {
-          url: input.request.url,
-          method: input.request.method,
-          headers: input.request.headers,
-          ...(input.request.body === undefined ? {} : { body: input.request.body }),
+    try {
+      return await payRuntimeX402(
+        deps.pool,
+        auth,
+        {
+          idempotency_key: input.idempotency_key,
+          request: {
+            url: input.request.url,
+            method: input.request.method,
+            headers: input.request.headers,
+            ...(input.request.body === undefined ? {} : { body: input.request.body }),
+          },
         },
-      },
-      providerForOrg(auth.org_id),
-      {
-        ...(deps.orchestrationHooks === undefined ? {} : { orchestrationHooks: deps.orchestrationHooks }),
-        ...(deps.paidHttpExecution === undefined ? {} : { paidHttpExecution: deps.paidHttpExecution }),
-        ...(deps.paidHttpExecutor === undefined ? {} : { paidHttpExecutor: deps.paidHttpExecutor }),
-        ...(deps.paidHttpUrlPolicy === undefined ? {} : { paidHttpUrlPolicy: deps.paidHttpUrlPolicy }),
-        resultCrypto: runtimeX402ResultCrypto(deps),
-      },
-    );
+        providerForOrg(auth.org_id),
+        {
+          ...(deps.orchestrationHooks === undefined ? {} : { orchestrationHooks: deps.orchestrationHooks }),
+          ...(deps.paidHttpExecution === undefined ? {} : { paidHttpExecution: deps.paidHttpExecution }),
+          ...(deps.paidHttpExecutor === undefined ? {} : { paidHttpExecutor: deps.paidHttpExecutor }),
+          ...(deps.paidHttpUrlPolicy === undefined ? {} : { paidHttpUrlPolicy: deps.paidHttpUrlPolicy }),
+          resultCrypto: runtimeX402ResultCrypto(deps),
+        },
+      );
+    } catch (error) {
+      const publicError = paidHttpPublicError(error);
+      if (publicError !== null) throw publicError;
+      throw error;
+    }
   });
 }

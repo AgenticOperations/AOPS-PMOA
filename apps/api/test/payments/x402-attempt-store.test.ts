@@ -255,6 +255,68 @@ describe('Postgres x402 attempt store', () => {
     expect(rows.rows[0]?.count).toBe('1');
   });
 
+  it('atomically releases an expired pre-submit reservation exactly once', async () => {
+    await pool.query(
+      `INSERT INTO agent_payment_accounts (
+         id, org_id, agent_id, status, payment_access, budget_usdc,
+         reserved_usdc, per_request_cap_usdc, allowed_rails, created_by
+       )
+       VALUES ('payacct_x402_cleanup', $1, $2, 'active', true, 10, 1.25, 2,
+               ARRAY['exact_base'], 'test')`,
+      [ORG_ID, AGENT_ID],
+    );
+    const created = await attempts.createAttempt(
+      attemptInput(nextKey('expired-reservation'), 'request-hash-expired-reservation'),
+    );
+    await pool.query(
+      `INSERT INTO payment_reservations (
+         id, org_id, agent_id, connection_id, source_id, amount_usdc,
+         asset, rail, status, reason_code, quote_hash, quote, expires_at
+       )
+       VALUES ('payres_x402_cleanup', $1, $2, $3, $4, 1.25, 'USDC',
+               'exact_base', 'reserved', $5, $6, '{}'::jsonb, now() - interval '1 second')`,
+      [
+        ORG_ID,
+        AGENT_ID,
+        CONNECTION_ID,
+        SOURCE_ID,
+        `x402_attempt:${created.id}`,
+        created.quote_hash,
+      ],
+    );
+
+    const released = await Promise.all([
+      attempts.cancelStrandedReservedAttempts({ agentId: AGENT_ID, orgId: ORG_ID }),
+      attempts.cancelStrandedReservedAttempts({ agentId: AGENT_ID, orgId: ORG_ID }),
+    ]);
+
+    expect(released.reduce((total, count) => total + count, 0)).toBe(1);
+    const state = await pool.query<{
+      attempt_status: string;
+      error_code: string | null;
+      reservation_status: string;
+      reserved_usdc: string;
+    }>(
+      `SELECT attempt.status AS attempt_status,
+              attempt.error_code,
+              reservation.status AS reservation_status,
+              account.reserved_usdc::text
+         FROM runtime_payment_attempts AS attempt
+         JOIN payment_reservations AS reservation
+           ON reservation.reason_code = 'x402_attempt:' || attempt.id
+         JOIN agent_payment_accounts AS account
+           ON account.org_id = attempt.org_id AND account.agent_id = attempt.agent_id
+        WHERE attempt.id = $1`,
+      [created.id],
+    );
+    expect(state.rows[0]).toEqual({
+      attempt_status: 'failed',
+      error_code: 'payment_reservation_expired',
+      reservation_status: 'released',
+      reserved_usdc: '0.000000',
+    });
+  });
+
   it('replays the stored attempt for a matching request hash', async () => {
     const idempotencyKey = nextKey('replay');
     const input = attemptInput(idempotencyKey, 'request-hash-replay');

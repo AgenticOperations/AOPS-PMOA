@@ -169,6 +169,48 @@ describe('agentOps MCP tools', () => {
     expect(structuredContent.error).toContain('idempotency_key');
   });
 
+  it('forwards a 160-character x402 idempotency key', async () => {
+    const calls: unknown[] = [];
+    const tools = createAgentOpsTools(fakeClient({
+      paymentX402: (input) => {
+        calls.push(input);
+        return fakeClient().paymentX402(input);
+      },
+    }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
+    if (tool === undefined) throw new Error('payment_x402 tool missing');
+    const args = paidHttpArgs();
+    args.idempotency_key = 'a'.repeat(160);
+
+    const result = await tool.execute(args);
+
+    expect(result.isError).toBe(false);
+    expect(calls).toEqual([args]);
+  });
+
+  it('rejects a 161-character x402 idempotency key before calling the runtime API', async () => {
+    const calls: unknown[] = [];
+    const tools = createAgentOpsTools(fakeClient({
+      paymentX402: (input) => {
+        calls.push(input);
+        return fakeClient().paymentX402(input);
+      },
+    }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
+    if (tool === undefined) throw new Error('payment_x402 tool missing');
+    const args = paidHttpArgs();
+    args.idempotency_key = 'b'.repeat(161);
+
+    const result = await tool.execute(args);
+
+    expect(result.isError).toBe(true);
+    expect(calls).toEqual([]);
+    const structuredContent = result.structuredContent;
+    if (structuredContent === undefined) throw new Error('Expected structured content.');
+    expect(structuredContent.error).toBeTypeOf('string');
+    expect(structuredContent.error).toContain('160');
+  });
+
   it('forwards ordered safe headers and the body exactly and returns the complete canonical result twice', async () => {
     const calls: unknown[] = [];
     const canonicalResult = {

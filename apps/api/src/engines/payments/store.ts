@@ -5689,6 +5689,10 @@ export async function payRuntimeX402(
   }
   const requestHash = canonicalPaidHttpRequestHash(input.request);
   const attempts = createPostgresX402AttemptStore(pool, { resultCrypto });
+  await attempts.cancelStrandedReservedAttempts({
+    agentId: auth.agent_id,
+    orgId: auth.org_id,
+  });
   const existing = await attempts.findAttempt(auth.connection_id, input.idempotency_key);
   let prepared: PreparedPaidHttpPayment;
   let freshAttempt = false;
