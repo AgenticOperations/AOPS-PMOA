@@ -7,7 +7,10 @@ import { createCircleConnectionService } from './engines/payments/circle-connect
 import { classifyCircleWorkerJob, startCircleLiquidityWorker } from './engines/payments/circle-liquidity-worker.js';
 import { createOrgScopedCircleTreasuryProvider } from './engines/payments/circle-org-provider.js';
 import { createPostgresCircleConnectionRepository } from './engines/payments/circle-session-store.js';
-import { registerCircleWorkerRoutes } from './engines/payments/circle-worker-app.js';
+import {
+  deriveCircleWorkerPaidHttpAllowOrigins,
+  registerCircleWorkerRoutes,
+} from './engines/payments/circle-worker-app.js';
 import { withPostgresCircleOrgLock } from './engines/payments/circle-org-lock.js';
 import { reconcileCircleProviderJobs, retryLiquidityJob } from './engines/payments/store.js';
 import { purgeExpiredX402Results } from './engines/payments/x402-attempt-store.js';
@@ -27,6 +30,7 @@ const connectionService = createCircleConnectionService({
 const app = Fastify({ logger: { level: env.logLevel } });
 registerCircleWorkerRoutes(app, {
   connectionService,
+  paidHttpAllowOrigins: deriveCircleWorkerPaidHttpAllowOrigins(process.env),
   providerFactory: (orgId) => createOrgScopedCircleTreasuryProvider(connectionService, orgId),
   token: workerToken,
   withOrgLock: (orgId, operation) => withPostgresCircleOrgLock(pool, orgId, operation),

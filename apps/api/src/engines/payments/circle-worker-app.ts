@@ -3,10 +3,13 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { IdentityError } from '../identity/errors.js';
 import type { CircleConnectionService } from './circle-connection-service.js';
-import type { CircleTreasuryProvider } from './circle-provider.js';
+import {
+  assertCircleTestnetX402Authority,
+  type CircleTreasuryProvider,
+} from './circle-provider.js';
 import {
   PaidHttpError,
-  rehydratePaidHttpDestination,
+  revalidatePaidHttpDestination,
 } from './x402-http.js';
 
 const connectionInitSchema = z.object({
@@ -47,10 +50,35 @@ const providerRequestSchema = z.object({
 
 export type CircleWorkerRouteDeps = {
   readonly connectionService: CircleConnectionService;
+  readonly paidHttpAllowOrigins?: readonly string[] | undefined;
   readonly providerFactory: (orgId: string) => CircleTreasuryProvider;
   readonly token: string;
   readonly withOrgLock?: (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
 };
+
+export function deriveCircleWorkerPaidHttpAllowOrigins(
+  environment: Readonly<Record<string, string | undefined>>,
+): readonly string[] {
+  if (environment.ENABLE_TESTNET_X402_FIXTURES !== 'true') return [];
+  const configured = environment.PUBLIC_API_BASE_URL;
+  if (configured === undefined || configured.length === 0) return [];
+  try {
+    const parsed = new URL(configured);
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+      parsed.username.length > 0 ||
+      parsed.password.length > 0 ||
+      parsed.pathname !== '/' ||
+      parsed.search.length > 0 ||
+      parsed.hash.length > 0
+    ) {
+      return [];
+    }
+    return [parsed.origin];
+  } catch {
+    return [];
+  }
+}
 
 function bearerToken(request: FastifyRequest): string | null {
   const header = request.headers.authorization;
@@ -69,15 +97,31 @@ function assertTestInput(input: Record<string, unknown>): void {
   if (input.mode !== 'test') throw new Error('circle_worker_testnet_only');
 }
 
-function rehydrateSettlementInput(
+async function rehydrateSettlementInput(
   rawInput: Record<string, unknown>,
-): Parameters<CircleTreasuryProvider['settleExactX402']>[0] {
+  paidHttpAllowOrigins: readonly string[],
+): Promise<Parameters<CircleTreasuryProvider['settleExactX402']>[0]> {
   if (!Object.hasOwn(rawInput, 'destination')) {
     return rawInput as Parameters<CircleTreasuryProvider['settleExactX402']>[0];
   }
+  const destination = await revalidatePaidHttpDestination(rawInput.destination, {
+    allowHttpOrigins: paidHttpAllowOrigins,
+  });
+  const request = rawInput.request;
+  if (
+    request === null ||
+    typeof request !== 'object' ||
+    Array.isArray(request) ||
+    (request as Record<string, unknown>).url !== destination.url
+  ) {
+    throw new PaidHttpError(
+      'invalid_destination',
+      'Paid HTTP request URL does not match its validated destination',
+    );
+  }
   return {
     ...rawInput,
-    destination: rehydratePaidHttpDestination(rawInput.destination),
+    destination,
   } as Parameters<CircleTreasuryProvider['settleExactX402']>[0];
 }
 
@@ -85,6 +129,7 @@ async function executeProviderOperation(
   provider: CircleTreasuryProvider,
   operation: z.infer<typeof operationSchema>,
   rawInput: Record<string, unknown>,
+  paidHttpAllowOrigins: readonly string[],
 ): Promise<unknown> {
   assertTestInput(rawInput);
   switch (operation) {
@@ -106,14 +151,23 @@ async function executeProviderOperation(
     case 'requestTestnetFunds':
       return provider.requestTestnetFunds(rawInput as Parameters<CircleTreasuryProvider['requestTestnetFunds']>[0]);
     case 'settleExactX402':
-      return provider.settleExactX402(rehydrateSettlementInput(rawInput));
+      {
+        const input = await rehydrateSettlementInput(rawInput, paidHttpAllowOrigins);
+        assertCircleTestnetX402Authority('settleExactX402', input);
+        return provider.settleExactX402(input);
+      }
     case 'settleGatewayX402':
-      return provider.settleGatewayX402(rehydrateSettlementInput(rawInput));
+      {
+        const input = await rehydrateSettlementInput(rawInput, paidHttpAllowOrigins);
+        assertCircleTestnetX402Authority('settleGatewayX402', input);
+        return provider.settleGatewayX402(input);
+      }
   }
 }
 
 export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWorkerRouteDeps): void {
   const withOrgLock = deps.withOrgLock ?? (<T>(_orgId: string, operation: () => Promise<T>) => operation());
+  const paidHttpAllowOrigins = deps.paidHttpAllowOrigins ?? [];
   app.addHook('preHandler', async (request, reply) => {
     if (request.method === 'GET' && request.url === '/healthz') return;
     if (!tokenMatches(bearerToken(request), deps.token)) {
@@ -133,7 +187,10 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
     }
     const message = error instanceof Error ? error.message : '';
     const code = message.startsWith('circle_') ? message : 'circle_worker_operation_failed';
-    const status = code === 'circle_worker_testnet_only' ? 400 : 409;
+    const status = code === 'circle_worker_testnet_only' ||
+      code === 'circle_worker_x402_authority_invalid'
+      ? 400
+      : 409;
     return reply.code(status).send({ error: code, message: code });
   });
 
@@ -163,7 +220,12 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
   app.post('/internal/circle/provider/execute', async (request) => {
     const input = providerRequestSchema.parse(request.body ?? {});
     return withOrgLock(input.orgId, () => (
-      executeProviderOperation(deps.providerFactory(input.orgId), input.operation, input.input)
+      executeProviderOperation(
+        deps.providerFactory(input.orgId),
+        input.operation,
+        input.input,
+        paidHttpAllowOrigins,
+      )
     ));
   });
 }

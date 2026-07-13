@@ -598,6 +598,84 @@ describe('Circle treasury provider configuration', () => {
     expect(result.response).toMatchObject({ status: 200, body: { delivered: true } });
   });
 
+  it.each([
+    {
+      label: 'missing transaction',
+      receipt: {
+        success: true,
+        network: 'eip155:84532',
+        payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      },
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_malformed',
+    },
+    {
+      label: 'empty transaction',
+      receipt: {
+        success: true,
+        network: 'eip155:84532',
+        payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        transaction: '',
+      },
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_malformed',
+    },
+    {
+      label: 'empty network',
+      receipt: {
+        success: true,
+        network: '',
+        payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        transaction: '0xsettled',
+      },
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_malformed',
+    },
+    {
+      label: 'different payer',
+      receipt: {
+        success: true,
+        network: 'eip155:84532',
+        payer: '0x0000000000000000000000000000000000000001',
+        transaction: '0xsettled',
+      },
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_payer_mismatch',
+    },
+    {
+      label: 'case-insensitive matching payer',
+      receipt: {
+        success: true,
+        network: 'eip155:84532',
+        payer: '0xF8EA6209F5DD5A8B8AC34BB90990A3F5F32FA839',
+        transaction: '0xsettled',
+      },
+      expectedStatus: 'settled',
+      expectedCode: undefined,
+    },
+  ])('requires a complete payer-bound $label success receipt', async ({
+    receipt,
+    expectedStatus,
+    expectedCode,
+  }) => {
+    mockDeveloperSigner();
+    const executeHttpRequest = vi.fn(() => Promise.resolve({
+      status: 200,
+      headers: [['payment-response', paymentResponseHeader(receipt)]] as const,
+      contentType: 'application/json',
+      bodyEncoding: 'json' as const,
+      body: { delivered: true },
+      sizeBytes: 18,
+      truncated: false as const,
+    }));
+    const provider = createDeveloperProviderWithExecutor(executeHttpRequest);
+
+    const result = await provider.settleExactX402(canonicalDeveloperInput());
+
+    expect(result.payment?.status).toBe(expectedStatus);
+    expect(result.payment?.errorCode).toBe(expectedCode);
+  });
+
   it('returns unknown when transport fails after an exact proof is created', async () => {
     mockDeveloperSigner();
     const executeHttpRequest = vi.fn(() => Promise.reject(new Error('socket_closed_after_write')));
@@ -893,12 +971,13 @@ describe('Circle treasury provider configuration', () => {
     });
   });
 
-  it('signs and replays a pinned transaction-less Agent Wallet Gateway payment', async () => {
+  it('signs and replays a pinned Agent Wallet Gateway payment', async () => {
     const response = 'agentOps Gateway x402 QA evidence';
     const receipt = {
       success: true,
       network: 'eip155:84532',
       payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      transaction: '0xgateway-settled',
     };
     const payService = vi.fn();
     const signTypedData = vi.fn(() => Promise.resolve({ signature: `0x${'22'.repeat(65)}` }));
@@ -986,7 +1065,7 @@ describe('Circle treasury provider configuration', () => {
         truncated: false,
       },
     });
-    expect(result.transaction).toBeUndefined();
+    expect(result.transaction).toBe('0xgateway-settled');
     const gatewaySignInput = (
       signTypedData.mock.calls as unknown as readonly [readonly [Record<string, unknown>]]
     )[0][0];

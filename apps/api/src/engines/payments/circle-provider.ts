@@ -365,6 +365,14 @@ type ChainContractConfig = {
 const TESTNET_GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9';
 const MAINNET_GATEWAY_WALLET = '0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE';
 
+const TESTNET_X402_CHAINS = {
+  'eip155:421614': 'arbitrum',
+  'eip155:43113': 'avalanche',
+  'eip155:84532': 'base',
+  'eip155:11155420': 'optimism',
+  'eip155:80002': 'polygon',
+} as const satisfies Record<string, CirclePaymentChain>;
+
 const CHAIN_CONTRACTS: Record<ProviderMode, Record<CirclePaymentChain, ChainContractConfig>> = {
   test: {
     arbitrum: { domain: 3, gatewayWallet: TESTNET_GATEWAY_WALLET, usdc: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d' },
@@ -381,6 +389,55 @@ const CHAIN_CONTRACTS: Record<ProviderMode, Record<CirclePaymentChain, ChainCont
     polygon: { domain: 7, gatewayWallet: MAINNET_GATEWAY_WALLET, usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
   },
 };
+
+export function assertCircleTestnetX402Authority(
+  operation: 'settleExactX402' | 'settleGatewayX402',
+  input: unknown,
+): void {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('circle_worker_x402_authority_invalid');
+  }
+  const settlement = input as Record<string, unknown>;
+  const requirements = settlement.requirements;
+  if (
+    settlement.mode !== 'test' ||
+    requirements === null ||
+    typeof requirements !== 'object' ||
+    Array.isArray(requirements)
+  ) {
+    throw new Error('circle_worker_x402_authority_invalid');
+  }
+  const authority = requirements as Record<string, unknown>;
+  const chain = typeof authority.network === 'string'
+    ? TESTNET_X402_CHAINS[authority.network as keyof typeof TESTNET_X402_CHAINS]
+    : undefined;
+  if (
+    chain === undefined ||
+    typeof authority.asset !== 'string' ||
+    authority.asset.toLowerCase() !== CHAIN_CONTRACTS.test[chain].usdc.toLowerCase() ||
+    authority.scheme !== 'exact'
+  ) {
+    throw new Error('circle_worker_x402_authority_invalid');
+  }
+  if (operation === 'settleGatewayX402') {
+    const extra = authority.extra;
+    if (
+      extra === null ||
+      typeof extra !== 'object' ||
+      Array.isArray(extra)
+    ) {
+      throw new Error('circle_worker_x402_authority_invalid');
+    }
+    const gatewayDomain = extra as Record<string, unknown>;
+    if (
+      gatewayDomain.verifyingContract !== TESTNET_GATEWAY_WALLET ||
+      gatewayDomain.name !== 'GatewayWalletBatched' ||
+      gatewayDomain.version !== '1'
+    ) {
+      throw new Error('circle_worker_x402_authority_invalid');
+    }
+  }
+}
 
 const TESTNET_FAUCET_BLOCKCHAINS: Record<CirclePaymentChain, TestnetBlockchain> = {
   arbitrum: 'ARB-SEPOLIA',
@@ -694,6 +751,7 @@ function settlementErrorCode(error: unknown, fallback: string): string {
 function developerResponseResult(input: {
   readonly mode: ProviderMode;
   readonly network: string;
+  readonly expectedPayer: string;
   readonly response: PaidHttpResponse;
 }): CircleGatewayX402SettlementResult {
   const encodedReceipt = paidHttpResponseHeader(input.response);
@@ -754,6 +812,25 @@ function developerResponseResult(input: {
       response: input.response,
     });
   }
+  if (
+    decoded.success &&
+    (decoded.network.length === 0 ||
+      typeof decoded.transaction !== 'string' ||
+      decoded.transaction.length === 0)
+  ) {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: decoded.network,
+        receipt,
+        payer: decoded.payer,
+        transaction: typeof decoded.transaction === 'string' ? decoded.transaction : undefined,
+        errorCode: 'payment_response_malformed',
+      },
+      response: input.response,
+    });
+  }
   if (decoded.network !== input.network) {
     return canonicalSettlementResult({
       mode: input.mode,
@@ -764,6 +841,24 @@ function developerResponseResult(input: {
         transaction: typeof decoded.transaction === 'string' ? decoded.transaction : undefined,
         payer: decoded.payer,
         errorCode: 'payment_response_network_mismatch',
+      },
+      response: input.response,
+    });
+  }
+  if (
+    decoded.success &&
+    decoded.payer !== undefined &&
+    decoded.payer.toLowerCase() !== input.expectedPayer.toLowerCase()
+  ) {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: decoded.network,
+        receipt,
+        transaction: decoded.transaction,
+        payer: decoded.payer,
+        errorCode: 'payment_response_payer_mismatch',
       },
       response: input.response,
     });
@@ -846,7 +941,12 @@ async function executeSignedX402(input: {
       },
     });
   }
-  const result = developerResponseResult({ mode, network: requirements.network, response });
+  const result = developerResponseResult({
+    mode,
+    network: requirements.network,
+    expectedPayer: walletAddress,
+    response,
+  });
   return { ...result, httpStatus: response.status };
 }
 

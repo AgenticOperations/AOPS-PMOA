@@ -705,6 +705,27 @@ export function rehydratePaidHttpDestination(
   return Object.freeze({ addresses, hostname, resolveHostname, url });
 }
 
+export async function revalidatePaidHttpDestination(
+  value: unknown,
+  policy: Pick<PaidHttpUrlPolicy, 'allowHttpOrigins'> = {},
+): Promise<ValidatedPaidHttpDestination> {
+  const captured = rehydratePaidHttpDestination(value);
+  try {
+    return await assertPaidHttpUrlAllowed(captured.url, {
+      ...(policy.allowHttpOrigins === undefined
+        ? {}
+        : { allowHttpOrigins: policy.allowHttpOrigins }),
+      resolveHostname: captured.resolveHostname,
+    });
+  } catch (error) {
+    throw new PaidHttpError(
+      'invalid_destination',
+      'Serialized paid HTTP destination failed worker safety validation',
+      { cause: error },
+    );
+  }
+}
+
 export type PaidHttpExecutionOptions = {
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
