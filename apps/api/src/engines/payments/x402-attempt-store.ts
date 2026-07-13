@@ -1,7 +1,13 @@
 import type pg from 'pg';
-import { conflict } from '../identity/errors.js';
+import { conflict, IdentityError } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import type { PaymentRail } from './types.js';
+import type { PaidHttpResponse } from './x402-http.js';
+import {
+  validateX402ResultEnvelope,
+  type X402ResultCryptoCodec,
+  type X402ResultEnvelope,
+} from './x402-result-crypto.js';
 
 export type X402AttemptStatus = 'reserved' | 'submitting' | 'settled' | 'failed' | 'unknown';
 
@@ -34,7 +40,7 @@ export type X402AttemptRecord = {
   readonly status: X402AttemptStatus;
   readonly payment_metadata: X402PaymentMetadata;
   readonly response_metadata: X402SafeResponseMetadata;
-  readonly encrypted_result: Readonly<Record<string, unknown>> | null;
+  readonly encrypted_result: X402ResultEnvelope | null;
   readonly result_expires_at: string | null;
   readonly error_code: string | null;
   readonly created_at: string;
@@ -58,11 +64,15 @@ export type CreateX402AttemptInput = {
   readonly recipient: string;
 };
 
+export type X402AttemptScope = {
+  readonly connectionId: string;
+  readonly orgId: string;
+};
+
 type X402AttemptFinalizationInput = {
-  readonly encryptedResult?: Readonly<Record<string, unknown>> | undefined;
   readonly paymentMetadata?: X402PaymentMetadata | undefined;
   readonly responseMetadata?: X402SafeResponseMetadata | undefined;
-  readonly resultExpiresAt?: Date | undefined;
+  readonly result?: PaidHttpResponse | undefined;
 };
 
 export type FinalizeSettledX402AttemptInput = X402AttemptFinalizationInput;
@@ -82,19 +92,29 @@ export type X402AttemptStore = {
     idempotencyKey: string,
   ) => Promise<X402AttemptRecord | null>;
   readonly createAttempt: (input: CreateX402AttemptInput) => Promise<X402AttemptRecord>;
-  readonly markSubmitting: (attemptId: string) => Promise<X402AttemptRecord>;
+  readonly markSubmitting: (
+    scope: X402AttemptScope,
+    attemptId: string,
+  ) => Promise<X402AttemptRecord>;
   readonly finalizeSettled: (
+    scope: X402AttemptScope,
     attemptId: string,
     input: FinalizeSettledX402AttemptInput,
   ) => Promise<X402AttemptRecord>;
   readonly finalizeFailed: (
+    scope: X402AttemptScope,
     attemptId: string,
     input: FinalizeFailedX402AttemptInput,
   ) => Promise<X402AttemptRecord>;
   readonly finalizeUnknown: (
+    scope: X402AttemptScope,
     attemptId: string,
     input: FinalizeUnknownX402AttemptInput,
   ) => Promise<X402AttemptRecord>;
+};
+
+export type X402AttemptStoreOptions = {
+  readonly resultCrypto: X402ResultCryptoCodec;
 };
 
 type X402AttemptRow = {
@@ -180,7 +200,7 @@ function attemptFromRow(row: X402AttemptRow): X402AttemptRecord {
     ),
     encrypted_result: row.encrypted_result === null
       ? null
-      : objectFromDatabase(row.encrypted_result, 'encrypted_result'),
+      : validateX402ResultEnvelope(row.encrypted_result),
     result_expires_at: dateString(row.result_expires_at),
     error_code: row.error_code,
     created_at: dateString(row.created_at)!,
@@ -228,21 +248,28 @@ function validateResponseMetadata(metadata: X402SafeResponseMetadata | undefined
   }
 }
 
-function validateEncryptedResult(result: Readonly<Record<string, unknown>> | undefined): void {
-  if (result !== undefined && !isObject(result)) {
-    throw new Error('payment_attempt_invalid_encrypted_result');
-  }
-}
-
-function finalizationValues(input: X402AttemptFinalizationInput): readonly unknown[] {
+function finalizationValues(
+  resultCrypto: X402ResultCryptoCodec,
+  scope: X402AttemptScope,
+  attemptId: string,
+  input: X402AttemptFinalizationInput,
+): readonly unknown[] {
   validatePaymentMetadata(input.paymentMetadata);
   validateResponseMetadata(input.responseMetadata);
-  validateEncryptedResult(input.encryptedResult);
+  const encryptedResult = input.result === undefined
+    ? null
+    : validateX402ResultEnvelope(resultCrypto.encrypt(
+      {
+        attemptId,
+        connectionId: scope.connectionId,
+        orgId: scope.orgId,
+      },
+      input.result,
+    ));
   return [
     input.paymentMetadata === undefined ? null : JSON.stringify(input.paymentMetadata),
     input.responseMetadata === undefined ? null : JSON.stringify(input.responseMetadata),
-    input.encryptedResult === undefined ? null : JSON.stringify(input.encryptedResult),
-    input.resultExpiresAt ?? null,
+    encryptedResult === null ? null : JSON.stringify(encryptedResult),
   ];
 }
 
@@ -250,6 +277,14 @@ function stateConflict(): never {
   throw conflict(
     'payment_attempt_state_conflict',
     'The payment attempt is not in the required state.',
+  );
+}
+
+function scopeInvalid(): never {
+  throw new IdentityError(
+    'payment_attempt_scope_invalid',
+    404,
+    'The payment attempt was not found in this tenant scope.',
   );
 }
 
@@ -273,24 +308,53 @@ async function transaction<T>(
 
 async function transition(
   pool: pg.Pool,
+  scope: X402AttemptScope,
+  attemptId: string,
   sql: string,
   values: unknown[],
 ): Promise<X402AttemptRecord> {
   const result = await pool.query<X402AttemptRow>(sql, values);
   const row = result.rows[0];
-  if (row === undefined) stateConflict();
+  if (row === undefined) {
+    const scoped = await pool.query<{ exists: boolean }>(
+      `SELECT true AS exists
+         FROM runtime_payment_attempts
+        WHERE id = $1 AND org_id = $2 AND connection_id = $3`,
+      [attemptId, scope.orgId, scope.connectionId],
+    );
+    if (scoped.rows[0] === undefined) scopeInvalid();
+    stateConflict();
+  }
   return attemptFromRow(row);
 }
 
-export function createPostgresX402AttemptStore(pool: pg.Pool): X402AttemptStore {
+export function createPostgresX402AttemptStore(
+  pool: pg.Pool,
+  { resultCrypto }: X402AttemptStoreOptions,
+): X402AttemptStore {
   const findAttempt = async (
     connectionId: string,
     idempotencyKey: string,
   ): Promise<X402AttemptRecord | null> => {
     const result = await pool.query<X402AttemptRow>(
-      `SELECT ${ATTEMPT_COLUMNS}
+      `WITH scrubbed AS (
+         UPDATE runtime_payment_attempts
+            SET encrypted_result = NULL,
+                result_expires_at = NULL,
+                updated_at = now()
+          WHERE connection_id = $1
+            AND idempotency_key = $2
+            AND result_expires_at <= now()
+          RETURNING ${ATTEMPT_COLUMNS}
+       )
+       SELECT ${ATTEMPT_COLUMNS}
+         FROM scrubbed
+       UNION ALL
+       SELECT ${ATTEMPT_COLUMNS}
          FROM runtime_payment_attempts
-        WHERE connection_id = $1 AND idempotency_key = $2
+        WHERE connection_id = $1
+          AND idempotency_key = $2
+          AND NOT EXISTS (SELECT 1 FROM scrubbed)
         LIMIT 1`,
       [connectionId, idempotencyKey],
     );
@@ -302,6 +366,23 @@ export function createPostgresX402AttemptStore(pool: pg.Pool): X402AttemptStore 
     findAttempt,
 
     createAttempt: async (input) => transaction(pool, async (client) => {
+      const validScope = await client.query<{ exists: boolean }>(
+        `SELECT true AS exists
+           FROM connections AS connection
+           JOIN agents AS agent
+             ON agent.id = connection.agent_id
+            AND agent.org_id = connection.org_id
+           JOIN payment_sources AS source
+             ON source.id = $4
+            AND source.org_id = connection.org_id
+          WHERE connection.id = $1
+            AND connection.org_id = $2
+            AND connection.agent_id = $3
+          FOR SHARE OF connection, agent, source`,
+        [input.connectionId, input.orgId, input.agentId, input.sourceId],
+      );
+      if (validScope.rows[0] === undefined) scopeInvalid();
+
       const inserted = await client.query<X402AttemptRow>(
         `INSERT INTO runtime_payment_attempts (
            id, org_id, agent_id, connection_id, source_id, idempotency_key,
@@ -350,70 +431,106 @@ export function createPostgresX402AttemptStore(pool: pg.Pool): X402AttemptStore 
       return attemptFromRow(row);
     }),
 
-    markSubmitting: async (attemptId) => transition(
+    markSubmitting: async (scope, attemptId) => transition(
       pool,
+      scope,
+      attemptId,
       `UPDATE runtime_payment_attempts
           SET status = 'submitting', submitted_at = now(), updated_at = now()
-        WHERE id = $1 AND status = 'reserved'
+        WHERE id = $1
+          AND org_id = $2
+          AND connection_id = $3
+          AND status = 'reserved'
         RETURNING ${ATTEMPT_COLUMNS}`,
-      [attemptId],
+      [attemptId, scope.orgId, scope.connectionId],
     ),
 
-    finalizeSettled: async (attemptId, input) => {
-      const values = finalizationValues(input);
+    finalizeSettled: async (scope, attemptId, input) => {
+      const values = finalizationValues(resultCrypto, scope, attemptId, input);
       return transition(
         pool,
+        scope,
+        attemptId,
         `UPDATE runtime_payment_attempts
             SET status = 'settled',
-                payment_metadata = COALESCE($2::jsonb, payment_metadata),
-                response_metadata = COALESCE($3::jsonb, response_metadata),
-                encrypted_result = COALESCE($4::jsonb, encrypted_result),
-                result_expires_at = COALESCE($5::timestamptz, result_expires_at),
+                payment_metadata = COALESCE($4::jsonb, payment_metadata),
+                response_metadata = COALESCE($5::jsonb, response_metadata),
+                encrypted_result = COALESCE($6::jsonb, encrypted_result),
+                result_expires_at = CASE
+                  WHEN $6::jsonb IS NULL THEN result_expires_at
+                  ELSE now() + interval '15 minutes'
+                END,
                 error_code = NULL,
                 finalized_at = now(),
                 updated_at = now()
-          WHERE id = $1 AND status = 'submitting'
+          WHERE id = $1
+            AND org_id = $2
+            AND connection_id = $3
+            AND status = 'submitting'
           RETURNING ${ATTEMPT_COLUMNS}`,
-        [attemptId, ...values],
+        [attemptId, scope.orgId, scope.connectionId, ...values],
       );
     },
 
-    finalizeFailed: async (attemptId, input) => {
-      const values = finalizationValues(input);
+    finalizeFailed: async (scope, attemptId, input) => {
+      const values = finalizationValues(resultCrypto, scope, attemptId, input);
       const requiredStatus = input.providerCallMade ? 'submitting' : 'reserved';
       return transition(
         pool,
+        scope,
+        attemptId,
         `UPDATE runtime_payment_attempts
             SET status = 'failed',
-                payment_metadata = COALESCE($2::jsonb, payment_metadata),
-                response_metadata = COALESCE($3::jsonb, response_metadata),
-                encrypted_result = COALESCE($4::jsonb, encrypted_result),
-                result_expires_at = COALESCE($5::timestamptz, result_expires_at),
-                error_code = $6,
+                payment_metadata = COALESCE($4::jsonb, payment_metadata),
+                response_metadata = COALESCE($5::jsonb, response_metadata),
+                encrypted_result = COALESCE($6::jsonb, encrypted_result),
+                result_expires_at = CASE
+                  WHEN $6::jsonb IS NULL THEN result_expires_at
+                  ELSE now() + interval '15 minutes'
+                END,
+                error_code = $7,
                 finalized_at = now(),
                 updated_at = now()
-          WHERE id = $1 AND status = $7
+          WHERE id = $1
+            AND org_id = $2
+            AND connection_id = $3
+            AND status = $8
           RETURNING ${ATTEMPT_COLUMNS}`,
-        [attemptId, ...values, input.errorCode, requiredStatus],
+        [
+          attemptId,
+          scope.orgId,
+          scope.connectionId,
+          ...values,
+          input.errorCode,
+          requiredStatus,
+        ],
       );
     },
 
-    finalizeUnknown: async (attemptId, input) => {
-      const values = finalizationValues(input);
+    finalizeUnknown: async (scope, attemptId, input) => {
+      const values = finalizationValues(resultCrypto, scope, attemptId, input);
       return transition(
         pool,
+        scope,
+        attemptId,
         `UPDATE runtime_payment_attempts
             SET status = 'unknown',
-                payment_metadata = COALESCE($2::jsonb, payment_metadata),
-                response_metadata = COALESCE($3::jsonb, response_metadata),
-                encrypted_result = COALESCE($4::jsonb, encrypted_result),
-                result_expires_at = COALESCE($5::timestamptz, result_expires_at),
-                error_code = $6,
+                payment_metadata = COALESCE($4::jsonb, payment_metadata),
+                response_metadata = COALESCE($5::jsonb, response_metadata),
+                encrypted_result = COALESCE($6::jsonb, encrypted_result),
+                result_expires_at = CASE
+                  WHEN $6::jsonb IS NULL THEN result_expires_at
+                  ELSE now() + interval '15 minutes'
+                END,
+                error_code = $7,
                 finalized_at = now(),
                 updated_at = now()
-          WHERE id = $1 AND status = 'submitting'
+          WHERE id = $1
+            AND org_id = $2
+            AND connection_id = $3
+            AND status = 'submitting'
           RETURNING ${ATTEMPT_COLUMNS}`,
-        [attemptId, ...values, input.errorCode],
+        [attemptId, scope.orgId, scope.connectionId, ...values, input.errorCode],
       );
     },
   };

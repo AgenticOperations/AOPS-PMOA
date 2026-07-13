@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS runtime_payment_attempts (
   updated_at timestamptz NOT NULL DEFAULT now(),
   submitted_at timestamptz,
   finalized_at timestamptz,
+  CONSTRAINT runtime_payment_attempts_result_retention_check
+    CHECK ((encrypted_result IS NULL) = (result_expires_at IS NULL)),
   UNIQUE (connection_id, idempotency_key)
 );
 
@@ -40,3 +42,7 @@ CREATE INDEX IF NOT EXISTS runtime_payment_attempts_status_created_idx
 
 CREATE INDEX IF NOT EXISTS runtime_payment_attempts_created_idx
   ON runtime_payment_attempts (created_at ASC);
+
+CREATE INDEX IF NOT EXISTS runtime_payment_attempts_result_expiry_idx
+  ON runtime_payment_attempts (result_expires_at ASC)
+  WHERE result_expires_at IS NOT NULL;

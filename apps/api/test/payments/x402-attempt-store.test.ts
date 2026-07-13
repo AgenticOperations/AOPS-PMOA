@@ -1,10 +1,17 @@
+import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IdentityError } from '../../src/engines/identity/errors.js';
 import {
   createPostgresX402AttemptStore,
+  type CreateX402AttemptInput,
   type X402AttemptStatus,
   type X402AttemptStore,
 } from '../../src/engines/payments/x402-attempt-store.js';
+import {
+  createX402ResultCryptoCodec,
+  type X402ResultCryptoCodec,
+} from '../../src/engines/payments/x402-result-crypto.js';
+import type { PaidHttpResponse } from '../../src/engines/payments/x402-http.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 const ORG_ID = 'org_x402_attempt';
@@ -12,6 +19,12 @@ const AGENT_ID = 'agt_x402_attempt';
 const CONNECTION_ID = 'conn_x402_attempt';
 const OTHER_CONNECTION_ID = 'conn_x402_attempt_other';
 const SOURCE_ID = 'src_x402_attempt';
+const OTHER_ORG_ID = 'org_x402_attempt_other';
+const OTHER_AGENT_ID = 'agt_x402_attempt_other';
+const CROSS_TENANT_CONNECTION_ID = 'conn_x402_attempt_cross_tenant';
+const OTHER_SOURCE_ID = 'src_x402_attempt_other';
+
+const ATTEMPT_SCOPE = { connectionId: CONNECTION_ID, orgId: ORG_ID } as const;
 
 let keySequence = 0;
 
@@ -23,13 +36,13 @@ function nextKey(label: string): string {
 function attemptInput(
   idempotencyKey: string,
   requestHash: string,
-  connectionId = CONNECTION_ID,
-) {
+  overrides: Partial<CreateX402AttemptInput> = {},
+): CreateX402AttemptInput {
   return {
     agentId: AGENT_ID,
     amountUsdc: '1.250000',
     asset: 'USDC',
-    connectionId,
+    connectionId: CONNECTION_ID,
     idempotencyKey,
     network: 'base',
     orgId: ORG_ID,
@@ -38,62 +51,88 @@ function attemptInput(
     recipient: '0x0000000000000000000000000000000000000001',
     requestHash,
     sourceId: SOURCE_ID,
+    ...overrides,
   };
 }
 
-function assertIdentityError(error: unknown, code: string): asserts error is IdentityError {
+function paidResponse(overrides: Partial<PaidHttpResponse> = {}): PaidHttpResponse {
+  return {
+    body: { accessToken: 'merchant-secret', ok: true },
+    bodyEncoding: 'json',
+    contentType: 'application/json',
+    headers: [
+      ['content-type', 'application/json'],
+      ['x-merchant-secret', 'do-not-store-in-plaintext'],
+    ],
+    sizeBytes: 48,
+    status: 200,
+    truncated: false,
+    ...overrides,
+  };
+}
+
+function assertIdentityError(
+  error: unknown,
+  code: string,
+  statusCode = 409,
+): asserts error is IdentityError {
   expect(error).toBeInstanceOf(IdentityError);
   if (!(error instanceof IdentityError)) throw error;
   expect(error.code).toBe(code);
-  expect(error.statusCode).toBe(409);
+  expect(error.statusCode).toBe(statusCode);
 }
 
-async function expectIdentityConflict(
+async function expectIdentityFailure(
   operation: () => Promise<unknown>,
   code: string,
+  statusCode = 409,
 ): Promise<void> {
   try {
     await operation();
   } catch (error: unknown) {
-    assertIdentityError(error, code);
+    assertIdentityError(error, code, statusCode);
     return;
   }
   throw new Error(`Expected IdentityError ${code}`);
 }
 
 describe('Postgres x402 attempt store', () => {
-  let postgres: PostgresTestStore;
+  let postgres: PostgresTestStore | undefined;
+  let pool: PostgresTestStore['pool'];
   let attempts: X402AttemptStore;
+  let resultCrypto: X402ResultCryptoCodec;
 
   beforeAll(async () => {
     postgres = await startPostgres();
-    attempts = createPostgresX402AttemptStore(postgres.pool);
+    pool = postgres.pool;
+    resultCrypto = createX402ResultCryptoCodec(randomBytes(32).toString('base64'));
+    attempts = createPostgresX402AttemptStore(pool, { resultCrypto });
 
-    await postgres.pool.query(
+    await pool.query(
       `INSERT INTO orgs (id, display_name) VALUES ($1, 'x402 Attempt Org')`,
       [ORG_ID],
     );
-    await postgres.pool.query(
+    await pool.query(
       `INSERT INTO teams (id, org_id, name, is_default)
        VALUES ('team_x402_attempt', $1, 'Default', true)`,
       [ORG_ID],
     );
-    await postgres.pool.query(
+    await pool.query(
       `UPDATE orgs SET default_team_id = 'team_x402_attempt' WHERE id = $1`,
       [ORG_ID],
     );
-    await postgres.pool.query(
+    await pool.query(
       `INSERT INTO agents (id, org_id, team_id, name)
        VALUES ($1, $2, 'team_x402_attempt', 'x402 Agent')`,
       [AGENT_ID, ORG_ID],
     );
-    await postgres.pool.query(
+    await pool.query(
       `INSERT INTO connections (id, org_id, agent_id, kind, name)
        VALUES ($1, $3, $4, 'mcp_http', 'Primary'),
               ($2, $3, $4, 'mcp_http', 'Other')`,
       [CONNECTION_ID, OTHER_CONNECTION_ID, ORG_ID, AGENT_ID],
     );
-    await postgres.pool.query(
+    await pool.query(
       `INSERT INTO payment_sources (
          id, org_id, source_type, provider, rail, chain, label,
          status, account_type, simulated_balance_usdc, created_by
@@ -102,10 +141,43 @@ describe('Postgres x402 attempt store', () => {
                'x402 Source', 'active', 'virtual', 100, 'test')`,
       [SOURCE_ID, ORG_ID],
     );
+
+    await pool.query(
+      `INSERT INTO orgs (id, display_name) VALUES ($1, 'Other x402 Attempt Org')`,
+      [OTHER_ORG_ID],
+    );
+    await pool.query(
+      `INSERT INTO teams (id, org_id, name, is_default)
+       VALUES ('team_x402_attempt_other', $1, 'Default', true)`,
+      [OTHER_ORG_ID],
+    );
+    await pool.query(
+      `UPDATE orgs SET default_team_id = 'team_x402_attempt_other' WHERE id = $1`,
+      [OTHER_ORG_ID],
+    );
+    await pool.query(
+      `INSERT INTO agents (id, org_id, team_id, name)
+       VALUES ($1, $2, 'team_x402_attempt_other', 'Other x402 Agent')`,
+      [OTHER_AGENT_ID, OTHER_ORG_ID],
+    );
+    await pool.query(
+      `INSERT INTO connections (id, org_id, agent_id, kind, name)
+       VALUES ($1, $2, $3, 'mcp_http', 'Cross Tenant')`,
+      [CROSS_TENANT_CONNECTION_ID, OTHER_ORG_ID, OTHER_AGENT_ID],
+    );
+    await pool.query(
+      `INSERT INTO payment_sources (
+         id, org_id, source_type, provider, rail, chain, label,
+         status, account_type, simulated_balance_usdc, created_by
+       )
+       VALUES ($1, $2, 'direct_exact', 'simulation', 'exact_base', 'base',
+               'Other x402 Source', 'active', 'virtual', 100, 'test')`,
+      [OTHER_SOURCE_ID, OTHER_ORG_ID],
+    );
   }, 90_000);
 
   afterAll(async () => {
-    await postgres.stop();
+    await postgres?.stop();
   });
 
   it('scopes idempotency keys to a connection', async () => {
@@ -114,17 +186,53 @@ describe('Postgres x402 attempt store', () => {
       attemptInput(idempotencyKey, 'request-hash-primary'),
     );
     const second = await attempts.createAttempt(
-      attemptInput(idempotencyKey, 'request-hash-other', OTHER_CONNECTION_ID),
+      attemptInput(idempotencyKey, 'request-hash-other', {
+        connectionId: OTHER_CONNECTION_ID,
+      }),
     );
 
     expect(first.id).not.toBe(second.id);
-    const rows = await postgres.pool.query<{ count: string }>(
+    const rows = await pool.query<{ count: string }>(
       `SELECT count(*) AS count
          FROM runtime_payment_attempts
         WHERE idempotency_key = $1`,
       [idempotencyKey],
     );
     expect(rows.rows[0]?.count).toBe('2');
+  });
+
+  it('rejects cross-tenant org, agent, connection, and source combinations without writing', async () => {
+    const mismatches: readonly Partial<CreateX402AttemptInput>[] = [
+      { orgId: OTHER_ORG_ID },
+      { agentId: OTHER_AGENT_ID },
+      { connectionId: CROSS_TENANT_CONNECTION_ID },
+      { sourceId: OTHER_SOURCE_ID },
+      {
+        agentId: OTHER_AGENT_ID,
+        connectionId: CROSS_TENANT_CONNECTION_ID,
+        sourceId: OTHER_SOURCE_ID,
+      },
+    ];
+
+    for (const [index, mismatch] of mismatches.entries()) {
+      const idempotencyKey = nextKey(`tenant-mismatch-${index}`);
+      await expectIdentityFailure(
+        () => attempts.createAttempt(attemptInput(
+          idempotencyKey,
+          `request-hash-tenant-mismatch-${index}`,
+          mismatch,
+        )),
+        'payment_attempt_scope_invalid',
+        404,
+      );
+      const rows = await pool.query<{ count: string }>(
+        `SELECT count(*) AS count
+           FROM runtime_payment_attempts
+          WHERE idempotency_key = $1`,
+        [idempotencyKey],
+      );
+      expect(rows.rows[0]?.count).toBe('0');
+    }
   });
 
   it('returns one row to simultaneous same-key same-hash creators', async () => {
@@ -137,7 +245,7 @@ describe('Postgres x402 attempt store', () => {
     ]);
 
     expect(second).toEqual(first);
-    const rows = await postgres.pool.query<{ count: string }>(
+    const rows = await pool.query<{ count: string }>(
       `SELECT count(*) AS count
          FROM runtime_payment_attempts
         WHERE connection_id = $1 AND idempotency_key = $2`,
@@ -151,9 +259,8 @@ describe('Postgres x402 attempt store', () => {
     const input = attemptInput(idempotencyKey, 'request-hash-replay');
 
     const first = await attempts.createAttempt(input);
-    await attempts.markSubmitting(first.id);
-    const settled = await attempts.finalizeSettled(first.id, {
-      encryptedResult: { algorithm: 'aes-256-gcm', ciphertext: 'opaque' },
+    await attempts.markSubmitting(ATTEMPT_SCOPE, first.id);
+    const settled = await attempts.finalizeSettled(ATTEMPT_SCOPE, first.id, {
       paymentMetadata: {
         providerReference: 'provider-ref-replay',
         receiptId: 'receipt-replay',
@@ -164,7 +271,6 @@ describe('Postgres x402 attempt store', () => {
         contentType: 'application/json',
         statusCode: 200,
       },
-      resultExpiresAt: new Date('2030-01-02T03:04:05.000Z'),
     });
 
     await expect(attempts.createAttempt(input)).resolves.toEqual(settled);
@@ -174,7 +280,7 @@ describe('Postgres x402 attempt store', () => {
   it('rejects sequential and concurrent request-hash aliases', async () => {
     const sequentialKey = nextKey('hash-conflict');
     await attempts.createAttempt(attemptInput(sequentialKey, 'request-hash-original'));
-    await expectIdentityConflict(
+    await expectIdentityFailure(
       () => attempts.createAttempt(attemptInput(sequentialKey, 'request-hash-different')),
       'payment_idempotency_conflict',
     );
@@ -193,7 +299,6 @@ describe('Postgres x402 attempt store', () => {
   });
 
   it('maps numeric, JSON, and timestamp fields without losing precision', async () => {
-    const resultExpiresAt = new Date('2031-02-03T04:05:06.789Z');
     const created = await attempts.createAttempt({
       ...attemptInput(nextKey('mapping'), 'request-hash-mapping'),
       amountUsdc: '12345678901234.123456',
@@ -221,21 +326,19 @@ describe('Postgres x402 attempt store', () => {
     expect(new Date(created.created_at).toISOString()).toBe(created.created_at);
     expect(new Date(created.updated_at).toISOString()).toBe(created.updated_at);
 
-    const submitting = await attempts.markSubmitting(created.id);
+    const submitting = await attempts.markSubmitting(ATTEMPT_SCOPE, created.id);
     expect(submitting.submitted_at).not.toBeNull();
-    const settled = await attempts.finalizeSettled(created.id, {
-      encryptedResult: { ciphertext: 'opaque', iv: 'iv', tag: 'tag' },
+    const settled = await attempts.finalizeSettled(ATTEMPT_SCOPE, created.id, {
       paymentMetadata: { transactionHash: '0xmapping' },
       responseMetadata: { contentType: 'application/json', statusCode: 201 },
-      resultExpiresAt,
     });
 
     expect(settled).toMatchObject({
-      encrypted_result: { ciphertext: 'opaque', iv: 'iv', tag: 'tag' },
+      encrypted_result: null,
       error_code: null,
       payment_metadata: { transactionHash: '0xmapping' },
       response_metadata: { contentType: 'application/json', statusCode: 201 },
-      result_expires_at: resultExpiresAt.toISOString(),
+      result_expires_at: null,
       status: 'settled',
     });
     expect(settled.finalized_at).not.toBeNull();
@@ -245,9 +348,9 @@ describe('Postgres x402 attempt store', () => {
     const created = await attempts.createAttempt(
       attemptInput(nextKey('safe-json'), 'request-hash-safe-json'),
     );
-    await attempts.markSubmitting(created.id);
+    await attempts.markSubmitting(ATTEMPT_SCOPE, created.id);
 
-    await expect(attempts.finalizeSettled(created.id, {
+    await expect(attempts.finalizeSettled(ATTEMPT_SCOPE, created.id, {
       responseMetadata: {
         body: 'merchant-body',
         headers: { authorization: 'secret' },
@@ -257,8 +360,84 @@ describe('Postgres x402 attempt store', () => {
 
     const row = await attempts.findAttempt(CONNECTION_ID, created.idempotency_key);
     expect(row?.status).toBe('submitting');
-    await expect(postgres.pool.query(
+    await expect(pool.query(
       `UPDATE runtime_payment_attempts SET response_metadata = '[]'::jsonb WHERE id = $1`,
+      [created.id],
+    )).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('encrypts paid HTTP results for exactly 15 minutes and scrubs them after expiry', async () => {
+    const created = await attempts.createAttempt(
+      attemptInput(nextKey('encrypted-result'), 'request-hash-encrypted-result'),
+    );
+    await attempts.markSubmitting(ATTEMPT_SCOPE, created.id);
+    const plaintext = paidResponse();
+    const settled = await attempts.finalizeSettled(ATTEMPT_SCOPE, created.id, {
+      result: plaintext,
+      responseMetadata: {
+        contentLength: plaintext.sizeBytes,
+        contentType: plaintext.contentType,
+        statusCode: plaintext.status,
+      },
+    });
+
+    expect(settled.encrypted_result).not.toBeNull();
+    expect(settled.result_expires_at).not.toBeNull();
+    if (settled.encrypted_result === null) throw new Error('Missing encrypted result');
+    expect(resultCrypto.decrypt(
+      { attemptId: settled.id, connectionId: CONNECTION_ID, orgId: ORG_ID },
+      settled.encrypted_result,
+    )).toEqual(plaintext);
+
+    const stored = await pool.query<{
+      encrypted_result: string;
+      ttl_seconds: string;
+    }>(
+      `SELECT encrypted_result::text,
+              extract(epoch FROM (result_expires_at - finalized_at))::text AS ttl_seconds
+         FROM runtime_payment_attempts
+        WHERE id = $1`,
+      [created.id],
+    );
+    expect(stored.rows[0]?.ttl_seconds).toBe('900.000000');
+    expect(stored.rows[0]?.encrypted_result).not.toContain('merchant-secret');
+    expect(stored.rows[0]?.encrypted_result).not.toContain('do-not-store-in-plaintext');
+
+    await pool.query(
+      `UPDATE runtime_payment_attempts
+          SET result_expires_at = now() - interval '1 second'
+        WHERE id = $1`,
+      [created.id],
+    );
+    const expired = await attempts.findAttempt(CONNECTION_ID, created.idempotency_key);
+    expect(expired).toMatchObject({ encrypted_result: null, result_expires_at: null });
+
+    const scrubbed = await pool.query<{
+      encrypted_result: unknown;
+      result_expires_at: Date | null;
+    }>(
+      `SELECT encrypted_result, result_expires_at
+         FROM runtime_payment_attempts
+        WHERE id = $1`,
+      [created.id],
+    );
+    expect(scrubbed.rows[0]).toEqual({ encrypted_result: null, result_expires_at: null });
+  });
+
+  it('enforces paired encrypted-result retention fields in PostgreSQL', async () => {
+    const created = await attempts.createAttempt(
+      attemptInput(nextKey('retention-pair'), 'request-hash-retention-pair'),
+    );
+    await expect(pool.query(
+      `UPDATE runtime_payment_attempts
+          SET encrypted_result = '{"version":1}'::jsonb
+        WHERE id = $1`,
+      [created.id],
+    )).rejects.toMatchObject({ code: '23514' });
+    await expect(pool.query(
+      `UPDATE runtime_payment_attempts
+          SET result_expires_at = now() + interval '15 minutes'
+        WHERE id = $1`,
       [created.id],
     )).rejects.toMatchObject({ code: '23514' });
   });
@@ -270,57 +449,120 @@ describe('Postgres x402 attempt store', () => {
     ));
     if (status === 'reserved') return created.id;
 
-    await attempts.markSubmitting(created.id);
+    await attempts.markSubmitting(ATTEMPT_SCOPE, created.id);
     if (status === 'submitting') return created.id;
     if (status === 'settled') {
-      await attempts.finalizeSettled(created.id, {});
+      await attempts.finalizeSettled(ATTEMPT_SCOPE, created.id, {});
       return created.id;
     }
     if (status === 'failed') {
-      await attempts.finalizeFailed(created.id, {
+      await attempts.finalizeFailed(ATTEMPT_SCOPE, created.id, {
         errorCode: 'provider_failed',
         providerCallMade: true,
       });
       return created.id;
     }
-    await attempts.finalizeUnknown(created.id, { errorCode: 'provider_outcome_unknown' });
+    await attempts.finalizeUnknown(
+      ATTEMPT_SCOPE,
+      created.id,
+      { errorCode: 'provider_outcome_unknown' },
+    );
     return created.id;
   }
 
   it('allows each legal transition', async () => {
     const markId = await createInStatus('reserved');
-    await expect(attempts.markSubmitting(markId)).resolves.toMatchObject({ status: 'submitting' });
+    await expect(attempts.markSubmitting(ATTEMPT_SCOPE, markId)).resolves.toMatchObject({ status: 'submitting' });
 
     const settledId = await createInStatus('submitting');
-    await expect(attempts.finalizeSettled(settledId, {})).resolves.toMatchObject({ status: 'settled' });
+    await expect(attempts.finalizeSettled(ATTEMPT_SCOPE, settledId, {})).resolves.toMatchObject({ status: 'settled' });
 
     const failedId = await createInStatus('submitting');
-    await expect(attempts.finalizeFailed(failedId, {
+    await expect(attempts.finalizeFailed(ATTEMPT_SCOPE, failedId, {
       errorCode: 'provider_failed',
       providerCallMade: true,
     })).resolves.toMatchObject({ error_code: 'provider_failed', status: 'failed' });
 
     const deterministicFailureId = await createInStatus('reserved');
-    await expect(attempts.finalizeFailed(deterministicFailureId, {
+    await expect(attempts.finalizeFailed(ATTEMPT_SCOPE, deterministicFailureId, {
       errorCode: 'quote_rejected',
       providerCallMade: false,
     })).resolves.toMatchObject({ error_code: 'quote_rejected', status: 'failed' });
 
     const unknownId = await createInStatus('submitting');
-    await expect(attempts.finalizeUnknown(unknownId, {
+    await expect(attempts.finalizeUnknown(ATTEMPT_SCOPE, unknownId, {
       errorCode: 'provider_outcome_unknown',
     })).resolves.toMatchObject({ error_code: 'provider_outcome_unknown', status: 'unknown' });
   });
 
+  it('requires the exact tenant scope for every transition and never mutates wrong-scope rows', async () => {
+    const wrongOrgScope = { connectionId: CONNECTION_ID, orgId: OTHER_ORG_ID } as const;
+    const wrongConnectionScope = { connectionId: OTHER_CONNECTION_ID, orgId: ORG_ID } as const;
+    const cases = [
+      {
+        expectedStatus: 'reserved',
+        operation: async (id: string) => attempts.markSubmitting(wrongOrgScope, id),
+        status: 'reserved' as const,
+      },
+      {
+        expectedStatus: 'reserved',
+        operation: async (id: string) => attempts.markSubmitting(wrongConnectionScope, id),
+        status: 'reserved' as const,
+      },
+      {
+        expectedStatus: 'submitting',
+        operation: async (id: string) => attempts.finalizeSettled(wrongOrgScope, id, {}),
+        status: 'submitting' as const,
+      },
+      {
+        expectedStatus: 'submitting',
+        operation: async (id: string) => attempts.finalizeFailed(wrongConnectionScope, id, {
+          errorCode: 'provider_failed',
+          providerCallMade: true,
+        }),
+        status: 'submitting' as const,
+      },
+      {
+        expectedStatus: 'submitting',
+        operation: async (id: string) => attempts.finalizeUnknown(wrongOrgScope, id, {
+          errorCode: 'provider_outcome_unknown',
+        }),
+        status: 'submitting' as const,
+      },
+      {
+        expectedStatus: 'reserved',
+        operation: async (id: string) => attempts.finalizeFailed(wrongConnectionScope, id, {
+          errorCode: 'quote_rejected',
+          providerCallMade: false,
+        }),
+        status: 'reserved' as const,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const id = await createInStatus(testCase.status);
+      await expectIdentityFailure(
+        () => testCase.operation(id),
+        'payment_attempt_scope_invalid',
+        404,
+      );
+      const row = await pool.query<{ status: X402AttemptStatus }>(
+        `SELECT status FROM runtime_payment_attempts WHERE id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.status).toBe(testCase.expectedStatus);
+    }
+  });
+
   it('rejects every stale or illegal transition with a stable conflict', async () => {
     const invalid = [
-      async (id: string) => attempts.markSubmitting(id),
-      async (id: string) => attempts.finalizeSettled(id, {}),
-      async (id: string) => attempts.finalizeFailed(id, {
+      async (id: string) => attempts.markSubmitting(ATTEMPT_SCOPE, id),
+      async (id: string) => attempts.finalizeSettled(ATTEMPT_SCOPE, id, {}),
+      async (id: string) => attempts.finalizeFailed(ATTEMPT_SCOPE, id, {
         errorCode: 'provider_failed',
         providerCallMade: true,
       }),
-      async (id: string) => attempts.finalizeUnknown(id, {
+      async (id: string) => attempts.finalizeUnknown(ATTEMPT_SCOPE, id, {
         errorCode: 'provider_outcome_unknown',
       }),
     ];
@@ -333,7 +575,7 @@ describe('Postgres x402 attempt store', () => {
         if (legal) continue;
 
         const id = await createInStatus(status);
-        await expectIdentityConflict(
+        await expectIdentityFailure(
           () => operation(id),
           'payment_attempt_state_conflict',
         );
@@ -341,17 +583,18 @@ describe('Postgres x402 attempt store', () => {
     }
 
     const reservedId = await createInStatus('reserved');
-    await expectIdentityConflict(
-      () => attempts.finalizeFailed(reservedId, {
+    await expectIdentityFailure(
+      () => attempts.finalizeFailed(ATTEMPT_SCOPE, reservedId, {
         errorCode: 'provider_failed',
         providerCallMade: true,
       }),
       'payment_attempt_state_conflict',
     );
 
-    await expectIdentityConflict(
-      () => attempts.markSubmitting('rpa_missing'),
-      'payment_attempt_state_conflict',
+    await expectIdentityFailure(
+      () => attempts.markSubmitting(ATTEMPT_SCOPE, 'rpa_missing'),
+      'payment_attempt_scope_invalid',
+      404,
     );
   });
 });

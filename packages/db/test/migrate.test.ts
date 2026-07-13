@@ -91,6 +91,23 @@ describe('PMOA database migrations', () => {
       '0021_runtime_payment_attempts',
     ]);
 
+    const attemptConstraints = await pool.query<{ conname: string }>(
+      `SELECT conname
+         FROM pg_constraint
+        WHERE conrelid = 'runtime_payment_attempts'::regclass`,
+    );
+    expect(attemptConstraints.rows.map(({ conname }) => conname)).toContain(
+      'runtime_payment_attempts_result_retention_check',
+    );
+    const attemptIndexes = await pool.query<{ indexname: string }>(
+      `SELECT indexname
+         FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'runtime_payment_attempts'`,
+    );
+    expect(attemptIndexes.rows.map(({ indexname }) => indexname)).toContain(
+      'runtime_payment_attempts_result_expiry_idx',
+    );
+
     const x402Action = await pool.query<{ description: string }>(
       `SELECT description FROM policy_action_registry WHERE action_id = 'payment.x402.authorize'`,
     );
