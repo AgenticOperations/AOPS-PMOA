@@ -33,6 +33,10 @@ export type CircleCliRunner = (invocation: CircleCliInvocation) => Promise<Circl
 
 type CircleAgentCliPaidRequestFileSystem = {
   readonly eraseDebugHandle: (handle: FileHandle) => Promise<void>;
+  readonly inspectIsolatedHome: (path: string) => Promise<{
+    isDirectory(): boolean;
+    isSymbolicLink(): boolean;
+  }>;
   readonly removeIsolatedHome: (path: string) => Promise<void>;
 };
 
@@ -151,6 +155,7 @@ export type CircleAgentCliPaidRequestDebug = Readonly<Record<string, unknown>>;
 const PAID_REQUEST_DEBUG = new WeakMap<CircleAgentCliPaidRequestError, CircleAgentCliPaidRequestDebug>();
 const PAID_REQUEST_CLEANUP_JOBS = new Map<string, {
   attempts: number;
+  readonly inspectIsolatedHome: CircleAgentCliPaidRequestFileSystem['inspectIsolatedHome'];
   readonly removeIsolatedHome: (path: string) => Promise<void>;
 }>();
 const PAID_REQUEST_HOME_NAME = /^agentops-circle-paid-[A-Za-z0-9]{6}$/;
@@ -182,24 +187,31 @@ function schedulePaidRequestCleanupJanitor(): void {
 
 function enqueuePaidRequestCleanup(
   path: string,
-  removeIsolatedHome: (ownedPath: string) => Promise<void>,
+  fileSystem: CircleAgentCliPaidRequestFileSystem,
 ): void {
   if (!isOwnedPaidRequestHome(path)) return;
-  PAID_REQUEST_CLEANUP_JOBS.set(path, { attempts: 0, removeIsolatedHome });
+  PAID_REQUEST_CLEANUP_JOBS.set(path, {
+    attempts: 0,
+    inspectIsolatedHome: fileSystem.inspectIsolatedHome,
+    removeIsolatedHome: fileSystem.removeIsolatedHome,
+  });
   schedulePaidRequestCleanupJanitor();
 }
 
-export async function runCircleAgentCliPaidRequestCleanupJanitor(): Promise<void> {
+export async function runCircleAgentCliPaidRequestCleanupJanitor(): Promise<number> {
   for (const [path, job] of [...PAID_REQUEST_CLEANUP_JOBS]) {
     if (!isOwnedPaidRequestHome(path)) {
       PAID_REQUEST_CLEANUP_JOBS.delete(path);
       continue;
     }
+    job.attempts += 1;
     let pathStat;
     try {
-      pathStat = await lstat(path);
+      pathStat = await job.inspectIsolatedHome(path);
     } catch (error) {
       if (paidRequestErrorMetadata(error).code === 'ENOENT') {
+        PAID_REQUEST_CLEANUP_JOBS.delete(path);
+      } else if (job.attempts >= MAX_PAID_REQUEST_CLEANUP_ATTEMPTS) {
         PAID_REQUEST_CLEANUP_JOBS.delete(path);
       }
       continue;
@@ -212,7 +224,6 @@ export async function runCircleAgentCliPaidRequestCleanupJanitor(): Promise<void
       await job.removeIsolatedHome(path);
       PAID_REQUEST_CLEANUP_JOBS.delete(path);
     } catch {
-      job.attempts += 1;
       if (job.attempts >= MAX_PAID_REQUEST_CLEANUP_ATTEMPTS) {
         PAID_REQUEST_CLEANUP_JOBS.delete(path);
       }
@@ -223,6 +234,7 @@ export async function runCircleAgentCliPaidRequestCleanupJanitor(): Promise<void
     clearTimeout(paidRequestCleanupTimer);
     paidRequestCleanupTimer = undefined;
   }
+  return PAID_REQUEST_CLEANUP_JOBS.size;
 }
 
 export type CircleAgentTransfer = {
@@ -897,6 +909,7 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
       await handle.truncate(0);
       await handle.sync();
     }),
+    inspectIsolatedHome: options.internalPaidRequestFileSystem?.inspectIsolatedHome ?? lstat,
     removeIsolatedHome: options.internalPaidRequestFileSystem?.removeIsolatedHome ?? (async (path) => {
       await rm(path, { force: true, recursive: true });
     }),
@@ -1188,7 +1201,7 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
           else if (payment !== undefined) payment.maintenance.cleanupPending = true;
           else failure = paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
           if (failure !== undefined) failure.maintenance.cleanupPending = true;
-          enqueuePaidRequestCleanup(isolatedHome, paidRequestFileSystem.removeIsolatedHome);
+          enqueuePaidRequestCleanup(isolatedHome, paidRequestFileSystem);
         }
       }
 

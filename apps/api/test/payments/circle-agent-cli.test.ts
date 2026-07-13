@@ -1012,6 +1012,60 @@ describe('Circle Agent Wallet CLI executor', () => {
     }
   });
 
+  it('drops a cleanup job after three persistent non-ENOENT inspection failures', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'agentops-circle-lstat-failure-'));
+    const sourceHome = join(sourceRoot, 'circle-home');
+    let isolatedHome: string | undefined;
+    let inspectionAttempts = 0;
+    let removalAttempts = 0;
+    try {
+      await mkdir(sourceHome, { recursive: true, mode: 0o700 });
+      const runner: CircleCliRunner = (invocation) => {
+        isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+        return Promise.reject(Object.assign(new Error('runner failed'), { code: 1, signal: null }));
+      };
+      const executor = createCircleAgentCliExecutor({
+        environment: { CIRCLE_CLI_HOME: sourceHome },
+        internalPaidRequestFileSystem: {
+          inspectIsolatedHome: () => {
+            inspectionAttempts += 1;
+            return Promise.reject(Object.assign(new Error('inspection denied'), { code: 'EACCES' }));
+          },
+          removeIsolatedHome: () => {
+            removalAttempts += 1;
+            return Promise.reject(new Error('forced cleanup failure'));
+          },
+        },
+        runner,
+      });
+
+      await executor.payService({
+        address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        attemptId: 'attempt_lstat_failure_1',
+        chain: 'base',
+        maxAmount: '0.01',
+        mode: 'test',
+        rail: 'exact',
+        request: {
+          headers: [],
+          method: 'POST',
+          url: 'https://x402.example.test/lstat-failure',
+        },
+        timeoutSeconds: 30,
+      }).catch((error: unknown) => error);
+
+      expect(await runCircleAgentCliPaidRequestCleanupJanitor()).toBe(1);
+      expect(await runCircleAgentCliPaidRequestCleanupJanitor()).toBe(1);
+      expect(await runCircleAgentCliPaidRequestCleanupJanitor()).toBe(0);
+      expect(await runCircleAgentCliPaidRequestCleanupJanitor()).toBe(0);
+      expect(inspectionAttempts).toBe(3);
+      expect(removalAttempts).toBe(1);
+    } finally {
+      if (isolatedHome !== undefined) await rm(isolatedHome, { force: true, recursive: true });
+      await rm(sourceRoot, { force: true, recursive: true });
+    }
+  });
+
   it.each([
     ['success', JSON.stringify({ data: { response: 'ok' } }), false],
     ['malformed stdout', 'not-json', true],
