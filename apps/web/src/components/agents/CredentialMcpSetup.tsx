@@ -24,6 +24,18 @@ type VerificationState =
   | { readonly state: 'failed'; readonly message: string };
 
 const BOUNDARY_INSTRUCTION = 'Use AOPS before governed tool calls, HTTP operations, or x402 payments. Call the matching check tool first, follow approval requirements, and record the final outcome. Actions sent outside AOPS are not governed by this connection.';
+const PAID_HTTP_EXAMPLE = `{
+  "name": "agentops.payment_x402",
+  "arguments": {
+    "idempotency_key": "report-2026-07-13-001",
+    "request": {
+      "url": "https://api.example.com/reports",
+      "method": "POST",
+      "headers": [["content-type", "application/json"], ["accept", "application/json"]],
+      "body": {"kind": "json", "value": {"range": "30d"}}
+    }
+  }
+}`;
 
 export function CredentialMcpSetup({ mcpEndpoint, secret, title }: CredentialMcpSetupProps) {
   const [copyStatus, setCopyStatus] = useState('');
@@ -146,6 +158,26 @@ export function CredentialMcpSetup({ mcpEndpoint, secret, title }: CredentialMcp
           <button className="mcp-copy-button" onClick={() => void copy('local repository adapter', localAdapter)} type="button">Copy local repository adapter</button>
         </div>
         <pre className="mcp-setup-code">{localAdapter}</pre>
+      </section>
+
+      <section className="mcp-setup-section" aria-labelledby="mcp-paid-http-label">
+        <div className="mcp-setup-section-heading">
+          <div>
+            <h4 id="mcp-paid-http-label">Governed paid HTTP</h4>
+            <p>
+              Use the public hosted MCP endpoint {mcpEndpoint} and authenticate with{' '}
+              <code>{'Bearer ${AGENTOPS_MCP_CREDENTIAL}'}</code>. Keep the credential in the host
+              environment, never in tool arguments or project files.
+            </p>
+          </div>
+        </div>
+        <pre className="mcp-setup-code">{PAID_HTTP_EXAMPLE}</pre>
+        <p className="mcp-boundary-copy">
+          If the call times out or returns a transient error, retry this exact request with the same
+          idempotency_key. A settled replay returns the retained response without paying again. If
+          the payment is submitting or unknown, keep the same key and retry to reconcile; never
+          submit a new key.
+        </p>
       </section>
 
       <section className="mcp-setup-section" aria-labelledby="mcp-boundary-label">

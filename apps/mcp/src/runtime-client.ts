@@ -20,10 +20,57 @@ export type RuntimeOperationInput = {
   readonly context?: Record<string, unknown> | undefined;
 };
 
-export type RuntimeX402PaymentInput = {
-  readonly accepts: ReadonlyArray<Record<string, unknown>>;
-  readonly context?: Record<string, unknown> | undefined;
-  readonly resource?: Record<string, unknown> | undefined;
+export type RuntimePaidHttpBody =
+  | { readonly kind: 'json'; readonly value: unknown }
+  | { readonly kind: 'text'; readonly value: string }
+  | { readonly kind: 'base64'; readonly value: string };
+
+export type RuntimePaidHttpRequest = {
+  readonly url: string;
+  readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  readonly headers: ReadonlyArray<readonly [string, string]>;
+  readonly body?: RuntimePaidHttpBody | undefined;
+};
+
+export type RuntimeX402PaymentInput = Record<string, unknown> & {
+  readonly idempotency_key: string;
+  readonly request: RuntimePaidHttpRequest;
+};
+
+export type RuntimeX402PaymentTruth = {
+  readonly id: string | null;
+  readonly attemptId: string;
+  readonly status: 'reserved' | 'submitting' | 'settled' | 'failed' | 'unknown';
+  readonly providerMode: 'simulation' | 'test' | 'live' | null;
+  readonly rail: string | null;
+  readonly chain: string | null;
+  readonly amount: string | null;
+  readonly asset: string | null;
+  readonly agentId: string;
+  readonly connectionId: string;
+  readonly sourceId: string | null;
+  readonly reservationId: string | null;
+  readonly recipient: string | null;
+  readonly network: string | null;
+  readonly transaction?: string | undefined;
+  readonly payer?: string | undefined;
+  readonly errorCode?: string | undefined;
+  readonly responseAvailable: boolean;
+};
+
+export type RuntimePaidHttpResponse = {
+  readonly status: number;
+  readonly headers: ReadonlyArray<readonly [string, string]>;
+  readonly contentType?: string | undefined;
+  readonly bodyEncoding: 'json' | 'text' | 'base64';
+  readonly body: unknown;
+  readonly sizeBytes: number;
+  readonly truncated: false;
+};
+
+export type RuntimeX402PaymentResult = Record<string, unknown> & {
+  readonly payment: RuntimeX402PaymentTruth;
+  readonly response?: RuntimePaidHttpResponse | undefined;
 };
 
 export class RuntimeApiError extends Error {
@@ -136,13 +183,9 @@ export class RuntimeApiClient {
     });
   }
 
-  async paymentX402(input: RuntimeX402PaymentInput): Promise<Record<string, unknown>> {
-    return this.request('/v1/runtime/payments/x402', {
-      body: {
-        accepts: input.accepts,
-        context: input.context ?? {},
-        resource: input.resource ?? {},
-      },
+  async paymentX402(input: RuntimeX402PaymentInput): Promise<RuntimeX402PaymentResult> {
+    return this.request<RuntimeX402PaymentResult>('/v1/runtime/payments/x402', {
+      body: input,
       method: 'POST',
     });
   }

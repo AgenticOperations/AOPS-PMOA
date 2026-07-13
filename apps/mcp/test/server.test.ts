@@ -40,6 +40,19 @@ describe('agentOps MCP server', () => {
         'agentops.operation_check',
         'agentops.operation_record',
       ]);
+      const paymentTool = tools.find((tool) => tool.name === 'agentops.payment_x402');
+      expect(paymentTool?.inputSchema).toMatchObject({
+        type: 'object',
+        required: ['idempotency_key', 'request'],
+        properties: {
+          idempotency_key: { type: 'string' },
+          request: {
+            type: 'object',
+            required: ['url', 'method', 'headers'],
+          },
+        },
+      });
+      expect(paymentTool?.inputSchema.properties).not.toHaveProperty('accepts');
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }

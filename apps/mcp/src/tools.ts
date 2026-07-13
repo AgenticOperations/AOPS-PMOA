@@ -1,7 +1,10 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z, type ZodObject, type ZodRawShape } from 'zod';
 import { RuntimeApiError } from './runtime-client.js';
-import type { RuntimeCheckInput, RuntimeX402PaymentInput } from './runtime-client.js';
+import type {
+  RuntimeCheckInput,
+  RuntimeX402PaymentInput,
+} from './runtime-client.js';
 
 export type AgentOpsRuntimeClient = {
   readonly activityRecord: (input: { readonly payload?: Record<string, unknown> | undefined; readonly summary: string }) => Promise<Record<string, unknown>>;
@@ -47,11 +50,62 @@ const activityRecordSchema = z.object({
   payload: objectRecord.optional(),
   summary: z.string().trim().min(1).max(500),
 });
-const paymentX402Schema = z.object({
-  accepts: z.array(objectRecord).min(1).max(20),
-  context: objectRecord.optional(),
-  resource: objectRecord.optional(),
+const deniedPaidHttpHeaders = new Set([
+  'host',
+  'content-length',
+  'connection',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'keep-alive',
+  'accept-encoding',
+  'payment-signature',
+  'payment-response',
+  'payment-required',
+  'x-payment',
+]);
+const paidHttpHeaderName = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const paidHttpHeaderSchema = z.tuple([
+  z.string().min(1).regex(paidHttpHeaderName, 'Invalid paid HTTP header name.'),
+  z.string().refine((value) => !/[\r\n\0]/.test(value), 'Invalid paid HTTP header value.'),
+]).superRefine(([name], context) => {
+  const normalizedName = name.toLowerCase();
+  if (
+    deniedPaidHttpHeaders.has(normalizedName)
+    || normalizedName.startsWith('proxy-')
+    || normalizedName.startsWith('x-payment-')
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Paid HTTP header is not allowed: ${name}`,
+      path: [0],
+    });
+  }
 });
+const paidHttpJsonBodySchema = z.object({
+  kind: z.literal('json'),
+  value: z.unknown(),
+}).strict().superRefine((body, context) => {
+  if (!Object.prototype.hasOwnProperty.call(body, 'value')) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Required', path: ['value'] });
+  }
+});
+const paidHttpBodySchema = z.union([
+  paidHttpJsonBodySchema,
+  z.object({ kind: z.literal('text'), value: z.string() }).strict(),
+  z.object({ kind: z.literal('base64'), value: z.string() }).strict(),
+]);
+const paidHttpRequestSchema = z.object({
+  url: z.string().min(1).max(4096).refine((value) => value.trim().length > 0, 'URL is required.'),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+  headers: z.array(paidHttpHeaderSchema).max(100),
+  body: paidHttpBodySchema.optional(),
+}).strict();
+const paymentX402Schema = z.object({
+  idempotency_key: z.string().min(1).max(200).refine((value) => value.trim().length > 0, 'Idempotency key is required.'),
+  request: paidHttpRequestSchema,
+}).strict();
 const operationSchema = z.object({
   action: z.enum(['runtime.http.request', 'tool.call']),
   context: objectRecord.optional(),
@@ -144,6 +198,39 @@ async function safeExecute(
   }
 }
 
+async function safePaymentExecute(
+  fn: () => Promise<Record<string, unknown>>,
+): Promise<CallToolResult> {
+  try {
+    const payload = await fn();
+    return textResult(JSON.stringify(payload), payload);
+  } catch (error) {
+    const message = errorText(error);
+    if (error instanceof RuntimeApiError && error.code === 'policy_requires_approval') {
+      const approvalId = typeof error.details.approvalId === 'string' ? error.details.approvalId : null;
+      const decisionId = typeof error.details.decisionId === 'string' ? error.details.decisionId : null;
+      const approval = approvalId === null ? '' : ` Approval: ${approvalId}.`;
+      const decision = decisionId === null ? '' : ` Decision: ${decisionId}.`;
+      return textResult(
+        `x402 payment: approval required.${approval}${decision}`,
+        errorContent(error, message),
+        false,
+      );
+    }
+    if (error instanceof RuntimeApiError && error.code === 'liquidity_preparing') {
+      const retryAfter = typeof error.details.retryAfterSeconds === 'number'
+        ? ` Retry after ${error.details.retryAfterSeconds} seconds.`
+        : '';
+      return textResult(
+        `x402 payment: liquidity preparing.${retryAfter}`,
+        errorContent(error, message),
+        false,
+      );
+    }
+    return textResult(`agentOps MCP error: ${message}`, errorContent(error, message), true);
+  }
+}
+
 export function createAgentOpsTools(client: AgentOpsRuntimeClient): readonly AgentOpsTool[] {
   return [
     {
@@ -166,12 +253,14 @@ export function createAgentOpsTools(client: AgentOpsRuntimeClient): readonly Age
       title: 'Check policy',
     },
     {
-      description: 'Submit a Gateway-compatible x402 payment request through agentOps payment controls for this agent.',
+      description: 'Execute an idempotent paid HTTP request through agentOps x402 payment controls for this agent.',
       execute: async (args) =>
-        safeExecute('x402 payment', async () => client.paymentX402(paymentX402Schema.parse(recordArgs(args)))),
+        safePaymentExecute(async () => client.paymentX402(
+          paymentX402Schema.parse(recordArgs(args)) as RuntimeX402PaymentInput,
+        )),
       inputSchema: paymentX402Schema,
       name: 'agentops.payment_x402',
-      title: 'Submit x402 payment',
+      title: 'Request governed paid HTTP',
     },
     {
       description: 'Fetch the status of a one-time approval request created by a policy check.',

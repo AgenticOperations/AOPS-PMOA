@@ -76,6 +76,71 @@ describe('RuntimeApiClient', () => {
     expect(firstCall.init?.body).toBe(JSON.stringify({ action: 'tool.call', tool: { name: 'browser.search' } }));
   });
 
+  it('forwards the exact governed paid HTTP request and returns the canonical result', async () => {
+    const calls: FetchCall[] = [];
+    const canonicalResult = {
+      payment: {
+        id: 'payevt_paid_http',
+        attemptId: 'x402att_paid_http',
+        status: 'settled',
+        providerMode: 'live',
+        rail: 'exact_base',
+        chain: 'base',
+        amount: '0.25',
+        asset: 'USDC',
+        agentId: 'agt_research',
+        connectionId: 'conn_runtime',
+        sourceId: 'src_wallet',
+        reservationId: 'rsv_paid_http',
+        recipient: '0x0000000000000000000000000000000000000001',
+        network: 'eip155:8453',
+        transaction: '0xsettled',
+        payer: '0x0000000000000000000000000000000000000002',
+        responseAvailable: true,
+      },
+      response: {
+        status: 200,
+        headers: [['content-type', 'application/json']],
+        contentType: 'application/json',
+        bodyEncoding: 'json',
+        body: { sessionUrl: 'https://merchant.example/sessions/sess_1' },
+        sizeBytes: 64,
+        truncated: false,
+      },
+    };
+    vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ input, init });
+      return Promise.resolve(jsonResponse(canonicalResult));
+    });
+    const client = new RuntimeApiClient({
+      apiBaseUrl: 'http://localhost:8080/',
+      credential: 'agent_secret_value',
+      timeoutMs: 5000,
+    });
+    const input = {
+      idempotency_key: 'paid-http-report-1',
+      request: {
+        url: 'https://merchant.example/report',
+        method: 'POST' as const,
+        headers: [
+          ['accept', 'application/json'],
+          ['x-trace-id', 'trace-1'],
+          ['x-trace-id', 'trace-2'],
+        ] as const,
+        body: { kind: 'json' as const, value: { range: '30d', include: ['usage', 'cost'] } },
+      },
+    };
+
+    await expect(client.paymentX402(input)).resolves.toEqual(canonicalResult);
+
+    expect(calls).toHaveLength(1);
+    const firstCall = calls[0];
+    if (firstCall === undefined) throw new Error('Expected fetch call.');
+    expect(inputUrl(firstCall.input)).toBe('http://localhost:8080/v1/runtime/payments/x402');
+    expect(firstCall.init?.method).toBe('POST');
+    expect(firstCall.init?.body).toBe(JSON.stringify(input));
+  });
+
   it('reports backend errors without leaking the runtime credential', async () => {
     vi.stubGlobal('fetch', () => Promise.resolve(jsonResponse({ message: 'Connection credential is invalid.' }, 401)));
 
@@ -113,8 +178,12 @@ describe('RuntimeApiClient', () => {
     let caught: unknown;
     try {
       await client.paymentX402({
-        accepts: [{ amount: '1.25', network: 'base', scheme: 'exact' }],
-        resource: { category: 'market-data' },
+        idempotency_key: 'approval-payment-1',
+        request: {
+          url: 'https://merchant.example/report',
+          method: 'GET',
+          headers: [],
+        },
       });
     } catch (error) {
       caught = error;

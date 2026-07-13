@@ -26,6 +26,18 @@ const claudeCodeConfig = `{
   }
 }`;
 const codexCommand = `codex mcp add agentops --url ${mcpEndpoint} --bearer-token-env-var AGENTOPS_MCP_CREDENTIAL`;
+const paidHttpExample = `{
+  "name": "agentops.payment_x402",
+  "arguments": {
+    "idempotency_key": "report-2026-07-13-001",
+    "request": {
+      "url": "https://api.example.com/reports",
+      "method": "POST",
+      "headers": [["content-type", "application/json"], ["accept", "application/json"]],
+      "body": {"kind": "json", "value": {"range": "30d"}}
+    }
+  }
+}`;
 
 function localAdapterConfig(secret: string): string {
   return `AGENTOPS_API_BASE_URL=http://localhost:8080 AGENTOPS_MCP_CREDENTIAL=${secret} npm run dev:mcp`;
@@ -72,8 +84,34 @@ describe('ConnectionPanel', () => {
     expect(screen.queryByText(/AGENTOPS_CONNECTION_SECRET=/)).not.toBeInTheDocument();
     const setup = screen.getByTestId('credential-mcp-setup');
     expect(setup.querySelector('.secret-reveal')).toBeNull();
-    expect(setup.querySelectorAll('.mcp-setup-code')).toHaveLength(5);
+    expect(setup.querySelectorAll('.mcp-setup-code')).toHaveLength(6);
     expect(screen.queryByRole('heading', { name: 'Remote JSON configuration' })).not.toBeInTheDocument();
+  });
+
+  it('documents one secret-free governed paid HTTP call and same-key replay behavior without another action', () => {
+    render(
+      <ConnectionPanel
+        agentId="agt_research"
+        connections={[]}
+        mcpEndpoint={mcpEndpoint}
+        newSecret={{ connectionName: 'Local Claude', secret: 'conn_guide_secret' }}
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+      />,
+    );
+
+    const guide = screen.getByRole('heading', { name: 'Governed paid HTTP' }).closest('section');
+    expect(guide).not.toBeNull();
+    expect(guide?.querySelectorAll('pre')).toHaveLength(1);
+    expect(guide?.querySelector('pre')?.textContent).toBe(paidHttpExample);
+    expect(guide).toHaveTextContent(`public hosted MCP endpoint ${mcpEndpoint}`);
+    expect(guide).toHaveTextContent('Bearer ${AGENTOPS_MCP_CREDENTIAL}');
+    expect(guide).not.toHaveTextContent('conn_guide_secret');
+    expect(guide).toHaveTextContent('retry this exact request with the same idempotency_key');
+    expect(guide).toHaveTextContent('without paying again');
+    expect(guide).toHaveTextContent('submitting or unknown');
+    expect(within(guide as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /import|open console/i })).not.toBeInTheDocument();
   });
 
   it('forgets an initial one-time secret after the reveal drawer closes', async () => {

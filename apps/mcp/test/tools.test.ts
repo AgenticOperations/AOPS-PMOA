@@ -31,13 +31,40 @@ function fakeClient(overrides: Partial<AgentOpsRuntimeClient> = {}): AgentOpsRun
     operationRecord: () => Promise.resolve({ activity: { id: 'act_op_1', summary: 'operation recorded' } }),
     paymentX402: () => Promise.resolve({
       payment: {
-        id: 'payevt_1',
-        decision: 'submitted',
+        id: null,
+        attemptId: 'x402att_1',
+        status: 'submitting',
+        providerMode: 'test',
+        rail: 'exact_base',
+        chain: 'base',
         amount: '1.25',
-        rail: 'gateway_base',
+        asset: 'USDC',
+        agentId: 'agt_1',
+        connectionId: 'conn_1',
+        sourceId: 'src_1',
+        reservationId: 'rsv_1',
+        recipient: '0x0000000000000000000000000000000000000001',
+        network: 'eip155:8453',
+        responseAvailable: false,
       },
     }),
     ...overrides,
+  };
+}
+
+function paidHttpArgs() {
+  return {
+    idempotency_key: 'paid-http-report-1',
+    request: {
+      url: 'https://merchant.example/report',
+      method: 'POST',
+      headers: [
+        ['accept', 'application/json'],
+        ['x-trace-id', 'trace-1'],
+        ['x-trace-id', 'trace-2'],
+      ],
+      body: { kind: 'json', value: { range: '30d', include: ['usage', 'cost'] } },
+    },
   };
 }
 
@@ -101,7 +128,7 @@ describe('agentOps MCP tools', () => {
     expect(firstContent.text).toContain('approval_required');
   });
 
-  it('delegates x402 payments to the runtime API client', async () => {
+  it('rejects the legacy x402 accepts schema before calling the runtime API client', async () => {
     const calls: unknown[] = [];
     const tools = createAgentOpsTools(fakeClient({
       paymentX402: (input) => {
@@ -134,28 +161,141 @@ describe('agentOps MCP tools', () => {
       resource: { category: 'market-data' },
     });
 
-    expect(calls).toEqual([
-      {
-        accepts: [
-          {
-            scheme: 'exact',
-            network: 'base',
-            asset: 'USDC',
-            amount: '1.25',
-            payTo: '0x0000000000000000000000000000000000000001',
-            extra: { name: 'GatewayWalletBatched' },
-          },
-        ],
-        resource: { category: 'market-data' },
-      },
-    ]);
-    expect(result.isError).toBe(false);
-    expect(result.structuredContent).toMatchObject({
+    expect(calls).toEqual([]);
+    expect(result.isError).toBe(true);
+    const structuredContent = result.structuredContent;
+    if (structuredContent === undefined) throw new Error('Expected structured content.');
+    expect(structuredContent.error).toBeTypeOf('string');
+    expect(structuredContent.error).toContain('idempotency_key');
+  });
+
+  it('forwards ordered safe headers and the body exactly and returns the complete canonical result twice', async () => {
+    const calls: unknown[] = [];
+    const canonicalResult = {
       payment: {
-        decision: 'submitted',
-        rail: 'gateway_base',
+        id: 'payevt_2',
+        attemptId: 'x402att_2',
+        status: 'settled',
+        providerMode: 'live',
+        rail: 'exact_base',
+        chain: 'base',
+        amount: '1.25',
+        asset: 'USDC',
+        agentId: 'agt_1',
+        connectionId: 'conn_1',
+        sourceId: 'src_1',
+        reservationId: 'rsv_1',
+        recipient: '0x0000000000000000000000000000000000000001',
+        network: 'eip155:8453',
+        transaction: '0xsettled',
+        payer: '0x0000000000000000000000000000000000000002',
+        responseAvailable: true,
       },
-    });
+      response: {
+        status: 201,
+        headers: [
+          ['content-type', 'application/json'],
+          ['x-session-url', 'https://merchant.example/sessions/sess_1'],
+        ],
+        contentType: 'application/json',
+        bodyEncoding: 'json',
+        body: {
+          sessionUrl: 'https://merchant.example/sessions/sess_1',
+          report: { ready: true },
+        },
+        sizeBytes: 112,
+        truncated: false,
+      },
+    };
+    const tools = createAgentOpsTools(fakeClient({
+      paymentX402: (input) => {
+        calls.push(input);
+        return Promise.resolve(canonicalResult);
+      },
+    }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
+    if (tool === undefined) throw new Error('payment_x402 tool missing');
+    const args = paidHttpArgs();
+
+    const result = await tool.execute(args);
+
+    expect(calls).toEqual([args]);
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual(canonicalResult);
+    const firstContent = result.content[0];
+    if (firstContent?.type !== 'text') throw new Error('Expected text content.');
+    expect(firstContent.text).toBe(JSON.stringify(canonicalResult));
+    expect(JSON.parse(firstContent.text)).toEqual(result.structuredContent);
+  });
+
+  it.each([
+    'PAYMENT-SIGNATURE',
+    'payment-response',
+    'Payment-Required',
+    'X-PAYMENT',
+    'X-PAYMENT-TOKEN',
+    'Host',
+    'Content-Length',
+    'Connection',
+    'TE',
+    'Trailer',
+    'Transfer-Encoding',
+    'Upgrade',
+    'Keep-Alive',
+    'Proxy-Connection',
+  ])('rejects caller-controlled %s headers before calling the runtime API', async (headerName) => {
+    const calls: unknown[] = [];
+    const tools = createAgentOpsTools(fakeClient({
+      paymentX402: (input) => {
+        calls.push(input);
+        return Promise.resolve(fakeClient().paymentX402(input));
+      },
+    }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
+    if (tool === undefined) throw new Error('payment_x402 tool missing');
+    const args = paidHttpArgs();
+    args.request.headers = [[headerName, 'caller-value']];
+
+    const result = await tool.execute(args);
+
+    expect(calls).toEqual([]);
+    expect(result.isError).toBe(true);
+    const firstContent = result.content[0];
+    if (firstContent?.type !== 'text') throw new Error('Expected text content.');
+    expect(firstContent.text).toContain(`Paid HTTP header is not allowed: ${headerName}`);
+  });
+
+  it.each(['submitting', 'unknown'] as const)('returns %s payment reconciliation as a structured non-error result', async (status) => {
+    const canonicalResult = {
+      payment: {
+        id: null,
+        attemptId: `x402att_${status}`,
+        status,
+        providerMode: 'live' as const,
+        rail: 'exact_base',
+        chain: 'base',
+        amount: '1.25',
+        asset: 'USDC',
+        agentId: 'agt_1',
+        connectionId: 'conn_1',
+        sourceId: 'src_1',
+        reservationId: 'rsv_1',
+        recipient: '0x0000000000000000000000000000000000000001',
+        network: 'eip155:8453',
+        responseAvailable: false,
+      },
+    };
+    const tools = createAgentOpsTools(fakeClient({ paymentX402: () => Promise.resolve(canonicalResult) }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
+    if (tool === undefined) throw new Error('payment_x402 tool missing');
+
+    const result = await tool.execute(paidHttpArgs());
+
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual(canonicalResult);
+    const firstContent = result.content[0];
+    if (firstContent?.type !== 'text') throw new Error('Expected text content.');
+    expect(JSON.parse(firstContent.text)).toEqual(canonicalResult);
   });
 
   it('returns approval metadata when x402 payment needs approval', async () => {
@@ -171,10 +311,7 @@ describe('agentOps MCP tools', () => {
     const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
     if (tool === undefined) throw new Error('payment_x402 tool missing');
 
-    const result = await tool.execute({
-      accepts: [{ amount: '1.25', network: 'base', scheme: 'exact' }],
-      resource: { category: 'market-data' },
-    });
+    const result = await tool.execute(paidHttpArgs());
 
     expect(result.isError).toBe(false);
     expect(result.structuredContent).toMatchObject({
@@ -204,10 +341,7 @@ describe('agentOps MCP tools', () => {
     const tool = tools.find((candidate) => candidate.name === 'agentops.payment_x402');
     if (tool === undefined) throw new Error('payment_x402 tool missing');
 
-    const result = await tool.execute({
-      accepts: [{ amount: '1000', network: 'eip155:421614', scheme: 'exact' }],
-      resource: { category: 'weather' },
-    });
+    const result = await tool.execute(paidHttpArgs());
 
     expect(result.isError).toBe(false);
     expect(result.structuredContent).toMatchObject({
