@@ -732,6 +732,12 @@ export type PaidHttpExecutionOptions = {
   readonly requestConnector?: PaidHttpRequestConnector;
 };
 
+export type PaidHttpExecutor = (
+  request: NormalizedPaidHttpRequest,
+  destination: ValidatedPaidHttpDestination,
+  options?: PaidHttpExecutionOptions,
+) => Promise<PaidHttpResponse>;
+
 export type PaidHttpRequestConnector = (
   url: URL,
   options: RequestOptions,

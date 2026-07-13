@@ -11,11 +11,14 @@ import {
 export type X402AttemptStatus = 'reserved' | 'submitting' | 'settled' | 'failed' | 'unknown';
 
 export type X402PaymentMetadata = {
+  readonly approvalId?: string | undefined;
+  readonly decisionId?: string | undefined;
   readonly eventId?: string | undefined;
   readonly payer?: string | undefined;
   readonly providerMode?: string | undefined;
   readonly providerReference?: string | undefined;
   readonly reservationId?: string | undefined;
+  readonly resumeReason?: string | undefined;
   readonly receiptId?: string | undefined;
   readonly transactionHash?: string | undefined;
 };
@@ -156,11 +159,14 @@ const ATTEMPT_COLUMNS = `
 `;
 
 const PAYMENT_METADATA_KEYS = new Set([
+  'approvalId',
+  'decisionId',
   'eventId',
   'payer',
   'providerMode',
   'providerReference',
   'reservationId',
+  'resumeReason',
   'receiptId',
   'transactionHash',
 ]);

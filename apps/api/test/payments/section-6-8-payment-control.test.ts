@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import { createPaymentSource } from '../../src/engines/payments/store.js';
+import type { PaidHttpExecutor } from '../../src/engines/payments/x402-http.js';
+import { createX402ResultCryptoCodec } from '../../src/engines/payments/x402-result-crypto.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 type OrgResponse = {
@@ -36,7 +39,7 @@ type ApprovalRequiredResponse = {
 type RuntimePaymentResponse = {
   readonly payment: {
     readonly id: string;
-    readonly decision: 'submitted';
+    readonly status: 'settled';
     readonly providerMode: 'simulation';
     readonly rail: 'gateway_base';
     readonly amount: string;
@@ -46,6 +49,54 @@ type RuntimePaymentResponse = {
     readonly reservationId: string;
   };
 };
+
+type LegacyPaymentPayload = {
+  readonly accepts: ReadonlyArray<{
+    readonly amount: string;
+    readonly asset: string;
+    readonly extra?: Record<string, unknown>;
+    readonly network: string;
+    readonly payTo: string;
+    readonly scheme: string;
+  }>;
+  readonly resource: { readonly category?: string; readonly url: string };
+};
+
+const paidHttpQuotes = new Map<string, unknown>();
+let paidHttpId = 0;
+
+function canonicalPaidHttpPayload(payment: LegacyPaymentPayload) {
+  const url = new URL(payment.resource.url).href;
+  paidHttpQuotes.set(url, {
+    accepts: payment.accepts.map((accept) => ({
+      ...accept,
+      extra: accept.extra ?? {},
+      maxTimeoutSeconds: 60,
+    })),
+    resource: {
+      ...payment.resource,
+      description: 'Section 6-8 paid resource',
+      mimeType: 'application/json',
+      url,
+    },
+    x402Version: 2,
+  });
+  paidHttpId += 1;
+  return {
+    idempotency_key: `section-6-8-${paidHttpId}`,
+    request: { headers: [], method: 'GET' as const, url },
+  };
+}
+
+const paidHttpExecutor: PaidHttpExecutor = (request) => Promise.resolve({
+  body: paidHttpQuotes.get(request.url),
+  bodyEncoding: 'json',
+  contentType: 'application/json',
+  headers: [['content-type', 'application/json']],
+  sizeBytes: 512,
+  status: 402,
+  truncated: false,
+});
 
 type AgentPaymentResponse = {
   readonly account: {
@@ -175,7 +226,10 @@ describe('Sections 6-8 payment control plane', () => {
         resolveOperator: () => Promise.resolve({ actorId: 'usr_payments_owner', role: 'owner' }),
       },
       payments: {
+        paidHttpExecutor,
+        paidHttpUrlPolicy: { resolveHostname: () => Promise.resolve(['93.184.216.34']) },
         pool: store.pool,
+        resultCrypto: createX402ResultCryptoCodec(randomBytes(32).toString('base64')),
         resolveOperator: () => Promise.resolve({ actorId: 'usr_payments_owner', role: 'owner' }),
       },
       policy: {
@@ -227,7 +281,7 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         resource: { category: 'market-data', url: 'https://seller.example.test/data' },
         accepts: [
           {
@@ -239,7 +293,7 @@ describe('Sections 6-8 payment control plane', () => {
             extra: { name: 'GatewayWalletBatched' },
           },
         ],
-      },
+      }),
     });
     expect(denied.statusCode, denied.body).toBe(403);
     expect(denied.json()).toMatchObject({ error: 'payment_access_disabled' });
@@ -293,7 +347,7 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         resource: { category: 'market-data', url: 'https://seller.example.test/direct' },
         accepts: [
           {
@@ -304,7 +358,7 @@ describe('Sections 6-8 payment control plane', () => {
             payTo: '0x0000000000000000000000000000000000000001',
           },
         ],
-      },
+      }),
     });
     expect(exactOnly.statusCode, exactOnly.body).toBe(403);
     expect(exactOnly.json()).toMatchObject({ error: 'payment_rail_not_allowed' });
@@ -313,7 +367,7 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         resource: { category: 'market-data', url: 'https://seller.example.test/gateway' },
         accepts: [
           {
@@ -325,14 +379,14 @@ describe('Sections 6-8 payment control plane', () => {
             extra: { name: 'GatewayWalletBatched' },
           },
         ],
-      },
+      }),
     });
     expect(paid.statusCode, paid.body).toBe(200);
     expect(paid.json<RuntimePaymentResponse>().payment).toMatchObject({
       agentId,
       amount: '1.25',
       asset: 'USDC',
-      decision: 'submitted',
+      status: 'settled',
       providerMode: 'simulation',
       rail: 'gateway_base',
       sourceId: source.id,
@@ -342,7 +396,7 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         resource: { category: 'market-data', url: 'https://seller.example.test/gateway-expensive' },
         accepts: [
           {
@@ -354,7 +408,7 @@ describe('Sections 6-8 payment control plane', () => {
             extra: { name: 'GatewayWalletBatched' },
           },
         ],
-      },
+      }),
     });
     expect(tooLarge.statusCode, tooLarge.body).toBe(409);
     expect(tooLarge.json()).toMatchObject({ error: 'per_request_cap_exceeded' });
@@ -406,7 +460,7 @@ describe('Sections 6-8 payment control plane', () => {
     });
     expect(access.statusCode, access.body).toBe(200);
 
-    const paymentPayload = {
+    const paymentQuote = {
       resource: { category: 'market-data', url: 'https://seller.example.test/approval-gated' },
       accepts: [
         {
@@ -419,6 +473,7 @@ describe('Sections 6-8 payment control plane', () => {
         },
       ],
     };
+    const paymentPayload = canonicalPaidHttpPayload(paymentQuote);
 
     const blocked = await app.inject({
       method: 'POST',
@@ -439,10 +494,11 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
-        ...paymentPayload,
-        accepts: [{ ...paymentPayload.accepts[0], amount: '2.50' }],
-      },
+      payload: canonicalPaidHttpPayload({
+        ...paymentQuote,
+        resource: { ...paymentQuote.resource, url: 'https://seller.example.test/approval-over-cap' },
+        accepts: [{ ...paymentQuote.accepts[0]!, amount: '2.50' }],
+      }),
     });
     expect(overCap.statusCode, overCap.body).toBe(409);
     expect(overCap.json()).toMatchObject({ error: 'per_request_cap_exceeded' });
@@ -458,16 +514,13 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
-        ...paymentPayload,
-        context: { approval_id: approvalId, decision_id: decisionId },
-      },
+      payload: paymentPayload,
     });
     expect(paid.statusCode, paid.body).toBe(200);
     expect(paid.json<RuntimePaymentResponse>().payment).toMatchObject({
       agentId,
       amount: '1.25',
-      decision: 'submitted',
+      status: 'settled',
       rail: 'gateway_base',
     });
   });
@@ -492,7 +545,7 @@ describe('Sections 6-8 payment control plane', () => {
         status: 'active',
       },
     });
-    const paymentPayload = {
+    const paymentPayload = canonicalPaidHttpPayload({
       resource: { category: 'market-data', url: 'https://seller.example.test/account-threshold' },
       accepts: [{
         scheme: 'exact',
@@ -502,7 +555,7 @@ describe('Sections 6-8 payment control plane', () => {
         payTo: '0x0000000000000000000000000000000000000001',
         extra: { name: 'GatewayWalletBatched' },
       }],
-    };
+    });
 
     const gated = await app.inject({
       method: 'POST',
@@ -513,7 +566,7 @@ describe('Sections 6-8 payment control plane', () => {
 
     expect(gated.statusCode, gated.body).toBe(409);
     expect(gated.json<ApprovalRequiredResponse>()).toMatchObject({ error: 'policy_requires_approval' });
-    const { approvalId, decisionId } = gated.json<ApprovalRequiredResponse>();
+    const { approvalId } = gated.json<ApprovalRequiredResponse>();
 
     const approve = await app.inject({
       method: 'POST',
@@ -526,16 +579,13 @@ describe('Sections 6-8 payment control plane', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
-        ...paymentPayload,
-        context: { approval_id: approvalId, decision_id: decisionId },
-      },
+      payload: paymentPayload,
     });
     expect(paid.statusCode, paid.body).toBe(200);
     expect(paid.json<RuntimePaymentResponse>().payment).toMatchObject({
       agentId,
       amount: '1.25',
-      decision: 'submitted',
+      status: 'settled',
     });
   });
 });

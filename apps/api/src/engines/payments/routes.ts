@@ -36,6 +36,7 @@ import {
   PaymentApprovalRequiredError,
   PaymentLiquidityPreparingError,
   payRuntimeX402,
+  type PayRuntimeX402Options,
   requestCircleTestnetFunds,
   retryLiquidityJob,
   setOrgPaymentMode,
@@ -47,6 +48,7 @@ import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
 import {
   type PaidHttpExecutionOptions,
+  type PaidHttpExecutor,
   type PaidHttpUrlPolicy,
 } from './x402-http.js';
 import {
@@ -63,7 +65,9 @@ export type RegisterPaymentRoutesDeps = {
   readonly circleProviderFactory?: ((orgId: string) => CircleTreasuryProvider) | undefined;
   readonly circleConnectionService?: CircleConnectionController | undefined;
   readonly paidHttpExecution?: PaidHttpExecutionOptions | undefined;
+  readonly paidHttpExecutor?: PaidHttpExecutor | undefined;
   readonly paidHttpUrlPolicy?: PaidHttpUrlPolicy | undefined;
+  readonly orchestrationHooks?: PayRuntimeX402Options['orchestrationHooks'];
   readonly resultCrypto?: X402ResultCryptoCodec | undefined;
   readonly redis?: Redis | undefined;
 };
@@ -640,7 +644,9 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       },
       providerForOrg(auth.org_id),
       {
+        ...(deps.orchestrationHooks === undefined ? {} : { orchestrationHooks: deps.orchestrationHooks }),
         ...(deps.paidHttpExecution === undefined ? {} : { paidHttpExecution: deps.paidHttpExecution }),
+        ...(deps.paidHttpExecutor === undefined ? {} : { paidHttpExecutor: deps.paidHttpExecutor }),
         ...(deps.paidHttpUrlPolicy === undefined ? {} : { paidHttpUrlPolicy: deps.paidHttpUrlPolicy }),
         resultCrypto: runtimeX402ResultCrypto(deps),
       },

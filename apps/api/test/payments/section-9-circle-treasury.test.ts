@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app.js';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
+import type { PaidHttpExecutor, PaidHttpResponse } from '../../src/engines/payments/x402-http.js';
+import { createX402ResultCryptoCodec } from '../../src/engines/payments/x402-result-crypto.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 type OrgResponse = {
@@ -206,8 +209,75 @@ type PaymentRailReadinessResponse = {
   }>;
 };
 
+type LegacyPaymentPayload = {
+  readonly accepts: ReadonlyArray<{
+    readonly amount: string;
+    readonly asset: string;
+    readonly extra?: Record<string, unknown>;
+    readonly network: string;
+    readonly payTo: string;
+    readonly scheme: string;
+  }>;
+  readonly resource: {
+    readonly category?: string;
+    readonly method?: string;
+    readonly mimeType?: string;
+    readonly url: string;
+  };
+};
+
+const paidHttpQuotes = new Map<string, unknown>();
+const paidHttpOrigins: string[] = [];
+let paidHttpId = 0;
+
+function canonicalPaidHttpPayload(payment: LegacyPaymentPayload) {
+  const url = new URL(payment.resource.url).href;
+  paidHttpQuotes.set(url, {
+    accepts: payment.accepts.map((accept) => ({
+      ...accept,
+      extra: accept.extra ?? {},
+      maxTimeoutSeconds: 60,
+    })),
+    resource: {
+      description: 'Section 9 paid resource',
+      mimeType: 'application/json',
+      ...payment.resource,
+      url,
+    },
+    x402Version: 2,
+  });
+  paidHttpId += 1;
+  return {
+    idempotency_key: `section-9-${paidHttpId}`,
+    request: { headers: [], method: 'GET' as const, url },
+  };
+}
+
+const paidHttpExecutor: PaidHttpExecutor = (request) => Promise.resolve({
+  body: paidHttpQuotes.get(request.url),
+  bodyEncoding: 'json',
+  contentType: 'application/json',
+  headers: [['content-type', 'application/json']],
+  sizeBytes: 512,
+  status: 402,
+  truncated: false,
+});
+
+function paidJsonResponse(body: unknown): PaidHttpResponse {
+  return {
+    body,
+    bodyEncoding: 'json',
+    contentType: 'application/json',
+    headers: [['content-type', 'application/json']],
+    sizeBytes: JSON.stringify(body).length,
+    status: 200,
+    truncated: false,
+  };
+}
+
 let gatewaySettlement: Awaited<ReturnType<CircleTreasuryProvider['settleGatewayX402']>> = {
   network: 'eip155:84532',
+  payment: { network: 'eip155:84532', status: 'settled', transaction: '0xtest' },
   providerMode: 'test',
   success: true,
   transaction: '0xtest',
@@ -228,6 +298,12 @@ let bridgeTopUpCreditsBalance = true;
 let bridgeTopUpNeverSettles = false;
 let exactSettlement: Awaited<ReturnType<CircleTreasuryProvider['settleExactX402']>> = {
   network: 'eip155:84532',
+  payment: {
+    network: 'eip155:84532',
+    payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    status: 'settled',
+    transaction: '0xexact',
+  },
   payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   providerMode: 'test',
   success: true,
@@ -425,8 +501,14 @@ describe('Section 9 Circle treasury foundation', () => {
       },
       payments: {
         circleProvider: fakeCircleProvider(),
+        paidHttpExecutor,
+        paidHttpUrlPolicy: {
+          allowHttpOrigins: paidHttpOrigins,
+          resolveHostname: () => Promise.resolve(['93.184.216.34']),
+        },
         pool: store.pool,
         resolveOperator: () => Promise.resolve({ actorId: 'usr_circle_owner', role: 'owner' }),
+        resultCrypto: createX402ResultCryptoCodec(randomBytes(32).toString('base64')),
       },
       policy: {
         pool: store.pool,
@@ -447,6 +529,7 @@ describe('Section 9 Circle treasury foundation', () => {
     const address = app.server.address();
     if (address === null || typeof address === 'string') throw new Error('test_server_address_unavailable');
     appBaseUrl = `http://127.0.0.1:${address.port}`;
+    paidHttpOrigins.push(new URL(appBaseUrl).origin);
   }, 90_000);
 
   beforeEach(async () => {
@@ -479,6 +562,12 @@ describe('Section 9 Circle treasury foundation', () => {
     };
     exactSettlement = {
       network: 'eip155:84532',
+      payment: {
+        network: 'eip155:84532',
+        payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        status: 'settled',
+        transaction: '0xexact',
+      },
       payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       providerMode: 'test',
       success: true,
@@ -486,6 +575,7 @@ describe('Section 9 Circle treasury foundation', () => {
     };
     gatewaySettlement = {
       network: 'eip155:84532',
+      payment: { network: 'eip155:84532', status: 'settled', transaction: '0xtest' },
       providerMode: 'test',
       success: true,
       transaction: '0xtest',
@@ -1307,6 +1397,11 @@ describe('Section 9 Circle treasury foundation', () => {
     gatewaySettlement = {
       errorReason: 'insufficient_balance',
       network: 'eip155:84532',
+      payment: {
+        errorCode: 'insufficient_balance',
+        network: 'eip155:84532',
+        status: 'failed',
+      },
       providerMode: 'test',
       success: false,
     };
@@ -1352,7 +1447,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1364,10 +1459,12 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'market-data', url: 'https://seller.example.test/gateway' },
-      },
+      }),
     });
-    expect(payment.statusCode, payment.body).toBe(409);
-    expect(payment.json()).toMatchObject({ error: 'insufficient_balance' });
+    expect(payment.statusCode, payment.body).toBe(200);
+    expect(payment.json()).toMatchObject({
+      payment: { errorCode: 'insufficient_balance', status: 'failed' },
+    });
 
     const activity = await app.inject({
       method: 'GET',
@@ -1430,7 +1527,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1442,7 +1539,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/blocked-arbitrum-gateway' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(403);
@@ -1503,7 +1600,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1515,7 +1612,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -1621,7 +1718,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1633,7 +1730,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway-ready-unverified' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -1689,7 +1786,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1701,7 +1798,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway-partial-bridge' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -1775,7 +1872,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1787,7 +1884,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway-already-funded' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -1862,7 +1959,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1874,7 +1971,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway-unverified' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -1966,7 +2063,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -1978,7 +2075,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway-transient-balance' },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -2013,6 +2110,16 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('records paid-resource fulfillment after a real-provider exact x402 settlement succeeds', async () => {
+    exactSettlement = {
+      ...exactSettlement,
+      response: paidJsonResponse({
+        ok: true,
+        proof: {
+          payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          tx: '0xexact',
+        },
+      }),
+    };
     const orgId = await createOrg(app);
 
     const agentResponse = await app.inject({
@@ -2055,7 +2162,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '10000',
@@ -2072,20 +2179,18 @@ describe('Section 9 Circle treasury foundation', () => {
           method: 'GET',
           url: `${appBaseUrl}/paid-resource-test`,
         },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(200);
     expect(payment.json()).toMatchObject({
       payment: {
         amount: '0.01',
-        fulfillment: {
-          httpStatus: 200,
-          status: 'delivered',
-        },
         providerMode: 'test',
         rail: 'exact_base',
+        responseAvailable: true,
       },
+      response: { status: 200 },
     });
     expect(payment.body).toContain('0xexact');
     expect(payment.body).toContain('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -2098,9 +2203,9 @@ describe('Section 9 Circle treasury foundation', () => {
     expect(activity.json<AgentActivityFeedResponse>().events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          action: 'payment.x402.submitted',
+          action: 'payment.x402.settled',
           outcome: 'success',
-          summary: 'x402 resource delivered on exact_base',
+          summary: 'x402 payment settled on exact_base',
         }),
       ]),
     );
@@ -2108,15 +2213,13 @@ describe('Section 9 Circle treasury foundation', () => {
 
   it('records the paid resource returned by a Gateway x402 provider', async () => {
     gatewaySettlement = {
-      fulfillment: {
-        body: {
-          paid: true,
-          resource: 'Gateway paid resource',
-        },
-        status: 'delivered',
-      },
       network: 'eip155:84532',
+      payment: { network: 'eip155:84532', status: 'settled' },
       providerMode: 'test',
+      response: paidJsonResponse({
+        paid: true,
+        resource: 'Gateway paid resource',
+      }),
       success: true,
     };
     const orgId = await createOrg(app);
@@ -2169,7 +2272,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -2190,7 +2293,7 @@ describe('Section 9 Circle treasury foundation', () => {
           method: 'GET',
           url: 'https://seller.example.test/gateway',
         },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(200);
@@ -2198,15 +2301,13 @@ describe('Section 9 Circle treasury foundation', () => {
     expect(payment.json()).toMatchObject({
       payment: {
         amount: '0.001',
-        fulfillment: {
-          body: {
-            paid: true,
-            resource: 'Gateway paid resource',
-          },
-          status: 'delivered',
-        },
         providerMode: 'test',
         rail: 'gateway_base',
+        responseAvailable: true,
+      },
+      response: {
+        body: { paid: true, resource: 'Gateway paid resource' },
+        status: 200,
       },
     });
 
@@ -2218,9 +2319,9 @@ describe('Section 9 Circle treasury foundation', () => {
     expect(activity.json<AgentActivityFeedResponse>().events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          action: 'payment.x402.submitted',
+          action: 'payment.x402.settled',
           outcome: 'success',
-          summary: 'x402 resource delivered on gateway_base',
+          summary: 'x402 payment settled on gateway_base',
         }),
       ]),
     );
@@ -2269,7 +2370,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '10000',
@@ -2286,7 +2387,7 @@ describe('Section 9 Circle treasury foundation', () => {
           method: 'GET',
           url: `${appBaseUrl}/paid-resource-test`,
         },
-      },
+      }),
     });
 
     expect(payment.statusCode, payment.body).toBe(409);
@@ -2374,7 +2475,7 @@ describe('Section 9 Circle treasury foundation', () => {
         status: 'active',
       },
     });
-    const payload = {
+    const payload = canonicalPaidHttpPayload({
       accepts: [
         {
           amount: '20100000',
@@ -2391,7 +2492,7 @@ describe('Section 9 Circle treasury foundation', () => {
         method: 'GET',
         url: `${appBaseUrl}/paid-resource-test`,
       },
-    };
+    });
 
     const first = await app.inject({
       method: 'POST',
@@ -2478,7 +2579,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '600000',
@@ -2490,7 +2591,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'market-data', url: 'https://seller.example.test/partial-gateway' },
-      },
+      }),
     });
     expect(payment.statusCode, payment.body).toBe(409);
     const prep = payment.json<LiquidityPreparingResponse>();
@@ -2522,6 +2623,12 @@ describe('Section 9 Circle treasury foundation', () => {
     walletUsdcByChain.arbitrum = '0.01';
     exactSettlement = {
       network: 'eip155:421614',
+      payment: {
+        network: 'eip155:421614',
+        payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        status: 'settled',
+        transaction: '0xarbitrumexact',
+      },
       payer: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       providerMode: 'test',
       success: true,
@@ -2569,7 +2676,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '10000',
@@ -2586,7 +2693,7 @@ describe('Section 9 Circle treasury foundation', () => {
           method: 'GET',
           url: `${appBaseUrl}/paid-resource-test`,
         },
-      },
+      }),
     });
     expect(payment.statusCode, payment.body).toBe(200);
     expect(payment.json()).toMatchObject({
@@ -2851,7 +2958,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '1000',
@@ -2863,7 +2970,7 @@ describe('Section 9 Circle treasury foundation', () => {
           },
         ],
         resource: { category: 'weather', url: 'https://seller.example.test/arbitrum-gateway' },
-      },
+      }),
     });
     expect(preparing.statusCode, preparing.body).toBe(409);
     expect(preparing.json<LiquidityPreparingResponse>().error).toBe('liquidity_preparing');
@@ -2872,7 +2979,7 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'POST',
       url: '/v1/runtime/payments/x402',
       headers: { authorization: `Bearer ${secret}` },
-      payload: {
+      payload: canonicalPaidHttpPayload({
         accepts: [
           {
             amount: '10000',
@@ -2889,7 +2996,7 @@ describe('Section 9 Circle treasury foundation', () => {
           method: 'GET',
           url: `${appBaseUrl}/paid-resource-test`,
         },
-      },
+      }),
     });
     expect(payment.statusCode, payment.body).toBe(200);
 
@@ -2928,7 +3035,7 @@ describe('Section 9 Circle treasury foundation', () => {
       expect.arrayContaining([
         expect.objectContaining({
           amount_usdc: '0.01',
-          decision: 'submitted',
+          decision: 'settled',
           provider_mode: 'test',
           rail: 'exact_base',
           resource_category: 'weather',
@@ -2946,7 +3053,7 @@ describe('Section 9 Circle treasury foundation', () => {
         expect.objectContaining({
           amount_usdc: '0.01',
           outcome: 'accepted',
-          reason_code: 'submitted',
+          reason_code: 'settled',
           supported_rail: 'exact_base',
         }),
         expect.objectContaining({
@@ -2963,16 +3070,18 @@ describe('Section 9 Circle treasury foundation', () => {
       url: `/v1/orgs/${orgId}/payments/reservations?limit=10`,
     });
     expect(reservations.statusCode, reservations.body).toBe(200);
-    expect(reservations.json<PaymentReservationsResponse>().reservations).toEqual(
+    const paymentReservations = reservations.json<PaymentReservationsResponse>().reservations;
+    expect(paymentReservations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           amount_usdc: '0.01',
           rail: 'exact_base',
-          reason_code: 'submitted',
           status: 'settled',
         }),
       ]),
     );
+    expect(paymentReservations.find((reservation) => reservation.rail === 'exact_base')?.reason_code)
+      .toMatch(/^x402_attempt:/);
 
     const readiness = await app.inject({
       method: 'GET',
