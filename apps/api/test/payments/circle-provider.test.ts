@@ -1,15 +1,84 @@
+import { createRequire } from 'node:module';
+import { inspect } from 'node:util';
+import { join } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createCircleAgentWalletTreasuryProvider,
   createDeveloperControlledCircleTreasuryProvider,
   createCircleTreasuryProvider,
   normalizeTypedDataForCircle,
+  takeCircleProviderPaidRequestDebug,
   waitForCircleTransaction,
 } from '../../src/engines/payments/circle-provider.js';
-import type { CircleAgentCliExecutor } from '../../src/engines/payments/circle-agent-cli.js';
+import {
+  CircleAgentCliPaidRequestError,
+  createCircleAgentCliExecutor,
+  type CircleAgentCliExecutor,
+} from '../../src/engines/payments/circle-agent-cli.js';
+
+const require = createRequire(import.meta.url);
+const CircleWalletsSdk = require('@circle-fin/developer-controlled-wallets') as {
+  initiateDeveloperControlledWalletsClient: (...args: readonly unknown[]) => unknown;
+};
+
+function paymentResponseHeader(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
+}
+
+function mockDeveloperSigner(signature = `0x${'11'.repeat(65)}`): void {
+  vi.spyOn(CircleWalletsSdk, 'initiateDeveloperControlledWalletsClient')
+    .mockReturnValue({
+      signTypedData: vi.fn(() => Promise.resolve({ data: { signature } })),
+    });
+}
+
+function createDeveloperProviderWithExecutor(executeHttpRequest: ReturnType<typeof vi.fn>) {
+  return (createDeveloperControlledCircleTreasuryProvider as unknown as (
+    options: { executeHttpRequest: typeof executeHttpRequest }
+  ) => ReturnType<typeof createDeveloperControlledCircleTreasuryProvider>)({ executeHttpRequest });
+}
+
+function canonicalDeveloperInput(rail: 'exact' | 'gateway' = 'exact') {
+  const request = {
+    body: { kind: 'json' as const, value: { city: 'Mumbai' } },
+    headers: [['content-type', 'application/json']] as const,
+    method: 'POST' as const,
+    url: `https://merchant.example/${rail}`,
+  };
+  return {
+    attemptId: `attempt_dev_${rail}`,
+    destination: {
+      addresses: ['203.0.113.40'],
+      hostname: 'merchant.example',
+      resolveHostname: () => Promise.resolve(['203.0.113.40']),
+      url: request.url,
+    },
+    mode: 'test' as const,
+    request,
+    requirements: {
+      amount: '10000',
+      asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+      extra: rail === 'gateway'
+        ? {
+            name: 'GatewayWalletBatched',
+            version: '1',
+            verifyingContract: '0x0077777d7EBA4688BDeF3E311b846F25870A19B9',
+          }
+        : { name: 'USDC', version: '2' },
+      maxTimeoutSeconds: rail === 'gateway' ? 604900 : 300,
+      network: 'eip155:84532',
+      payTo: '0x000000000000000000000000000000000000dEaD',
+      scheme: 'exact' as const,
+    },
+    walletAddress: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+    walletId: 'circle_wallet_1',
+  };
+}
 
 describe('Circle treasury provider configuration', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
@@ -132,22 +201,54 @@ describe('Circle treasury provider configuration', () => {
     expect(client.getTransaction).toHaveBeenCalledTimes(2);
   });
 
-  it('settles testnet exact x402 with a Circle Agent Wallet USDC transfer', async () => {
-    const transferUsdc = vi.fn(() => Promise.resolve({ raw: {}, transaction: 'circle_tx_1' }));
+  it.each(['test', 'live'] as const)(
+  'replays the complete paid request through the Agent Wallet exact service in %s mode', async (mode) => {
+    const paidBody = { paid: true, result: 'exact service response' };
+    const payService = vi.fn(() => Promise.resolve({
+      maintenance: { cleanupPending: false, debugErasureFailed: false },
+      payment: {
+        amount: '0.01',
+        chain: 'Base Sepolia',
+        receipt: { transaction: 'circle_tx_1', success: true },
+        scheme: 'exact',
+        seller: '0x000000000000000000000000000000000000dEaD',
+      },
+      raw: {},
+      response: paidBody,
+      transaction: 'circle_tx_1',
+    }));
     const executor = {
       fundTestnetUsdc: vi.fn(),
       gatewayBalance: vi.fn(),
       gatewayDepositEco: vi.fn(),
       listWallet: vi.fn(),
-      payService: vi.fn(),
+      payService,
       status: vi.fn(),
-      transferUsdc,
+      transferUsdc: vi.fn(),
       walletBalance: vi.fn(),
     } as unknown as CircleAgentCliExecutor;
     const provider = createCircleAgentWalletTreasuryProvider({ executor });
+    const request = {
+      body: { kind: 'json' as const, value: { city: 'Mumbai' } },
+      headers: [
+        ['accept', 'application/json'],
+        ['x-request-id', 'req_exact_1'],
+      ] as const,
+      method: 'POST' as const,
+      url: 'https://merchant.example/weather',
+    };
+    const destination = {
+      addresses: ['203.0.113.10'],
+      hostname: 'merchant.example',
+      resolveHostname: () => Promise.resolve(['203.0.113.10']),
+      url: 'https://merchant.example/weather',
+    };
 
-    const result = await provider.settleExactX402({
-      mode: 'test',
+    const input = {
+      attemptId: 'attempt_exact_1',
+      destination,
+      mode,
+      request,
       requirements: {
         amount: '10000',
         asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
@@ -157,29 +258,352 @@ describe('Circle treasury provider configuration', () => {
         payTo: '0x000000000000000000000000000000000000dEaD',
         scheme: 'exact',
       },
-      resource: {
-        description: 'test x402 endpoint',
-        mimeType: 'application/json',
-        url: 'https://x402.testnet.local/weather',
-      },
       walletAddress: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
-      walletId: 'circle_agent_wallet:test:base:0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
-    });
+      walletId: `circle_agent_wallet:${mode}:base:0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839`,
+    };
+    const result = await (provider.settleExactX402 as (value: typeof input) => Promise<{
+      payment: { readonly status: string };
+      response?: unknown;
+    }>)(input);
 
     expect(result).toMatchObject({
-      network: 'eip155:84532',
-      providerMode: 'test',
-      success: true,
-      transaction: 'circle_tx_1',
+      payment: {
+        network: 'eip155:84532',
+        payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        receipt: { transaction: 'circle_tx_1', success: true },
+        status: 'settled',
+        transaction: 'circle_tx_1',
+      },
+      response: {
+        body: paidBody,
+        bodyEncoding: 'json',
+        contentType: 'application/json',
+        headers: [],
+        sizeBytes: Buffer.byteLength(JSON.stringify(paidBody)),
+        status: 200,
+        truncated: false,
+      },
     });
-    expect(transferUsdc).toHaveBeenCalledWith(expect.objectContaining({
+    expect(payService).toHaveBeenCalledWith({
       address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
-      amount: '0.01',
+      attemptId: 'attempt_exact_1',
       chain: 'base',
-      mode: 'test',
-      toAddress: '0x000000000000000000000000000000000000dEaD',
-      tokenAddress: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+      maxAmount: '0.01',
+      mode,
+      rail: 'exact',
+      request,
+      timeoutSeconds: 30,
+    });
+    expect(executor.transferUsdc).not.toHaveBeenCalled();
+  });
+
+  it('submits an exact proof with the original request and treats a successful 422 receipt as settled', async () => {
+    vi.stubEnv('CIRCLE_TEST_API_KEY', 'test_api_key');
+    vi.stubEnv('CIRCLE_TEST_ENTITY_SECRET', 'test_entity_secret');
+    const signTypedData = vi.fn(() => Promise.resolve({
+      data: { signature: `0x${'11'.repeat(65)}` },
     }));
+    vi.spyOn(CircleWalletsSdk, 'initiateDeveloperControlledWalletsClient')
+      .mockReturnValue({ signTypedData });
+    const receipt = {
+      success: true,
+      network: 'eip155:84532',
+      payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      transaction: '0xsettled',
+    };
+    const executeHttpRequest = vi.fn(() => Promise.resolve({
+      status: 422,
+      headers: [
+        ['content-type', 'application/json'],
+        ['payment-response', paymentResponseHeader(receipt)],
+      ] as const,
+      contentType: 'application/json',
+      bodyEncoding: 'json' as const,
+      body: { validation: 'merchant rejected the paid input' },
+      sizeBytes: 49,
+      truncated: false as const,
+    }));
+    const fetchMock = vi.fn(() => Promise.reject(new Error('global fetch must not be used')));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = (createDeveloperControlledCircleTreasuryProvider as unknown as (
+      options: { executeHttpRequest: typeof executeHttpRequest }
+    ) => ReturnType<typeof createDeveloperControlledCircleTreasuryProvider>)({ executeHttpRequest });
+    const request = {
+      body: { kind: 'json' as const, value: { z: 2, a: 1 } },
+      headers: [
+        ['x-request-id', 'req_dev_exact'],
+        ['content-type', 'application/json'],
+      ] as const,
+      method: 'POST' as const,
+      url: 'https://merchant.example/exact',
+    };
+    const destination = {
+      addresses: ['203.0.113.20'],
+      hostname: 'merchant.example',
+      resolveHostname: () => Promise.resolve(['203.0.113.20']),
+      url: request.url,
+    };
+    const input = {
+      attemptId: 'attempt_dev_exact',
+      destination,
+      mode: 'test' as const,
+      request,
+      requirements: {
+        amount: '10000',
+        asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
+        extra: { name: 'USDC', version: '2' },
+        maxTimeoutSeconds: 300,
+        network: 'eip155:84532',
+        payTo: '0x000000000000000000000000000000000000dEaD',
+        scheme: 'exact' as const,
+      },
+      walletAddress: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      walletId: 'circle_wallet_1',
+    };
+
+    const result = await provider.settleExactX402(input);
+
+    expect(result).toMatchObject({
+      payment: {
+        network: 'eip155:84532',
+        payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        receipt,
+        status: 'settled',
+        transaction: '0xsettled',
+      },
+      response: { status: 422, body: { validation: 'merchant rejected the paid input' } },
+    });
+    expect(executeHttpRequest).toHaveBeenCalledTimes(1);
+    const [executedRequest, executedDestination, options] = (
+      executeHttpRequest.mock.calls[0] as unknown as [
+        {
+          readonly body?: Uint8Array | undefined;
+          readonly headers: readonly (readonly [string, string])[];
+          readonly method: string;
+          readonly url: string;
+        },
+        unknown,
+        unknown,
+      ]
+    );
+    expect(executedRequest).toMatchObject({
+      headers: [
+        ['x-request-id', 'req_dev_exact'],
+        ['content-type', 'application/json'],
+        ['PAYMENT-SIGNATURE', expect.any(String)],
+      ],
+      method: 'POST',
+      url: request.url,
+    });
+    expect(Buffer.from(executedRequest?.body ?? []).toString('utf8')).toBe('{"a":1,"z":2}');
+    const proofHeader = executedRequest?.headers?.[2]?.[1] as string;
+    const proof = JSON.parse(Buffer.from(proofHeader, 'base64').toString('utf8')) as Record<string, unknown>;
+    expect(proof).toMatchObject({
+      accepted: input.requirements,
+      x402Version: 2,
+      payload: { signature: `0x${'11'.repeat(65)}` },
+    });
+    expect(executedDestination).toBe(destination);
+    expect(options).toEqual({ timeoutMs: 30_000 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: 'missing',
+      headers: [] as const,
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_missing',
+    },
+    {
+      label: 'malformed',
+      headers: [['payment-response', 'not base64']] as const,
+      expectedStatus: 'unknown',
+      expectedCode: 'payment_response_malformed',
+    },
+    {
+      label: 'explicit failure',
+      headers: [[
+        'payment-response',
+        paymentResponseHeader({
+          success: false,
+          errorReason: 'merchant_settlement_rejected',
+          network: 'eip155:84532',
+          payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        }),
+      ]] as const,
+      expectedStatus: 'failed',
+      expectedCode: 'merchant_settlement_rejected',
+    },
+  ])('classifies a $label exact receipt independently from HTTP delivery', async ({
+    headers,
+    expectedStatus,
+    expectedCode,
+  }) => {
+    mockDeveloperSigner();
+    const executeHttpRequest = vi.fn(() => Promise.resolve({
+      status: 200,
+      headers,
+      contentType: 'application/json',
+      bodyEncoding: 'json' as const,
+      body: { delivered: true },
+      sizeBytes: 18,
+      truncated: false as const,
+    }));
+    const provider = createDeveloperProviderWithExecutor(executeHttpRequest);
+
+    const result = await provider.settleExactX402(canonicalDeveloperInput());
+
+    expect(result.payment).toMatchObject({
+      status: expectedStatus,
+      errorCode: expectedCode,
+    });
+    expect(result.response).toMatchObject({ status: 200, body: { delivered: true } });
+  });
+
+  it('returns unknown when transport fails after an exact proof is created', async () => {
+    mockDeveloperSigner();
+    const executeHttpRequest = vi.fn(() => Promise.reject(new Error('socket_closed_after_write')));
+    const provider = createDeveloperProviderWithExecutor(executeHttpRequest);
+
+    const result = await provider.settleExactX402(canonicalDeveloperInput());
+
+    expect(result.payment).toMatchObject({
+      status: 'unknown',
+      errorCode: 'socket_closed_after_write',
+    });
+    expect(executeHttpRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns failed without executing HTTP when exact signing fails before proof submission', async () => {
+    mockDeveloperSigner('');
+    const executeHttpRequest = vi.fn();
+    const provider = createDeveloperProviderWithExecutor(executeHttpRequest);
+
+    const result = await provider.settleExactX402(canonicalDeveloperInput());
+
+    expect(result.payment).toMatchObject({
+      status: 'failed',
+      errorCode: 'circle_signature_missing',
+    });
+    expect(executeHttpRequest).not.toHaveBeenCalled();
+  });
+
+  it('sends the official Gateway proof to the merchant without importing a facilitator client', async () => {
+    mockDeveloperSigner();
+    const receipt = {
+      success: true,
+      network: 'eip155:84532',
+      payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      transaction: '0xgateway',
+    };
+    const executeHttpRequest = vi.fn(() => Promise.resolve({
+      status: 200,
+      headers: [['payment-response', paymentResponseHeader(receipt)]] as const,
+      contentType: 'application/json',
+      bodyEncoding: 'json' as const,
+      body: { paid: true },
+      sizeBytes: 13,
+      truncated: false as const,
+    }));
+    const provider = createDeveloperProviderWithExecutor(executeHttpRequest);
+    const input = canonicalDeveloperInput('gateway');
+
+    const result = await provider.settleGatewayX402(input);
+
+    expect(result.payment).toMatchObject({ status: 'settled', receipt, transaction: '0xgateway' });
+    const [replayedRequest, destination] = (
+      executeHttpRequest.mock.calls[0] as unknown as [
+        { readonly headers: readonly (readonly [string, string])[]; readonly method: string },
+        unknown,
+      ]
+    );
+    expect(replayedRequest).toMatchObject({
+      method: 'POST',
+      headers: [
+        ['content-type', 'application/json'],
+        ['PAYMENT-SIGNATURE', expect.any(String)],
+      ],
+    });
+    const encodedProof = replayedRequest?.headers?.[1]?.[1] as string;
+    const proof = JSON.parse(Buffer.from(encodedProof, 'base64').toString('utf8')) as Record<string, unknown>;
+    expect(proof).toMatchObject({ accepted: input.requirements, x402Version: 2 });
+    expect(destination).toBe(input.destination);
+    const source = await readFile(
+      new URL('../../src/engines/payments/circle-provider.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).not.toContain('BatchFacilitatorClient');
+    expect(source).not.toContain('@circle-fin/x402-batching/server');
+  });
+
+  it.each([
+    ['pre_submit', 'failed', 'circle_cli_paid_request_pre_submit'],
+    ['ambiguous_post_submit', 'unknown', 'circle_cli_paid_request_ambiguous_post_submit'],
+  ] as const)(
+    'maps a typed Agent Wallet %s failure without retrying',
+    async (classification, expectedStatus, expectedCode) => {
+      const error = new CircleAgentCliPaidRequestError('attempt_typed', classification, {
+        code: classification === 'pre_submit' ? 'ENOENT' : 1,
+        killed: classification === 'ambiguous_post_submit',
+        signal: null,
+      });
+      const payService = vi.fn(() => Promise.reject(error));
+      const executor = {
+        fundTestnetUsdc: vi.fn(),
+        gatewayBalance: vi.fn(),
+        gatewayDepositEco: vi.fn(),
+        listWallet: vi.fn(),
+        payService,
+        status: vi.fn(),
+        transferUsdc: vi.fn(),
+        walletBalance: vi.fn(),
+      } as unknown as CircleAgentCliExecutor;
+      const provider = createCircleAgentWalletTreasuryProvider({ executor });
+      const input = canonicalDeveloperInput();
+
+      const result = await provider.settleExactX402(input);
+
+      expect(result.payment).toMatchObject({ status: expectedStatus, errorCode: expectedCode });
+      expect(payService).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('moves Agent Wallet failure debug into a private one-shot provider channel', async () => {
+    const privateDebug = {
+      phase: 'proof_submitted',
+      merchantDiagnostic: 'private diagnostic body',
+    };
+    const runner = vi.fn(async (invocation: {
+      readonly environment?: NodeJS.ProcessEnv | undefined;
+    }) => {
+      const isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+      if (isolatedHome === undefined) throw new Error('missing isolated CLI home');
+      await writeFile(
+        join(isolatedHome, 'payments', 'payment-attempt_typed.json'),
+        JSON.stringify(privateDebug),
+      );
+      throw Object.assign(new Error('private runner failure'), {
+        code: 1,
+        killed: true,
+        signal: 'SIGTERM',
+      });
+    });
+    const executor = createCircleAgentCliExecutor({ runner });
+    const provider = createCircleAgentWalletTreasuryProvider({ executor });
+    const input = canonicalDeveloperInput('gateway');
+
+    const result = await provider.settleGatewayX402(input);
+
+    expect(result.payment).toMatchObject({
+      status: 'unknown',
+      errorCode: 'circle_cli_paid_request_ambiguous_post_submit',
+    });
+    expect(inspect(result, { depth: 10 })).not.toContain('private diagnostic body');
+    expect(Object.keys(result)).not.toContain('debug');
+    expect(takeCircleProviderPaidRequestDebug(result)).toEqual(privateDebug);
+    expect(takeCircleProviderPaidRequestDebug(result)).toBeUndefined();
+    expect(runner).toHaveBeenCalledTimes(1);
   });
 
   it('deposits Agent Wallet Gateway funds through the Circle direct Gateway deposit path', async () => {
@@ -358,18 +782,23 @@ describe('Circle treasury provider configuration', () => {
     });
   });
 
-  it('returns the paid resource after a Gateway x402 service payment succeeds', async () => {
-    const response = {
-      paid: true,
-      resource: 'agentOps Gateway x402 QA evidence',
-    };
+  it('returns a transaction-less text response after an Agent Wallet Gateway payment succeeds', async () => {
+    const response = 'agentOps Gateway x402 QA evidence';
     const payService = vi.fn(() => Promise.resolve({
+      maintenance: { cleanupPending: false, debugErasureFailed: false },
+      payment: {
+        amount: '0.001',
+        chain: 'Base Sepolia',
+        receipt: { success: true, gateway: 'batched' },
+        scheme: 'GatewayWalletBatched',
+        seller: '0x000000000000000000000000000000000000dEaD',
+      },
       raw: {
         data: {
           payment: {
             amount: '0.001',
             chain: 'Base Sepolia',
-            receipt: null,
+            receipt: { success: true, gateway: 'batched' },
             scheme: 'GatewayWalletBatched',
             seller: '0x000000000000000000000000000000000000dEaD',
           },
@@ -392,8 +821,21 @@ describe('Circle treasury provider configuration', () => {
     } as unknown as CircleAgentCliExecutor;
     const provider = createCircleAgentWalletTreasuryProvider({ executor });
 
+    const request = {
+      headers: [['accept', 'text/plain']] as const,
+      method: 'GET' as const,
+      url: 'https://x402.testnet.local/weather',
+    };
     const result = await provider.settleGatewayX402({
+      attemptId: 'attempt_gateway_1',
+      destination: {
+        addresses: ['203.0.113.30'],
+        hostname: 'x402.testnet.local',
+        resolveHostname: () => Promise.resolve(['203.0.113.30']),
+        url: request.url,
+      },
       mode: 'test',
+      request,
       requirements: {
         amount: '1000',
         asset: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
@@ -403,35 +845,41 @@ describe('Circle treasury provider configuration', () => {
         payTo: '0x000000000000000000000000000000000000dEaD',
         scheme: 'exact',
       },
-      resource: {
-        description: 'gateway x402 endpoint',
-        mimeType: 'application/json',
-        url: 'https://x402.testnet.local/weather',
-      },
       walletAddress: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
       walletId: 'circle_agent_wallet:test:base:0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
     });
 
     expect(result).toMatchObject({
       fulfillment: {
-        body: {
-          paid: true,
-          resource: 'agentOps Gateway x402 QA evidence',
-        },
+        body: response,
         status: 'delivered',
       },
-      network: 'eip155:84532',
-      providerMode: 'test',
-      success: true,
+      payment: {
+        network: 'eip155:84532',
+        payer: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        receipt: { success: true, gateway: 'batched' },
+        status: 'settled',
+      },
+      response: {
+        body: response,
+        bodyEncoding: 'text',
+        contentType: 'text/plain; charset=utf-8',
+        headers: [],
+        sizeBytes: Buffer.byteLength(response),
+        status: 200,
+        truncated: false,
+      },
     });
     expect(result.transaction).toBeUndefined();
     expect(payService).toHaveBeenCalledWith(expect.objectContaining({
       address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+      attemptId: 'attempt_gateway_1',
       chain: 'base',
       maxAmount: '0.001',
       mode: 'test',
       rail: 'gateway',
-      url: 'https://x402.testnet.local/weather',
+      request,
+      timeoutSeconds: 30,
     }));
   });
 

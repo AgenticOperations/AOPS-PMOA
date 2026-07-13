@@ -1,13 +1,31 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { BatchEvmScheme } from '@circle-fin/x402-batching/client';
-import { BatchFacilitatorClient } from '@circle-fin/x402-batching/server';
 import type * as CircleWalletsSdkTypes from '@circle-fin/developer-controlled-wallets';
 import type { Blockchain, ContractExecutionBlockchain, TestnetBlockchain } from '@circle-fin/developer-controlled-wallets';
 import { ExactEvmScheme } from '@x402/evm/exact/client';
 import { decodePaymentResponseHeader, encodePaymentSignatureHeader } from '@x402/core/http';
 import type { Network, PaymentPayload, PaymentRequirements } from '@x402/core/types';
-import { createCircleAgentCliExecutor, type CircleAgentCliExecutor } from './circle-agent-cli.js';
+import {
+  CircleAgentCliPaidRequestError,
+  createCircleAgentCliExecutor,
+  takeCircleAgentCliPaidRequestDebug,
+  type CircleAgentCliExecutor,
+  type CircleAgentCliPaidRequestDebug,
+  type CircleAgentServicePayment,
+} from './circle-agent-cli.js';
+import type {
+  NormalizedPaidHttpRequest,
+  PaidHttpRequest,
+  PaidHttpResponse,
+  ValidatedPaidHttpDestination,
+} from './x402-http.js';
+import {
+  executeBoundedHttpRequest,
+  normalizePaidHttpRequest,
+  PAID_HTTP_PAYMENT_TIMEOUT_MS,
+  PaidHttpError,
+} from './x402-http.js';
 
 const require = createRequire(import.meta.url);
 const CircleWalletsSdk = require('@circle-fin/developer-controlled-wallets') as typeof CircleWalletsSdkTypes;
@@ -203,10 +221,21 @@ export type CircleGatewayX402Requirements = {
   readonly extra: Record<string, unknown>;
 };
 
-export type CircleGatewayX402SettlementInput = {
-  readonly mode: ProviderMode;
+type CircleX402WalletIdentity = {
   readonly walletId: string;
   readonly walletAddress: string;
+};
+
+export type CircleCanonicalX402SettlementInput = CircleX402WalletIdentity & {
+  readonly attemptId: string;
+  readonly destination: ValidatedPaidHttpDestination;
+  readonly mode: ProviderMode;
+  readonly request: PaidHttpRequest;
+  readonly requirements: CircleGatewayX402Requirements;
+};
+
+export type CircleLegacyX402SettlementInput = CircleX402WalletIdentity & {
+  readonly mode: ProviderMode;
   readonly requirements: CircleGatewayX402Requirements;
   readonly resource: {
     readonly url: string;
@@ -216,8 +245,26 @@ export type CircleGatewayX402SettlementInput = {
   };
 };
 
+export type CircleGatewayX402SettlementInput =
+  | CircleCanonicalX402SettlementInput
+  | CircleLegacyX402SettlementInput;
+
+export type CircleProviderPayment = {
+  readonly status: 'settled' | 'failed' | 'unknown';
+  readonly transaction?: string | undefined;
+  readonly payer?: string | undefined;
+  readonly network: string;
+  readonly receipt?: unknown;
+  readonly errorCode?: string | undefined;
+};
+
 export type CircleGatewayX402SettlementResult = {
+  /** Required on real provider results; optional only for pre-Task-4 legacy test doubles. */
+  readonly payment?: CircleProviderPayment | undefined;
+  readonly response?: PaidHttpResponse | undefined;
+  /** @deprecated Use payment.errorCode. */
   readonly errorReason?: string | undefined;
+  /** @deprecated Use response. */
   readonly fulfillment?: {
     readonly body?: unknown;
     readonly errorReason?: string | undefined;
@@ -229,13 +276,13 @@ export type CircleGatewayX402SettlementResult = {
   readonly providerMode: ProviderMode;
   readonly success: boolean;
   readonly transaction?: string | undefined;
+  /** @deprecated Use response.status. */
+  readonly httpStatus?: number | undefined;
 };
 
 export type CircleExactX402SettlementInput = CircleGatewayX402SettlementInput;
 
-export type CircleExactX402SettlementResult = CircleGatewayX402SettlementResult & {
-  readonly httpStatus?: number | undefined;
-};
+export type CircleExactX402SettlementResult = CircleGatewayX402SettlementResult;
 
 export type CircleWalletBalanceInput = {
   readonly mode: ProviderMode;
@@ -408,12 +455,6 @@ function readEnv(mode: ProviderMode): CircleProviderEnv {
   };
 }
 
-function gatewayFacilitatorUrl(mode: ProviderMode): string {
-  const override = process.env.CIRCLE_GATEWAY_API_BASE;
-  if (override !== undefined && override.trim().length > 0) return override.trim().replace(/\/+$/, '');
-  return mode === 'test' ? 'https://gateway-api-testnet.circle.com' : 'https://gateway-api.circle.com';
-}
-
 function gatewayApiUrl(mode: ProviderMode): string {
   const override = process.env.CIRCLE_GATEWAY_API_BASE;
   if (override !== undefined && override.trim().length > 0) return override.trim().replace(/\/+$/, '');
@@ -521,17 +562,310 @@ export async function waitForCircleTransaction(
   throw new Error(`${label}_transaction_timeout`);
 }
 
-function paymentMethod(value: string | undefined): string {
-  const method = value?.trim().toUpperCase() ?? 'GET';
-  if (method.length === 0) return 'GET';
-  if (!['DELETE', 'GET', 'HEAD', 'PATCH', 'POST', 'PUT'].includes(method)) {
-    throw new Error('unsupported_exact_x402_http_method');
+function paidHttpResponseHeader(response: PaidHttpResponse): string | undefined {
+  for (const [name, value] of response.headers) {
+    const normalized = name.toLowerCase();
+    if (normalized === 'payment-response' || normalized === 'x-payment-response') return value;
   }
-  return method;
+  return undefined;
 }
 
-function paymentResponseHeader(response: Response): string | null {
-  return response.headers.get('PAYMENT-RESPONSE') ?? response.headers.get('X-PAYMENT-RESPONSE');
+const CIRCLE_PROVIDER_PAID_REQUEST_DEBUG = new WeakMap<object, CircleAgentCliPaidRequestDebug>();
+
+export function takeCircleProviderPaidRequestDebug(
+  result: CircleGatewayX402SettlementResult,
+): CircleAgentCliPaidRequestDebug | undefined {
+  const debug = CIRCLE_PROVIDER_PAID_REQUEST_DEBUG.get(result);
+  CIRCLE_PROVIDER_PAID_REQUEST_DEBUG.delete(result);
+  return debug;
+}
+
+function isCanonicalSettlementInput(
+  input: CircleGatewayX402SettlementInput,
+): input is CircleCanonicalX402SettlementInput {
+  return 'request' in input && 'destination' in input && 'attemptId' in input;
+}
+
+function cliPaidHttpResponse(value: unknown): PaidHttpResponse | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') {
+    return {
+      status: 200,
+      headers: [],
+      contentType: 'text/plain; charset=utf-8',
+      bodyEncoding: 'text',
+      body: value,
+      sizeBytes: Buffer.byteLength(value),
+      truncated: false,
+    };
+  }
+  const encoded = JSON.stringify(value);
+  return {
+    status: 200,
+    headers: [],
+    contentType: 'application/json',
+    bodyEncoding: 'json',
+    body: value,
+    sizeBytes: Buffer.byteLength(encoded),
+    truncated: false,
+  };
+}
+
+function canonicalSettlementResult(input: {
+  readonly mode: ProviderMode;
+  readonly payment: CircleProviderPayment;
+  readonly response?: PaidHttpResponse | undefined;
+}): CircleGatewayX402SettlementResult {
+  return {
+    payment: input.payment,
+    ...(input.response === undefined ? {} : { response: input.response }),
+    errorReason: input.payment.errorCode,
+    fulfillment: input.response === undefined
+      ? { status: 'not_requested' }
+      : {
+          body: input.response.body,
+          httpStatus: input.response.status,
+          status: 'delivered',
+        },
+    network: input.payment.network,
+    payer: input.payment.payer,
+    providerMode: input.mode,
+    success: input.payment.status === 'settled',
+    transaction: input.payment.transaction,
+  };
+}
+
+function agentWalletSettlementResult(input: {
+  readonly mode: ProviderMode;
+  readonly network: string;
+  readonly payer: string;
+  readonly payment: CircleAgentServicePayment;
+}): CircleGatewayX402SettlementResult {
+  return canonicalSettlementResult({
+    mode: input.mode,
+    payment: {
+      status: 'settled',
+      transaction: input.payment.transaction ?? undefined,
+      payer: input.payer,
+      network: input.network,
+      ...(input.payment.payment === null
+        ? {}
+        : { receipt: input.payment.payment.receipt }),
+    },
+    response: cliPaidHttpResponse(input.payment.response),
+  });
+}
+
+function agentWalletErrorResult(input: {
+  readonly error: unknown;
+  readonly mode: ProviderMode;
+  readonly network: string;
+}): CircleGatewayX402SettlementResult {
+  const typedError = input.error instanceof CircleAgentCliPaidRequestError
+    ? input.error
+    : undefined;
+  return canonicalSettlementResult({
+    mode: input.mode,
+    payment: {
+      status: typedError?.classification === 'ambiguous_post_submit'
+        ? 'unknown'
+        : 'failed',
+      network: input.network,
+      errorCode: typedError?.code ?? (
+        input.error instanceof Error
+          ? input.error.message
+          : 'circle_agent_wallet_payment_failed'
+      ),
+    },
+  });
+}
+
+type DeveloperX402Executor = typeof executeBoundedHttpRequest;
+
+type DeveloperControlledProviderOptions = {
+  readonly executeHttpRequest?: DeveloperX402Executor | undefined;
+};
+
+type DeveloperX402SignerClient = {
+  readonly signTypedData: (input: {
+    readonly walletId: string;
+    readonly data: string;
+    readonly memo: string;
+  }) => Promise<{ readonly data?: { readonly signature?: string | undefined } | undefined }>;
+};
+
+function settlementErrorCode(error: unknown, fallback: string): string {
+  if (error instanceof PaidHttpError) return error.code;
+  return error instanceof Error ? error.message : fallback;
+}
+
+function developerResponseResult(input: {
+  readonly mode: ProviderMode;
+  readonly network: string;
+  readonly response: PaidHttpResponse;
+}): CircleGatewayX402SettlementResult {
+  const encodedReceipt = paidHttpResponseHeader(input.response);
+  if (encodedReceipt === undefined || encodedReceipt.length === 0) {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: input.network,
+        errorCode: 'payment_response_missing',
+      },
+      response: input.response,
+    });
+  }
+
+  let receipt: unknown;
+  try {
+    receipt = decodePaymentResponseHeader(encodedReceipt);
+  } catch {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: input.network,
+        errorCode: 'payment_response_malformed',
+      },
+      response: input.response,
+    });
+  }
+  if (receipt === null || typeof receipt !== 'object') {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: input.network,
+        receipt,
+        errorCode: 'payment_response_malformed',
+      },
+      response: input.response,
+    });
+  }
+  const decoded = receipt as Record<string, unknown>;
+  if (
+    typeof decoded.success !== 'boolean' ||
+    typeof decoded.network !== 'string' ||
+    (decoded.transaction !== undefined && typeof decoded.transaction !== 'string') ||
+    (decoded.payer !== undefined && typeof decoded.payer !== 'string') ||
+    (decoded.errorReason !== undefined && typeof decoded.errorReason !== 'string')
+  ) {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: typeof decoded.network === 'string' ? decoded.network : input.network,
+        receipt,
+        errorCode: 'payment_response_malformed',
+      },
+      response: input.response,
+    });
+  }
+  if (decoded.network !== input.network) {
+    return canonicalSettlementResult({
+      mode: input.mode,
+      payment: {
+        status: 'unknown',
+        network: decoded.network,
+        receipt,
+        transaction: typeof decoded.transaction === 'string' ? decoded.transaction : undefined,
+        payer: decoded.payer,
+        errorCode: 'payment_response_network_mismatch',
+      },
+      response: input.response,
+    });
+  }
+  return canonicalSettlementResult({
+    mode: input.mode,
+    payment: {
+      status: decoded.success ? 'settled' : 'failed',
+      network: decoded.network,
+      receipt,
+      transaction: typeof decoded.transaction === 'string' ? decoded.transaction : undefined,
+      payer: decoded.payer,
+      ...(decoded.success
+        ? {}
+        : { errorCode: decoded.errorReason ?? 'payment_settlement_failed' }),
+    },
+    response: input.response,
+  });
+}
+
+async function executeDeveloperX402(input: {
+  readonly client: DeveloperX402SignerClient;
+  readonly executor: DeveloperX402Executor;
+  readonly settlement: CircleCanonicalX402SettlementInput;
+  readonly createPayload: (
+    signer: {
+      readonly address: `0x${string}`;
+      readonly signTypedData: (payload: SignTypedDataPayload) => Promise<`0x${string}`>;
+    },
+    requirements: PaymentRequirements,
+  ) => Promise<Pick<PaymentPayload, 'x402Version' | 'payload'>>;
+  readonly memo: string;
+}): Promise<CircleGatewayX402SettlementResult> {
+  const { mode, request, requirements, walletAddress, walletId } = input.settlement;
+  let paidRequest: NormalizedPaidHttpRequest;
+  try {
+    const normalized = normalizePaidHttpRequest(request);
+    const signer = {
+      address: walletAddress as `0x${string}`,
+      signTypedData: async (payload: SignTypedDataPayload): Promise<`0x${string}`> => {
+        const response = await input.client.signTypedData({
+          walletId,
+          data: JSON.stringify(normalizeTypedDataForCircle(payload)),
+          memo: input.memo,
+        });
+        const signature = response.data?.signature;
+        if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
+        return signature as `0x${string}`;
+      },
+    };
+    const normalizedRequirements = {
+      ...requirements,
+      network: requirements.network as Network,
+    } as PaymentRequirements;
+    const created = await input.createPayload(signer, normalizedRequirements);
+    const paymentPayload: PaymentPayload = {
+      ...created,
+      accepted: normalizedRequirements,
+    };
+    const proof = encodePaymentSignatureHeader(paymentPayload);
+    paidRequest = {
+      ...normalized,
+      headers: [...normalized.headers, ['PAYMENT-SIGNATURE', proof]],
+    };
+  } catch (error) {
+    return canonicalSettlementResult({
+      mode,
+      payment: {
+        status: 'failed',
+        network: requirements.network,
+        errorCode: settlementErrorCode(error, 'payment_payload_creation_failed'),
+      },
+    });
+  }
+
+  let response: PaidHttpResponse;
+  try {
+    response = await input.executor(
+      paidRequest,
+      input.settlement.destination,
+      { timeoutMs: PAID_HTTP_PAYMENT_TIMEOUT_MS },
+    );
+  } catch (error) {
+    return canonicalSettlementResult({
+      mode,
+      payment: {
+        status: 'unknown',
+        network: requirements.network,
+        errorCode: settlementErrorCode(error, 'paid_http_request_failed_after_proof'),
+      },
+    });
+  }
+  const result = developerResponseResult({ mode, network: requirements.network, response });
+  return { ...result, httpStatus: response.status };
 }
 
 function missingConfig(mode: ProviderMode): readonly string[] {
@@ -562,7 +896,9 @@ export function circleRailForChain(chain: CirclePaymentChain): string {
   return `gateway_${chain}`;
 }
 
-export function createDeveloperControlledCircleTreasuryProvider(): CircleTreasuryProvider {
+export function createDeveloperControlledCircleTreasuryProvider(
+  options: DeveloperControlledProviderOptions = {},
+): CircleTreasuryProvider {
   return {
     bridgeWalletTopUp: ({ amount, fromChain, mode, toChain }) => Promise.resolve({
       amount,
@@ -686,138 +1022,56 @@ export function createDeveloperControlledCircleTreasuryProvider(): CircleTreasur
         response: response.data ?? response,
       };
     },
-    settleExactX402: async ({ mode, requirements, resource, walletAddress, walletId }) => {
+    settleExactX402: async (input) => {
+      if (!isCanonicalSettlementInput(input)) {
+        return canonicalSettlementResult({
+          mode: input.mode,
+          payment: {
+            status: 'failed',
+            network: input.requirements.network,
+            errorCode: 'canonical_paid_http_input_required',
+          },
+        });
+      }
+      const { mode } = input;
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
-      const signer = {
-        address: walletAddress as `0x${string}`,
-        signTypedData: async (payload: SignTypedDataPayload): Promise<`0x${string}`> => {
-          const response = await client.signTypedData({
-            walletId,
-            data: JSON.stringify(normalizeTypedDataForCircle(payload)),
-            memo: 'agentOps exact x402 payment authorization',
-          });
-          const signature = response.data?.signature;
-          if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
-          return signature as `0x${string}`;
-        },
-      };
-
-      const exactRequirements = { ...requirements, network: requirements.network as Network } as PaymentRequirements;
-      const resourceInfo = {
-        description: resource.description,
-        mimeType: resource.mimeType,
-        url: resource.url,
-      };
-      const createdPayload = await new ExactEvmScheme(signer).createPaymentPayload(2, exactRequirements);
-      const paymentPayload: PaymentPayload = {
-        ...createdPayload,
-        accepted: exactRequirements,
-        resource: resourceInfo,
-      };
-      const signatureHeader = encodePaymentSignatureHeader(paymentPayload);
-      const response = await fetch(resource.url, {
-        headers: {
-          accept: resource.mimeType,
-          'PAYMENT-SIGNATURE': signatureHeader,
-        },
-        method: paymentMethod(resource.method),
+      return executeDeveloperX402({
+        client,
+        executor: options.executeHttpRequest ?? executeBoundedHttpRequest,
+        settlement: input,
+        createPayload: (signer, requirements) =>
+          new ExactEvmScheme(signer).createPaymentPayload(2, requirements),
+        memo: 'agentOps exact x402 payment authorization',
       });
-      const settlementHeader = paymentResponseHeader(response);
-      if (!response.ok) {
-        return {
-          errorReason: `exact_endpoint_http_${response.status}`,
-          httpStatus: response.status,
-          network: requirements.network,
-          providerMode: mode,
-          success: false,
-        };
-      }
-      if (settlementHeader === null || settlementHeader.length === 0) {
-        return {
-          errorReason: 'exact_payment_response_missing',
-          httpStatus: response.status,
-          network: requirements.network,
-          providerMode: mode,
-          success: false,
-        };
-      }
-      const settlement = decodePaymentResponseHeader(settlementHeader);
-      if (settlement.network !== requirements.network) {
-        return {
-          errorReason: 'exact_payment_network_mismatch',
-          httpStatus: response.status,
-          network: requirements.network,
-          payer: settlement.payer,
-          providerMode: mode,
-          success: false,
-          transaction: settlement.transaction,
-        };
-      }
-      if (settlement.success && settlement.transaction.length === 0) {
-        return {
-          errorReason: 'exact_payment_transaction_missing',
-          httpStatus: response.status,
-          network: requirements.network,
-          payer: settlement.payer,
-          providerMode: mode,
-          success: false,
-        };
-      }
-      return {
-        errorReason: settlement.success ? undefined : settlement.errorReason ?? 'exact_settlement_failed',
-        httpStatus: response.status,
-        network: settlement.network,
-        payer: settlement.payer,
-        providerMode: mode,
-        success: settlement.success,
-        transaction: settlement.transaction,
-      };
     },
-    settleGatewayX402: async ({ mode, requirements, resource, walletAddress, walletId }) => {
+    settleGatewayX402: async (input) => {
+      if (!isCanonicalSettlementInput(input)) {
+        return canonicalSettlementResult({
+          mode: input.mode,
+          payment: {
+            status: 'failed',
+            network: input.requirements.network,
+            errorCode: 'canonical_paid_http_input_required',
+          },
+        });
+      }
+      const { mode } = input;
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
-      const signer = {
-        address: walletAddress as `0x${string}`,
-        signTypedData: async (payload: SignTypedDataPayload): Promise<`0x${string}`> => {
-          const response = await client.signTypedData({
-            walletId,
-            data: JSON.stringify(normalizeTypedDataForCircle(payload)),
-            memo: 'agentOps x402 payment authorization',
-          });
-          const signature = response.data?.signature;
-          if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
-          return signature as `0x${string}`;
+      return executeDeveloperX402({
+        client,
+        executor: options.executeHttpRequest ?? executeBoundedHttpRequest,
+        settlement: input,
+        createPayload: async (signer, requirements) => {
+          const created = await new BatchEvmScheme(signer).createPaymentPayload(2, requirements);
+          return {
+            ...created,
+            payload: created.payload as unknown as Record<string, unknown>,
+          };
         },
-      };
-
-      const paymentPayload = await new BatchEvmScheme(signer).createPaymentPayload(2, requirements);
-      const acceptedPayload = {
-        ...paymentPayload,
-        accepted: requirements,
-        payload: paymentPayload.payload as unknown as Record<string, unknown>,
-        resource,
-      };
-      const facilitator = new BatchFacilitatorClient({ url: gatewayFacilitatorUrl(mode) });
-      const verify = await facilitator.verify(acceptedPayload, requirements);
-      if (!verify.isValid) {
-        return {
-          errorReason: verify.invalidReason ?? 'gateway_verify_failed',
-          network: requirements.network,
-          payer: verify.payer,
-          providerMode: mode,
-          success: false,
-        };
-      }
-      const settlement = await facilitator.settle(acceptedPayload, requirements);
-      return {
-        errorReason: settlement.success ? undefined : settlement.errorReason ?? 'gateway_settlement_failed',
-        network: settlement.network,
-        payer: settlement.payer,
-        providerMode: mode,
-        success: settlement.success,
-        transaction: settlement.transaction,
-      };
+        memo: 'agentOps Gateway x402 payment authorization',
+      });
     },
   };
 }
@@ -977,72 +1231,80 @@ export function createCircleAgentWalletTreasuryProvider(options: {
         response,
       };
     },
-    settleExactX402: async ({ mode, requirements, resource, walletAddress }) => {
+    settleExactX402: async (input) => {
+      const { mode, requirements, walletAddress } = input;
       const chain = chainFromGatewayNetwork(requirements.network);
-      const amount = formatMicros(BigInt(requirements.amount));
       try {
-        const payment = mode === 'test'
-          ? await executor.transferUsdc({
+        const payment = isCanonicalSettlementInput(input)
+          ? await executor.payService({
               address: walletAddress,
-              amount,
+              attemptId: input.attemptId,
               chain,
-              idempotencyKey: randomUUID(),
+              maxAmount: formatMicros(BigInt(requirements.amount)),
               mode,
-              toAddress: requirements.payTo,
-              tokenAddress: requirements.asset,
+              rail: 'exact',
+              request: input.request,
+              timeoutSeconds: 30,
             })
           : await executor.payService({
               address: walletAddress,
               chain,
-              maxAmount: amount,
+              maxAmount: formatMicros(BigInt(requirements.amount)),
               mode,
               rail: 'exact',
-              url: resource.url,
+              url: input.resource.url,
             });
-        return {
+        return agentWalletSettlementResult({
+          mode,
           network: requirements.network,
           payer: walletAddress,
-          providerMode: mode,
-          success: payment.transaction !== null,
-          transaction: payment.transaction ?? undefined,
-          ...(payment.transaction === null ? { errorReason: 'circle_agent_wallet_payment_missing_transaction' } : {}),
-        };
+          payment,
+        });
       } catch (error) {
-        return {
-          errorReason: error instanceof Error ? error.message : 'circle_agent_wallet_payment_failed',
-          network: requirements.network,
-          providerMode: mode,
-          success: false,
-        };
+        const result = agentWalletErrorResult({ error, mode, network: requirements.network });
+        if (error instanceof CircleAgentCliPaidRequestError) {
+          const debug = takeCircleAgentCliPaidRequestDebug(error);
+          if (debug !== undefined) CIRCLE_PROVIDER_PAID_REQUEST_DEBUG.set(result, debug);
+        }
+        return result;
       }
     },
-    settleGatewayX402: async ({ mode, requirements, resource, walletAddress }) => {
+    settleGatewayX402: async (input) => {
+      const { mode, requirements, walletAddress } = input;
       const chain = chainFromGatewayNetwork(requirements.network);
       try {
-        const payment = await executor.payService({
-          address: walletAddress,
-          chain,
-          maxAmount: formatMicros(BigInt(requirements.amount)),
+        const payment = isCanonicalSettlementInput(input)
+          ? await executor.payService({
+              address: walletAddress,
+              attemptId: input.attemptId,
+              chain,
+              maxAmount: formatMicros(BigInt(requirements.amount)),
+              mode,
+              rail: 'gateway',
+              request: input.request,
+              timeoutSeconds: 30,
+            })
+          : await executor.payService({
+              address: walletAddress,
+              chain,
+              maxAmount: formatMicros(BigInt(requirements.amount)),
+              mode,
+              rail: 'gateway',
+              url: input.resource.url,
+            });
+        return agentWalletSettlementResult({
           mode,
-          rail: 'gateway',
-          url: resource.url,
+          network: requirements.network,
+          payer: walletAddress,
+          payment,
         });
-        return {
-          fulfillment: payment.response === undefined
-            ? { status: 'not_requested' }
-            : { body: payment.response, status: 'delivered' },
-          network: requirements.network,
-          providerMode: mode,
-          success: true,
-          transaction: payment.transaction ?? undefined,
-        };
       } catch (error) {
-        return {
-          errorReason: error instanceof Error ? error.message : 'circle_agent_wallet_payment_failed',
-          network: requirements.network,
-          providerMode: mode,
-          success: false,
-        };
+        const result = agentWalletErrorResult({ error, mode, network: requirements.network });
+        if (error instanceof CircleAgentCliPaidRequestError) {
+          const debug = takeCircleAgentCliPaidRequestDebug(error);
+          if (debug !== undefined) CIRCLE_PROVIDER_PAID_REQUEST_DEBUG.set(result, debug);
+        }
+        return result;
       }
     },
   };
