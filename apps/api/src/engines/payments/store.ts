@@ -4720,6 +4720,7 @@ export type PayRuntimeX402Options = {
   readonly orchestrationHooks?: {
     readonly afterProviderEvidence?: (() => void | Promise<void>) | undefined;
     readonly afterReserved?: (() => void | Promise<void>) | undefined;
+    readonly afterSubmitting?: (() => void | Promise<void>) | undefined;
     readonly canResumeReserved?: (() => boolean | Promise<boolean>) | undefined;
   } | undefined;
   readonly paidHttpExecution?: PaidHttpExecutionOptions | undefined;
@@ -4757,6 +4758,10 @@ type PreparedPaidHttpPayment = {
   readonly resource: ReturnType<typeof x402Resource>;
   readonly source: PaymentSourceRow;
 };
+
+type PreparedPaidHttpPaymentOutcome =
+  | { readonly kind: 'existing'; readonly attempt: X402AttemptRecord }
+  | { readonly kind: 'prepared'; readonly payment: PreparedPaidHttpPayment };
 
 function paymentResultFromAttempt(attempt: X402AttemptRecord): RuntimeX402PaymentResult {
   const providerMode = attempt.payment_metadata.providerMode;
@@ -4813,9 +4818,20 @@ async function preparePaidHttpPayment(
   destination: ValidatedPaidHttpDestination,
   paymentInput: RuntimeX402PaymentInput,
   resultCrypto: X402ResultCryptoCodec,
-): Promise<PreparedPaidHttpPayment> {
+): Promise<PreparedPaidHttpPaymentOutcome> {
   return withTransaction(pool, async (client) => {
     const account = await activePaymentAccount(client, auth);
+    const attemptStore = createPostgresX402AttemptStore(client, { resultCrypto });
+    const racedAttempt = await attemptStore.findAttempt(auth.connection_id, input.idempotency_key);
+    if (racedAttempt !== null) {
+      if (racedAttempt.request_hash !== requestHash) {
+        throw conflict(
+          'payment_idempotency_conflict',
+          'This idempotency key is already bound to a different payment request.',
+        );
+      }
+      return { attempt: racedAttempt, kind: 'existing' };
+    }
     const mode = (await getOrgPaymentMode(client, auth.org_id)).mode;
     const supportedQuotes = supportedRuntimeQuotes(paymentInput, mode);
     const quote = supportedQuotes.find((candidate) => account.allowed_rails.includes(candidate.rail)) ?? null;
@@ -4872,7 +4888,6 @@ async function preparePaidHttpPayment(
       x402: { amount: quote.x402Amount, network: quote.x402Network },
     };
     const quoteHash = sha256Hex(quotePayload);
-    const attemptStore = createPostgresX402AttemptStore(client, { resultCrypto });
     const attempt = await attemptStore.createAttempt({
       orgId: auth.org_id,
       agentId: auth.agent_id,
@@ -4963,18 +4978,21 @@ async function preparePaidHttpPayment(
       ],
     );
     return {
-      ...(approvalRequired === undefined ? {} : { approvalRequired }),
-      attempt,
-      destination,
-      mode,
-      paymentInput: paymentInputWithBinding,
-      policyGate,
-      quote,
-      quoteHash,
-      quotePayload,
-      reservationId,
-      resource,
-      source,
+      kind: 'prepared',
+      payment: {
+        ...(approvalRequired === undefined ? {} : { approvalRequired }),
+        attempt,
+        destination,
+        mode,
+        paymentInput: paymentInputWithBinding,
+        policyGate,
+        quote,
+        quoteHash,
+        quotePayload,
+        reservationId,
+        resource,
+        source,
+      },
     };
   });
 }
@@ -5709,7 +5727,7 @@ export async function payRuntimeX402(
       accepts: required.accepts,
       context: { idempotency_key: input.idempotency_key },
     };
-    prepared = await preparePaidHttpPayment(
+    const preparation = await preparePaidHttpPayment(
       pool,
       auth,
       input,
@@ -5718,6 +5736,18 @@ export async function payRuntimeX402(
       paymentInput,
       resultCrypto,
     );
+    if (preparation.kind === 'existing') {
+      const racedAttempt = preparation.attempt;
+      if (racedAttempt.encrypted_result !== null) {
+        const retained = resultCrypto.decrypt<StoredRuntimeX402Result | StoredRuntimeX402ProviderEvidence>(
+          { attemptId: racedAttempt.id, connectionId: auth.connection_id, orgId: auth.org_id },
+          racedAttempt.encrypted_result,
+        );
+        if ('result' in retained) return retained.result;
+      }
+      return paymentResultFromAttempt(racedAttempt);
+    }
+    prepared = preparation.payment;
   }
   if (freshAttempt) await options.orchestrationHooks?.afterReserved?.();
   if (prepared.approvalRequired !== undefined) throw prepared.approvalRequired;
@@ -5744,6 +5774,7 @@ export async function payRuntimeX402(
     { connectionId: auth.connection_id, orgId: auth.org_id },
     prepared.attempt.id,
   );
+  await options.orchestrationHooks?.afterSubmitting?.();
 
   let settlement: RuntimeX402SettlementResult;
   try {

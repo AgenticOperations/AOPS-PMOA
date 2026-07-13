@@ -20,6 +20,9 @@ describe('durable x402 paid HTTP flow', () => {
   let providerOutcome: 'base64' | 'failed' | 'settled' | 'unknown' = 'settled';
   let crashAfterProviderEvidence = false;
   let crashAfterReserved = false;
+  let crashAfterSubmitting = false;
+  let providerRelease: (() => Promise<void>) | undefined;
+  let providerStarted: (() => void) | undefined;
   let resumeReserved = false;
 
   function settlementResult(): CircleGatewayX402SettlementResult {
@@ -121,6 +124,7 @@ describe('durable x402 paid HTTP flow', () => {
     }),
     settleExactX402: async (input) => {
       providerCalls += 1;
+      providerStarted?.();
       expect(input).toHaveProperty('attemptId');
       expect(input).toHaveProperty('destination');
       expect(input).toHaveProperty('request');
@@ -142,6 +146,7 @@ describe('durable x402 paid HTTP flow', () => {
             AND state <> 'idle'`,
       );
       expect(activeTransactions.rows[0]?.count).toBe('0');
+      await providerRelease?.();
       return settlementResult();
     },
     settleGatewayX402: async (input) => provider.settleExactX402(input),
@@ -154,6 +159,18 @@ describe('durable x402 paid HTTP flow', () => {
     merchant = Fastify({ logger: false });
     merchant.get('/*', async (request, reply) => {
       discoveryCalls += 1;
+      if (request.url.startsWith('/redirect')) {
+        return reply.redirect('https://redirect.example.test/steal-payment');
+      }
+      if (request.url.startsWith('/timeout')) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      if (request.url.startsWith('/oversized')) {
+        return reply
+          .code(402)
+          .type('application/json')
+          .send({ padding: 'x'.repeat(1024 * 1024) });
+      }
       const resourceUrl = new URL(request.url, merchantUrl).href;
       return reply.code(402).send({
         x402Version: 2,
@@ -185,7 +202,13 @@ describe('durable x402 paid HTTP flow', () => {
       payments: {
         circleProvider: provider,
         pool: store.pool,
-        paidHttpUrlPolicy: { allowHttpOrigins: [new URL(merchantUrl).origin] },
+        paidHttpExecution: { timeoutMs: 50 },
+        paidHttpUrlPolicy: {
+          allowHttpOrigins: [new URL(merchantUrl).origin],
+          resolveHostname: (hostname) => hostname === 'unsafe.example.test'
+            ? Promise.resolve(['127.0.0.1'])
+            : Promise.reject(new Error(`Unexpected test hostname: ${hostname}`)),
+        },
         resultCrypto: createX402ResultCryptoCodec(randomBytes(32).toString('base64')),
         resolveOperator: () => Promise.resolve({ actorId: 'usr_owner', role: 'owner' }),
         orchestrationHooks: {
@@ -194,6 +217,9 @@ describe('durable x402 paid HTTP flow', () => {
           },
           afterReserved: () => {
             if (crashAfterReserved) throw new Error('test_crash_after_reserved');
+          },
+          afterSubmitting: () => {
+            if (crashAfterSubmitting) throw new Error('test_crash_after_submitting');
           },
           canResumeReserved: () => resumeReserved,
         },
@@ -423,6 +449,61 @@ describe('durable x402 paid HTTP flow', () => {
     expect(providerCalls).toBe(1);
   });
 
+  it('serializes concurrent full-flow requests into one attempt, reservation, and provider call', async () => {
+    providerOutcome = 'settled';
+    providerCalls = 0;
+    discoveryCalls = 0;
+    const { agentId, secret } = await createReadyBuyer('Concurrent Full Flow');
+    const payload = {
+      idempotency_key: 'concurrent-full-flow-key',
+      request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+    };
+
+    const responses = await Promise.all([
+      api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload,
+      }),
+      api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload,
+      }),
+    ]);
+
+    expect(responses.map((response) => response.statusCode)).toEqual([200, 200]);
+    expect(responses.map((response) => response.json<{ payment: { status: string } }>().payment.status))
+      .toContain('settled');
+    expect(providerCalls).toBe(1);
+    const state = await store.pool.query<{
+      attempt_count: string;
+      reservation_count: string;
+      reserved_usdc: string;
+      spent_usdc: string;
+    }>(
+      `SELECT count(DISTINCT attempt.id)::text AS attempt_count,
+              count(DISTINCT reservation.id)::text AS reservation_count,
+              account.reserved_usdc::text,
+              account.spent_usdc::text
+         FROM runtime_payment_attempts AS attempt
+         JOIN payment_reservations AS reservation
+           ON reservation.reason_code = 'x402_attempt:' || attempt.id
+         JOIN agent_payment_accounts AS account ON account.agent_id = attempt.agent_id
+        WHERE attempt.agent_id = $1 AND attempt.idempotency_key = $2
+        GROUP BY account.reserved_usdc, account.spent_usdc`,
+      [agentId, payload.idempotency_key],
+    );
+    expect(state.rows[0]).toEqual({
+      attempt_count: '1',
+      reservation_count: '1',
+      reserved_usdc: '0.000000',
+      spent_usdc: '0.010000',
+    });
+  });
+
   it('holds one reservation for approval and resumes the same key without rediscovery', async () => {
     providerOutcome = 'settled';
     providerCalls = 0;
@@ -596,6 +677,135 @@ describe('durable x402 paid HTTP flow', () => {
     expect(recovered.json()).toMatchObject({ payment: { status: 'settled' } });
     expect(providerCalls).toBe(1);
     expect(discoveryCalls).toBe(1);
+  });
+
+  it('recovers a crash after submitting as unresolved without automatically calling the provider', async () => {
+    providerOutcome = 'settled';
+    providerCalls = 0;
+    discoveryCalls = 0;
+    crashAfterSubmitting = true;
+    const { agentId, secret } = await createReadyBuyer('Submitting Crash');
+    const payload = {
+      idempotency_key: 'submitting-crash-key',
+      request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+    };
+
+    const crashed = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    expect(crashed.statusCode).toBe(500);
+    crashAfterSubmitting = false;
+
+    const replay = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({ payment: { status: 'submitting' } });
+    expect(providerCalls).toBe(0);
+    expect(discoveryCalls).toBe(1);
+    const state = await store.pool.query<{ attempt_status: string; reservation_status: string }>(
+      `SELECT attempt.status AS attempt_status, reservation.status AS reservation_status
+         FROM runtime_payment_attempts AS attempt
+         JOIN payment_reservations AS reservation
+           ON reservation.reason_code = 'x402_attempt:' || attempt.id
+        WHERE attempt.agent_id = $1 AND attempt.idempotency_key = $2`,
+      [agentId, payload.idempotency_key],
+    );
+    expect(state.rows[0]).toEqual({ attempt_status: 'submitting', reservation_status: 'reserved' });
+  });
+
+  it('replays the settled result after the MCP runtime response is lost without repaying', async () => {
+    providerOutcome = 'settled';
+    providerCalls = 0;
+    discoveryCalls = 0;
+    let signalProviderStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    let releaseProvider!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    providerStarted = signalProviderStarted;
+    providerRelease = () => release;
+    const { agentId, secret } = await createReadyBuyer('Lost MCP Response');
+    const payload = {
+      idempotency_key: 'lost-mcp-response-key',
+      request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+    };
+    const address = await api.listen({ host: '127.0.0.1', port: 0 });
+    const controller = new AbortController();
+    const lostResponse = fetch(`${address}/v1/runtime/payments/x402`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${secret}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    await started;
+    controller.abort();
+    await expect(lostResponse).rejects.toThrow();
+    releaseProvider();
+    providerRelease = undefined;
+    providerStarted = undefined;
+
+    await expect.poll(async () => {
+      const result = await store.pool.query<{ status: string }>(
+        `SELECT status FROM runtime_payment_attempts WHERE agent_id = $1 AND idempotency_key = $2`,
+        [agentId, payload.idempotency_key],
+      );
+      return result.rows[0]?.status;
+    }).toBe('settled');
+
+    const replay = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload,
+    });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({ payment: { status: 'settled' } });
+    expect(providerCalls).toBe(1);
+    expect(discoveryCalls).toBe(1);
+  });
+
+  it.each([
+    ['redirect', '/redirect', 1],
+    ['timeout', '/timeout', 1],
+    ['oversized response', '/oversized', 1],
+    ['unsafe destination', 'https://unsafe.example.test/data', 0],
+  ] as const)('rejects a %s before creating a payment attempt', async (_case, resource, expectedDiscoveryCalls) => {
+    providerCalls = 0;
+    discoveryCalls = 0;
+    const { agentId, secret } = await createReadyBuyer(`Rejected ${_case}`);
+    const url = resource.startsWith('http') ? resource : `${new URL(merchantUrl).origin}${resource}`;
+    const response = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        idempotency_key: `rejected-${_case.replaceAll(' ', '-')}`,
+        request: { url, method: 'GET', headers: [] },
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(providerCalls).toBe(0);
+    expect(discoveryCalls).toBe(expectedDiscoveryCalls);
+    const attempts = await store.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM runtime_payment_attempts WHERE agent_id = $1`,
+      [agentId],
+    );
+    expect(attempts.rows[0]?.count).toBe('0');
   });
 
   it('caches binary privately and returns settled truth after result expiry without repayment', async () => {

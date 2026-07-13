@@ -238,6 +238,122 @@ describe('createHostedMcpHandler', () => {
     }
   });
 
+  it('recovers the same payment key after the MCP caller disconnects without executing the provider twice', async () => {
+    const results = new Map<string, Record<string, unknown>>();
+    let providerCalls = 0;
+    let signalProviderStarted!: () => void;
+    const providerStarted = new Promise<void>((resolve) => {
+      signalProviderStarted = resolve;
+    });
+    let releaseProvider!: () => void;
+    const providerRelease = new Promise<void>((resolve) => {
+      releaseProvider = resolve;
+    });
+    let signalSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      signalSettled = resolve;
+    });
+    const started = await startHandler({
+      createRuntimeClient: (credential) => fakeClient(credential, {
+        paymentX402: async (input) => {
+          const retained = results.get(input.idempotency_key);
+          if (retained !== undefined) return retained;
+          providerCalls += 1;
+          signalProviderStarted();
+          await providerRelease;
+          const result = {
+            payment: {
+              attemptId: 'rpa_lost_mcp_response',
+              responseAvailable: true,
+              status: 'settled',
+              transaction: '0xpaid-once',
+            },
+            response: {
+              body: { delivered: true },
+              bodyEncoding: 'json',
+              headers: [['content-type', 'application/json']],
+              sizeBytes: 18,
+              status: 200,
+              truncated: false,
+            },
+          };
+          results.set(input.idempotency_key, result);
+          signalSettled();
+          return result;
+        },
+      }),
+    });
+    const toolBody = JSON.stringify({
+      id: 77,
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: {
+        name: 'agentops.payment_x402',
+        arguments: {
+          idempotency_key: 'lost-mcp-response-key',
+          request: {
+            headers: [],
+            method: 'GET',
+            url: 'https://merchant.example.test/report',
+          },
+        },
+      },
+    });
+    const lostResponse = new Promise<RawResponse>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          headers: {
+            ...validPostHeaders(),
+            authorization: 'Bearer credential-a',
+            'content-length': String(Buffer.byteLength(toolBody)),
+          },
+          hostname: started.url.hostname,
+          method: 'POST',
+          path: started.url.pathname,
+          port: started.url.port,
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => resolve({
+            body: Buffer.concat(chunks).toString('utf8'),
+            headers: new Headers(),
+            status: response.statusCode ?? 0,
+          }));
+        },
+      );
+      request.once('error', reject);
+      request.end(toolBody);
+      void providerStarted.then(() => request.destroy(new Error('Test MCP caller disconnected.')));
+    });
+
+    await providerStarted;
+    await expect(lostResponse).rejects.toThrow('Test MCP caller disconnected.');
+    releaseProvider();
+    await settled;
+
+    const replay = await rawRequest(started, {
+      authorization: 'Bearer credential-a',
+      body: toolBody,
+      headers: validPostHeaders(),
+    });
+    expect(replay.status).toBe(200);
+    expect(JSON.parse(replay.body)).toMatchObject({
+      id: 77,
+      result: {
+        isError: false,
+        structuredContent: {
+          payment: {
+            attemptId: 'rpa_lost_mcp_response',
+            status: 'settled',
+            transaction: '0xpaid-once',
+          },
+        },
+      },
+    });
+    expect(providerCalls).toBe(1);
+  });
+
   it.each([
     ['missing', undefined],
     ['wrong scheme', 'Basic abc'],
