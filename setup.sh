@@ -89,6 +89,12 @@ generate_internal_secrets() {
     env_set "$API_ENV" CIRCLE_PROFILE_MASTER_KEY "$value"
     log 'Generated CIRCLE_PROFILE_MASTER_KEY in apps/api/.env.'
   fi
+  value="$(env_get "$API_ENV" X402_RESULT_ENCRYPTION_KEY)"
+  if [[ -z "$value" ]]; then
+    value="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))")"
+    env_set "$API_ENV" X402_RESULT_ENCRYPTION_KEY "$value"
+    log 'Generated X402_RESULT_ENCRYPTION_KEY in apps/api/.env.'
+  fi
   value="$(env_get "$API_ENV" CIRCLE_WORKER_TOKEN)"
   if [[ -z "$value" ]]; then
     value="$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")"

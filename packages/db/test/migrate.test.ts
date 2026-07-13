@@ -1,4 +1,7 @@
 import pg from 'pg';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { runMigrations } from '../src/migrate.js';
@@ -139,6 +142,32 @@ describe('PMOA database migrations', () => {
       "SELECT to_regclass('public.policy_versions')::text AS exists",
     );
     expect(policyTable.rows[0]?.exists).toBe('policy_versions');
+  });
+
+  it('serializes concurrent migration runners with a PostgreSQL advisory lock', async () => {
+    const migrationsDir = await mkdtemp(path.join(tmpdir(), 'agentops-migrations-'));
+    const migrationId = '9000_concurrent_migration_lock_probe';
+    await writeFile(
+      path.join(migrationsDir, `${migrationId}.sql`),
+      `SELECT pg_sleep(0.1);
+       CREATE TABLE concurrent_migration_lock_probe (id text PRIMARY KEY);`,
+    );
+
+    try {
+      const results = await Promise.allSettled([
+        runMigrations(pool, { migrationsDir }),
+        runMigrations(pool, { migrationsDir }),
+      ]);
+
+      expect(results).toEqual(expect.arrayContaining([
+        { status: 'fulfilled', value: [migrationId] },
+        { status: 'fulfilled', value: [] },
+      ]));
+    } finally {
+      await pool.query('DROP TABLE IF EXISTS concurrent_migration_lock_probe');
+      await pool.query('DELETE FROM schema_migrations WHERE id = $1', [migrationId]);
+      await rm(migrationsDir, { force: true, recursive: true });
+    }
   });
 
   it('creates tenant anchor and canonical audit tables with restrict retention', async () => {

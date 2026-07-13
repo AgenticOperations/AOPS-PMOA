@@ -10,6 +10,7 @@ import { IdentityError } from '../identity/errors.js';
 
 type WorkerClientOptions = {
   readonly baseUrl: string;
+  readonly timeoutMs?: number;
   readonly token: string;
 };
 
@@ -45,6 +46,7 @@ async function workerRequest<T>(options: WorkerClientOptions, path: string, body
         'content-type': 'application/json',
       },
       method: 'POST',
+      signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
     });
   } catch {
     throw new IdentityError(

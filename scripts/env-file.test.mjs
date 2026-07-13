@@ -20,6 +20,7 @@ function validConfig() {
       'CIRCLE_WORKER_PORT=8090',
       'CIRCLE_WORKER_TOKEN=12345678901234567890123456789012',
       `CIRCLE_PROFILE_MASTER_KEY=${Buffer.alloc(32, 7).toString('base64')}`,
+      `X402_RESULT_ENCRYPTION_KEY=${Buffer.alloc(32, 9).toString('base64')}`,
     ].join('\n')),
     web: parseEnv([
       'AGENTOPS_API_BASE_URL=http://localhost:8080',
@@ -71,4 +72,15 @@ test('validateRuntimeConfig rejects missing secrets and cross-service drift', ()
   assert.ok(errors.some((error) => error.includes('GOOGLE_CLIENT_SECRET')));
   assert.ok(errors.some((error) => error.includes('at least 32')));
   assert.ok(errors.some((error) => error.includes('SESSION_COOKIE_NAME values must match')));
+});
+
+test('validateRuntimeConfig requires a distinct canonical 32-byte payment-result key', () => {
+  const { api, web } = validConfig();
+  api.set('X402_RESULT_ENCRYPTION_KEY', 'malformed');
+  let errors = validateRuntimeConfig(api, web);
+  assert.ok(errors.some((error) => error.includes('X402_RESULT_ENCRYPTION_KEY')));
+
+  api.set('X402_RESULT_ENCRYPTION_KEY', api.get('CIRCLE_PROFILE_MASTER_KEY'));
+  errors = validateRuntimeConfig(api, web);
+  assert.ok(errors.some((error) => error.includes('must be distinct')));
 });

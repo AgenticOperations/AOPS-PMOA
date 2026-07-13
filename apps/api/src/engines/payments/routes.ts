@@ -264,7 +264,7 @@ function unavailableCircleProvider(): CircleTreasuryProvider {
 
 function runtimeX402ResultCrypto(deps: RegisterPaymentRoutesDeps): X402ResultCryptoCodec | undefined {
   if (deps.resultCrypto !== undefined) return deps.resultCrypto;
-  const key = process.env.CIRCLE_PROFILE_MASTER_KEY;
+  const key = process.env.X402_RESULT_ENCRYPTION_KEY;
   if (key === undefined || key.length === 0) return undefined;
   try {
     return createX402ResultCryptoCodec(key);

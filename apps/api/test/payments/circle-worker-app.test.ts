@@ -12,6 +12,7 @@ const WORKER_TOKEN = 'worker-secret-32-bytes-minimum-value';
 function buildWorker(
   providerOverrides: Partial<CircleTreasuryProvider> = {},
   paidHttpAllowOrigins: readonly string[] = [],
+  readiness?: () => Promise<boolean>,
 ) {
   const lockCalls = vi.fn();
   const withOrgLock = async <T>(orgId: string, operation: () => Promise<T>): Promise<T> => {
@@ -43,6 +44,7 @@ function buildWorker(
     connectionService: service,
     paidHttpAllowOrigins,
     providerFactory: () => provider,
+    readiness,
     token: WORKER_TOKEN,
     withOrgLock,
   });
@@ -129,6 +131,25 @@ describe('Circle worker internal API', () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toEqual({ ok: true, service: 'circle-worker' });
+    await app.close();
+  });
+
+  it('exposes dependency-aware readiness without the worker token', async () => {
+    const { app } = buildWorker({}, [], () => Promise.resolve(true));
+    const response = await app.inject({ method: 'GET', url: '/readyz' });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toEqual({ ok: true, service: 'circle-worker', status: 'ready' });
+    await app.close();
+  });
+
+  it('fails worker readiness closed when its dependency is unavailable', async () => {
+    const { app } = buildWorker({}, [], () => Promise.reject(new Error('database secret')));
+    const response = await app.inject({ method: 'GET', url: '/readyz' });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toEqual({ ok: false, service: 'circle-worker', status: 'not_ready' });
+    expect(response.body).not.toContain('database secret');
     await app.close();
   });
 

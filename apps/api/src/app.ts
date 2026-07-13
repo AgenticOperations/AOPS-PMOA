@@ -25,6 +25,8 @@ export type BuildAppOptions = {
   readonly policy?: RegisterPolicyRoutesDeps;
   readonly approvals?: RegisterApprovalRoutesDeps;
   readonly runtime?: RegisterRuntimeRoutesDeps;
+  readonly enableTestnetX402Fixtures?: boolean;
+  readonly readiness?: () => Promise<boolean>;
 };
 
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
@@ -44,7 +46,23 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     }),
   );
 
-  registerTestnetX402VerifierRoutes(app);
+  app.get('/readyz', async (_request, reply) => {
+    let ready = false;
+    try {
+      ready = options.readiness !== undefined && await options.readiness();
+    } catch {
+      ready = false;
+    }
+    return reply.code(ready ? 200 : 503).send({
+      ok: ready,
+      service: 'agentops-pmoa-api',
+      status: ready ? 'ready' : 'not_ready',
+    });
+  });
+
+  if (options.enableTestnetX402Fixtures === true) {
+    registerTestnetX402VerifierRoutes(app);
+  }
 
   if (options.identity !== undefined) {
     registerIdentityRoutes(app, { ...options.identity, policy: options.policy });

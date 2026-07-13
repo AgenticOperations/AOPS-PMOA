@@ -1,6 +1,6 @@
 ---
 created: 2026-07-06
-updated: 2026-07-12
+updated: 2026-07-13
 project: agentOps
 ecosystem: circle
 tags: [environment, setup, security, circle, oauth]
@@ -32,7 +32,10 @@ This inventory lists key names and ownership only. It must never contain credent
 | `CIRCLE_PROFILE_MASTER_KEY` | worker only | Base64-encoded 32-byte key encrypting organization Circle profiles |
 | `CIRCLE_WORKER_TOKEN` | API/worker | Internal bearer token, minimum 32 characters |
 | `CIRCLE_WORKER_URL` | API | Private worker base URL |
+| `CIRCLE_WORKER_TIMEOUT_MS` | API | Bounded timeout for private API-to-worker requests |
 | `CIRCLE_WORKER_HOST`, `CIRCLE_WORKER_PORT` | worker | Worker listener; supported local port is `8090` |
+| `PUBLIC_API_BASE_URL` | API/worker | Canonical public API origin used for deployment validation and explicitly enabled QA fixtures |
+| `X402_RESULT_ENCRYPTION_KEY` | API only | Distinct base64-encoded 32-byte key encrypting durable paid-response material |
 
 `setup.sh` securely asks for missing Google values and generates the two internal Circle worker secrets. It never generates or stores organization OTPs.
 
@@ -44,6 +47,7 @@ This inventory lists key names and ownership only. It must never contain credent
 - `CIRCLE_GATEWAY_API_BASE`
 - `CIRCLE_LIVE_RAIL_VERIFICATION_ENABLED`, `CIRCLE_LIVE_REBALANCE_ENABLED` (not enabled in the testnet product)
 - `PUBLIC_API_BASE_URL`
+- `ENABLE_TESTNET_X402_FIXTURES` (isolated QA only; defaults to disabled and must stay disabled in the deployed product)
 
 ### Developer-controlled provider only
 
@@ -77,7 +81,7 @@ The shipped local flow uses organization-scoped Agent Stack sessions. These valu
 | `MCP_ALLOWED_HOSTS` | Exact accepted HTTP Host authorities |
 | `MCP_ALLOWED_ORIGINS` | Exact browser origins allowed to verify one-time credentials |
 | `MCP_MAX_BODY_BYTES` | JSON-RPC request body limit |
-| `MCP_MAX_INFLIGHT_REQUESTS` | Process-level concurrent request ceiling |
+| `MCP_MAX_IN_FLIGHT` | Process-level concurrent request ceiling |
 | `MCP_SHUTDOWN_GRACE_MS` | Maximum graceful drain time after termination begins |
 | `AGENTOPS_MCP_TIMEOUT_MS` | Runtime API request timeout |
 
@@ -98,6 +102,9 @@ The bootstrap does not prompt for `AGENTOPS_MCP_CREDENTIAL`, because credentials
 - Local `.env` files are gitignored and written with owner-only permissions by setup.
 - Never print secrets, OTPs, session cookies, private keys, payment signatures, or decrypted Circle profiles.
 - The profile master key belongs only on the Circle worker in deployment.
+- The x402 result key belongs only on the API and must never reuse the Circle profile master key.
 - API and worker must share the same database and worker token.
 - The web process must never receive worker secrets or Circle profile material.
 - `DATABASE_URL` is the only PMOA database target switch. Never point it at the legacy `BUILD` database without a migration plan.
+- Production deployment values are fail-closed: public URLs may not use loopback authorities, OAuth and worker secrets must be present, and the public API, console, and MCP origins must be explicit.
+- `deploy/docker-compose.testnet.yml` keeps PostgreSQL, Redis, and the Circle worker on the private application network. Only web, API, and MCP publish host ports.

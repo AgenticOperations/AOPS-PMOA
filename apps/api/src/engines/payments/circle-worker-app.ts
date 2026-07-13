@@ -52,6 +52,7 @@ export type CircleWorkerRouteDeps = {
   readonly connectionService: CircleConnectionService;
   readonly paidHttpAllowOrigins?: readonly string[] | undefined;
   readonly providerFactory: (orgId: string) => CircleTreasuryProvider;
+  readonly readiness?: (() => Promise<boolean>) | undefined;
   readonly token: string;
   readonly withOrgLock?: (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
 };
@@ -185,7 +186,7 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
   const withOrgLock = deps.withOrgLock ?? (<T>(_orgId: string, operation: () => Promise<T>) => operation());
   const paidHttpAllowOrigins = deps.paidHttpAllowOrigins ?? [];
   app.addHook('preHandler', async (request, reply) => {
-    if (request.method === 'GET' && request.url === '/healthz') return;
+    if (request.method === 'GET' && (request.url === '/healthz' || request.url === '/readyz')) return;
     if (!tokenMatches(bearerToken(request), deps.token)) {
       return reply.code(401).send({ error: 'circle_worker_unauthorized' });
     }
@@ -211,6 +212,20 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
   });
 
   app.get('/healthz', () => ({ ok: true, service: 'circle-worker' }));
+
+  app.get('/readyz', async (_request, reply) => {
+    let ready = false;
+    try {
+      ready = deps.readiness !== undefined && await deps.readiness();
+    } catch {
+      ready = false;
+    }
+    return reply.code(ready ? 200 : 503).send({
+      ok: ready,
+      service: 'circle-worker',
+      status: ready ? 'ready' : 'not_ready',
+    });
+  });
 
   app.post('/internal/circle/connections/init', async (request, reply) => {
     const input = connectionInitSchema.parse(request.body ?? {});

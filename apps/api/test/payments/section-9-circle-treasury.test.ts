@@ -495,6 +495,7 @@ describe('Section 9 Circle treasury foundation', () => {
     vi.stubEnv('LOG_LEVEL', 'silent');
     store = await startPostgres();
     app = buildApp({
+      enableTestnetX402Fixtures: true,
       identity: {
         pool: store.pool,
         resolveOperator: () => Promise.resolve({ actorId: 'usr_circle_owner', role: 'owner' }),

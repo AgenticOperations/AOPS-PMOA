@@ -139,4 +139,26 @@ describe('Circle worker client', () => {
       statusCode: 503,
     });
   });
+
+  it('bounds an unavailable worker request with an abort timeout', async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('worker request aborted')), { once: true });
+      });
+    }));
+    const client = createCircleWorkerConnectionClient({
+      baseUrl: 'http://circle-worker:8090',
+      timeoutMs: 20,
+      token: 'worker-secret',
+    });
+
+    await expect(client.status({ orgId: 'org_1' })).rejects.toMatchObject({
+      code: 'circle_worker_unavailable',
+      statusCode: 503,
+    });
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(true);
+  });
 });

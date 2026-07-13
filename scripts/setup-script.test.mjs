@@ -17,6 +17,38 @@ test('bootstrap entrypoints are executable and syntactically valid Bash', async 
   assert.notEqual((await stat(startup)).mode & 0o111, 0);
 });
 
+test('setup generates distinct persistent 32-byte encryption keys for API results and worker profiles', async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'agentops-secrets-'));
+  const apiEnv = path.join(temporaryRoot, 'api.env');
+  const webEnv = path.join(temporaryRoot, 'web.env');
+  await Promise.all([writeFile(apiEnv, ''), writeFile(webEnv, '')]);
+  const generate = `
+    export AGENTOPS_SETUP_LIB_ONLY=true
+    source ${shellQuote(setup)}
+    API_ENV=${shellQuote(apiEnv)}
+    WEB_ENV=${shellQuote(webEnv)}
+    generate_internal_secrets
+    generate_internal_secrets
+  `;
+
+  try {
+    const result = spawnSync('bash', ['-c', generate], { encoding: 'utf8' });
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    const contents = await readFile(apiEnv, 'utf8');
+    const profileKey = /^CIRCLE_PROFILE_MASTER_KEY=(.+)$/m.exec(contents)?.[1];
+    const resultKey = /^X402_RESULT_ENCRYPTION_KEY=(.+)$/m.exec(contents)?.[1];
+    assert.ok(profileKey);
+    assert.ok(resultKey);
+    assert.equal(Buffer.from(profileKey, 'base64').length, 32);
+    assert.equal(Buffer.from(resultKey, 'base64').length, 32);
+    assert.notEqual(profileKey, resultKey);
+    assert.equal((contents.match(/^CIRCLE_PROFILE_MASTER_KEY=/gm) ?? []).length, 1);
+    assert.equal((contents.match(/^X402_RESULT_ENCRYPTION_KEY=/gm) ?? []).length, 1);
+  } finally {
+    await rm(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 test('setup and startup document the four-service command contract', () => {
   for (const command of [setup, startup]) {
     const result = spawnSync(command, ['--help'], { encoding: 'utf8' });

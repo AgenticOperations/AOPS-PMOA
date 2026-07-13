@@ -1,0 +1,173 @@
+name: agentops-testnet
+
+x-app-image: &app-image
+  build:
+    context: ..
+    dockerfile: Dockerfile
+  image: agentops-pmoa:testnet
+  init: true
+  restart: unless-stopped
+
+x-data-environment: &data-environment
+  NODE_ENV: production
+  LOG_LEVEL: info
+  DATABASE_URL: postgres://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  REDIS_URL: redis://redis:6379
+  SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-agentops_session}
+  APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL}
+  PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:?set PUBLIC_API_BASE_URL}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [private]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [private]
+    volumes:
+      - redis-data:/data
+
+  circle-worker:
+    <<: *app-image
+    stop_grace_period: 5m
+    command: ["npm", "--workspace", "@agentops-pmoa/api", "run", "start:circle-worker"]
+    environment:
+      <<: *data-environment
+      CIRCLE_TREASURY_PROVIDER: ${CIRCLE_TREASURY_PROVIDER:-agent_stack}
+      CIRCLE_PROFILE_MASTER_KEY: ${CIRCLE_PROFILE_MASTER_KEY:?set CIRCLE_PROFILE_MASTER_KEY}
+      CIRCLE_WORKER_TOKEN: ${CIRCLE_WORKER_TOKEN:?set CIRCLE_WORKER_TOKEN}
+      CIRCLE_WORKER_HOST: 0.0.0.0
+      CIRCLE_WORKER_PORT: 8090
+      CIRCLE_CLI_TIMEOUT_MS: ${CIRCLE_CLI_TIMEOUT_MS:-240000}
+      CIRCLE_CLI_MAX_RETRIES: ${CIRCLE_CLI_MAX_RETRIES:-3}
+      CIRCLE_CLI_RETRY_DELAY_MS: ${CIRCLE_CLI_RETRY_DELAY_MS:-5000}
+      CIRCLE_LIQUIDITY_WORKER_POLL_MS: ${CIRCLE_LIQUIDITY_WORKER_POLL_MS:-5000}
+      CIRCLE_LIQUIDITY_SUBMITTED_RETRY_MS: ${CIRCLE_LIQUIDITY_SUBMITTED_RETRY_MS:-30000}
+      ENABLE_TESTNET_X402_FIXTURES: ${ENABLE_TESTNET_X402_FIXTURES:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose: ["8090"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks: [private]
+
+  api:
+    <<: *app-image
+    stop_grace_period: 30s
+    command: ["npm", "--workspace", "@agentops-pmoa/api", "run", "start"]
+    environment:
+      <<: *data-environment
+      HOST: 0.0.0.0
+      PORT: 8080
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?set GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?set GOOGLE_CLIENT_SECRET}
+      GOOGLE_OAUTH_REDIRECT_URL: ${GOOGLE_OAUTH_REDIRECT_URL:?set GOOGLE_OAUTH_REDIRECT_URL}
+      CIRCLE_WORKER_TOKEN: ${CIRCLE_WORKER_TOKEN:?set CIRCLE_WORKER_TOKEN}
+      CIRCLE_WORKER_URL: http://circle-worker:8090
+      CIRCLE_WORKER_TIMEOUT_MS: ${CIRCLE_WORKER_TIMEOUT_MS:-10000}
+      X402_RESULT_ENCRYPTION_KEY: ${X402_RESULT_ENCRYPTION_KEY:?set X402_RESULT_ENCRYPTION_KEY}
+      ENABLE_TESTNET_X402_FIXTURES: ${ENABLE_TESTNET_X402_FIXTURES:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      circle-worker:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks: [private]
+
+  mcp:
+    <<: *app-image
+    stop_grace_period: 30s
+    command: ["npm", "--workspace", "@agentops-pmoa/mcp", "run", "start:http"]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_API_BASE_URL: http://api:8080
+      AGENTOPS_MCP_TIMEOUT_MS: ${AGENTOPS_MCP_TIMEOUT_MS:-10000}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8070
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?set MCP_PUBLIC_URL}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?set MCP_ALLOWED_HOSTS}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:?set MCP_ALLOWED_ORIGINS}
+      MCP_MAX_BODY_BYTES: ${MCP_MAX_BODY_BYTES:-1048576}
+      MCP_MAX_IN_FLIGHT: ${MCP_MAX_IN_FLIGHT:-100}
+      MCP_SHUTDOWN_GRACE_MS: ${MCP_SHUTDOWN_GRACE_MS:-10000}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${MCP_PORT:-8070}:8070"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8070/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks: [private]
+
+  web:
+    <<: *app-image
+    stop_grace_period: 30s
+    command: ["npm", "--workspace", "@agentops-pmoa/web", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3005"]
+    environment:
+      NODE_ENV: production
+      AGENTOPS_API_BASE_URL: http://api:8080
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-agentops_session}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?set MCP_PUBLIC_URL}
+      ARC_ENV_LABEL: Circle testnet
+    depends_on:
+      api:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3005}:3005"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [private]
+
+networks:
+  private:
+    internal: false
+
+volumes:
+  postgres-data:
+  redis-data:

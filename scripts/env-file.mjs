@@ -98,6 +98,7 @@ export function validateRuntimeConfig(api, web) {
   const workerUrl = required(api, 'CIRCLE_WORKER_URL', 'API', errors);
   const workerToken = required(api, 'CIRCLE_WORKER_TOKEN', 'API', errors);
   const profileKey = required(api, 'CIRCLE_PROFILE_MASTER_KEY', 'API', errors);
+  const resultKey = required(api, 'X402_RESULT_ENCRYPTION_KEY', 'API', errors);
   const apiPort = required(api, 'PORT', 'API', errors);
   const workerPort = required(api, 'CIRCLE_WORKER_PORT', 'API', errors);
 
@@ -129,6 +130,15 @@ export function validateRuntimeConfig(api, web) {
     const decoded = Buffer.from(profileKey, 'base64');
     if (decoded.length !== 32 || decoded.toString('base64').replace(/=+$/, '') !== profileKey.replace(/=+$/, '')) {
       errors.push('CIRCLE_PROFILE_MASTER_KEY must be a base64-encoded 32-byte key');
+    }
+  }
+  if (resultKey.length > 0) {
+    const decoded = Buffer.from(resultKey, 'base64');
+    if (decoded.length !== 32 || decoded.toString('base64') !== resultKey) {
+      errors.push('X402_RESULT_ENCRYPTION_KEY must be canonical base64 for exactly 32 bytes');
+    }
+    if (resultKey === profileKey) {
+      errors.push('X402_RESULT_ENCRYPTION_KEY and CIRCLE_PROFILE_MASTER_KEY must be distinct');
     }
   }
   return errors;

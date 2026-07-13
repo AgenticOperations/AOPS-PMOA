@@ -14,8 +14,10 @@ import {
 import { withPostgresCircleOrgLock } from './engines/payments/circle-org-lock.js';
 import { reconcileCircleProviderJobs, retryLiquidityJob } from './engines/payments/store.js';
 import { purgeExpiredX402Results } from './engines/payments/x402-attempt-store.js';
+import { createReadinessProbe } from './readiness.js';
+import { installGracefulShutdown } from './shutdown.js';
 
-const env = readApiEnv();
+const env = readApiEnv(process.env, 'worker');
 const workerToken = env.circleWorkerToken;
 if (workerToken.length < 32) throw new Error('CIRCLE_WORKER_TOKEN must contain at least 32 characters.');
 if (env.circleProfileMasterKey.length === 0) throw new Error('CIRCLE_PROFILE_MASTER_KEY is required.');
@@ -32,6 +34,7 @@ registerCircleWorkerRoutes(app, {
   connectionService,
   paidHttpAllowOrigins: deriveCircleWorkerPaidHttpAllowOrigins(process.env),
   providerFactory: (orgId) => createOrgScopedCircleTreasuryProvider(connectionService, orgId),
+  readiness: createReadinessProbe([() => pool.query('SELECT 1')]),
   token: workerToken,
   withOrgLock: (orgId, operation) => withPostgresCircleOrgLock(pool, orgId, operation),
 });
@@ -40,6 +43,7 @@ app.addHook('onClose', async () => {
   stopLiquidityWorker();
   await pool.end();
 });
+installGracefulShutdown(() => app.close());
 
 const host = process.env.CIRCLE_WORKER_HOST ?? '127.0.0.1';
 const port = Number(process.env.CIRCLE_WORKER_PORT ?? '8090');
@@ -111,6 +115,6 @@ try {
   }, pollMs);
 } catch (error) {
   app.log.error(error);
-  await pool.end();
+  await app.close();
   process.exit(1);
 }
