@@ -60,6 +60,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0018_circle_org_connections');
     expect(firstRun).toContain('0019_x402_action_execution_copy');
     expect(firstRun).toContain('0020_liquidity_job_idempotency');
+    expect(firstRun).toContain('0021_runtime_payment_attempts');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -87,6 +88,7 @@ describe('PMOA database migrations', () => {
       '0018_circle_org_connections',
       '0019_x402_action_execution_copy',
       '0020_liquidity_job_idempotency',
+      '0021_runtime_payment_attempts',
     ]);
 
     const x402Action = await pool.query<{ description: string }>(
