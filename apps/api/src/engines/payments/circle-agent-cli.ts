@@ -103,12 +103,11 @@ export class CircleAgentCliPaidRequestError extends Error {
       readonly killed: boolean;
       readonly signal: string | null;
     },
-    cause: unknown,
   ) {
     const code = classification === 'pre_submit'
       ? 'circle_cli_paid_request_pre_submit'
       : 'circle_cli_paid_request_ambiguous_post_submit';
-    super(code, { cause });
+    super(code);
     this.attemptId = attemptId;
     this.classification = classification;
     this.code = code;
@@ -561,7 +560,7 @@ function paidRequestErrorFrom(
       ? 'pre_submit'
       : 'ambiguous_post_submit'
   );
-  return new CircleAgentCliPaidRequestError(attemptId, classification, metadata, error);
+  return new CircleAgentCliPaidRequestError(attemptId, classification, metadata);
 }
 
 function loginChallengeFrom(value: unknown, expectedEmail: string): { readonly email: string; readonly requestId: string } {

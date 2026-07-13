@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import {
   CircleAgentCliPaidRequestError,
@@ -537,7 +538,7 @@ describe('Circle Agent Wallet CLI executor', () => {
     [
       'an invalid header',
       {
-        headers: [['x-trace', 'unsafe\r\nvalue']],
+        headers: [['SENTINEL_SECRET_HEADER SPACE', 'value']],
         method: 'POST',
         url: 'https://x402.example.test/data',
       },
@@ -573,6 +574,7 @@ describe('Circle Agent Wallet CLI executor', () => {
       code: 'circle_cli_paid_request_pre_submit',
     });
     expect((failure as Error).message).toBe('circle_cli_paid_request_pre_submit');
+    expect(inspect(failure)).not.toContain('SENTINEL_SECRET');
     expect(calls).toHaveLength(0);
   });
 
@@ -610,7 +612,7 @@ describe('Circle Agent Wallet CLI executor', () => {
   });
 
   it('classifies known spawn failures as pre-submit without retrying or exposing the runner message', async () => {
-    const runnerError = Object.assign(new Error('sensitive spawn failure'), {
+    const runnerError = Object.assign(new Error('SENTINEL_SECRET_STDERR'), {
       code: 'ENOENT',
       killed: false,
       signal: null,
@@ -639,8 +641,10 @@ describe('Circle Agent Wallet CLI executor', () => {
       classification: 'pre_submit',
       code: 'circle_cli_paid_request_pre_submit',
       processCode: 'ENOENT',
+      signal: null,
     });
-    expect((failure as Error).message).not.toContain('sensitive spawn failure');
+    expect((failure as Error).message).toBe('circle_cli_paid_request_pre_submit');
+    expect(inspect(failure)).not.toContain('SENTINEL_SECRET_STDERR');
     expect(calls).toHaveLength(1);
   });
 
@@ -704,8 +708,8 @@ describe('Circle Agent Wallet CLI executor', () => {
       code: 'circle_cli_paid_request_ambiguous_post_submit',
     });
     expect((failure as Error).message).toBe('circle_cli_paid_request_ambiguous_post_submit');
-    expect((failure as Error).cause).toBeInstanceOf(Error);
-    expect(Object.keys(failure as object)).not.toContain('cause');
+    expect((failure as Error).cause).toBeUndefined();
+    expect(inspect(failure)).not.toContain('not-json');
     expect(JSON.stringify(failure)).not.toContain('not-json');
     expect(calls).toHaveLength(1);
   });
