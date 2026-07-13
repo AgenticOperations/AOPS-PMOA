@@ -1137,6 +1137,36 @@ input::placeholder {
   font-weight: 600;
 }
 
+/* ─── Navigation progress bar ─────────────────────────────────────────────── */
+
+.nav-progress-track {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  pointer-events: none;
+  height: 3px;
+}
+
+.nav-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0%;
+  opacity: 1;
+  background: linear-gradient(90deg, var(--accent-blue), oklch(0.7 0.18 260));
+  border-radius: 0 2px 2px 0;
+  /* Width driven by JS (rAF loop) — transition makes it smooth between frames */
+  transition:
+    width 80ms linear,
+    opacity 300ms ease;
+  box-shadow: 0 0 10px oklch(0.6 0.2 250 / 0.6);
+}
+
+/* ─── Command palette ─────────────────────────────────────────────────────── */
+
 .command-overlay,
 .sheet-root {
   position: fixed;
@@ -1152,24 +1182,38 @@ input::placeholder {
   height: 100%;
   border: 0;
   border-radius: 0;
-  background: rgb(15 23 42 / 0.18);
+  background: rgb(15 23 42 / 0.32);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   cursor: default;
 }
 
 .command-dialog {
   position: absolute;
-  top: 94px;
+  top: 88px;
   left: 50%;
-  width: min(620px, calc(100vw - 32px));
+  width: min(600px, calc(100vw - 32px));
   transform: translateX(-50%);
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--bg-panel);
-  box-shadow: 0 24px 90px rgb(0 0 0 / 0.18);
+  border: 1px solid var(--border-subtle);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.04),
+    0 8px 24px rgb(0 0 0 / 0.10),
+    0 32px 80px rgb(0 0 0 / 0.14);
+  animation: command-dialog-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.command-dialog {
-  border: 1px solid var(--border-subtle);
+@keyframes command-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
 }
 
 .command-item-arrow {

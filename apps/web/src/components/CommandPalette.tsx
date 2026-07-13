@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { IconArrowRight, IconSearch } from '@tabler/icons-react';
 import {
   Command,
@@ -18,6 +19,7 @@ type CommandPaletteProps = {
 
 export function CommandPalette({ orgSlug }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -40,6 +42,9 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
     [base],
   );
 
+  // Must be mounted before portal renders (SSR safety).
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
@@ -53,7 +58,6 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
           return !current;
         });
       }
-
     };
 
     document.addEventListener('keydown', onKeyDown);
@@ -126,6 +130,51 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
     router.push(href);
   };
 
+  const overlay = open ? (
+    <div className="command-overlay">
+      <button
+        aria-label="Close command menu"
+        className="command-backdrop"
+        onClick={() => setOpen(false)}
+        type="button"
+      />
+      <div
+        aria-labelledby="command-palette-title"
+        aria-modal="true"
+        className="command-dialog"
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <h2 className="sr-only" id="command-palette-title">
+          Page jump
+        </h2>
+        <Command shouldFilter>
+          <CommandInput autoFocus placeholder="Jump to a console page..." />
+          <CommandList>
+            <CommandEmpty>No page found.</CommandEmpty>
+            {['Workspace', 'Identity', 'Runtime', 'Treasury', 'Org'].map((group) => (
+              <CommandGroup heading={group} key={group}>
+                {pages
+                  .filter((page) => page.group === group)
+                  .map((page) => (
+                    <CommandItem
+                      key={page.href}
+                      onSelect={() => navigate(page.href)}
+                      value={`${page.group} ${page.label}`}
+                    >
+                      <span>{page.label}</span>
+                      <IconArrowRight aria-hidden="true" className="command-item-arrow" size={15} />
+                    </CommandItem>
+                  ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <>
       <button
@@ -141,50 +190,7 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
         <span>Jump</span>
         <kbd>⌘K</kbd>
       </button>
-      {open ? (
-        <div className="command-overlay">
-          <button
-            aria-label="Close command menu"
-            className="command-backdrop"
-            onClick={() => setOpen(false)}
-            type="button"
-          />
-          <div
-            aria-labelledby="command-palette-title"
-            aria-modal="true"
-            className="command-dialog"
-            ref={dialogRef}
-            role="dialog"
-            tabIndex={-1}
-          >
-            <h2 className="sr-only" id="command-palette-title">
-              Page jump
-            </h2>
-            <Command shouldFilter>
-              <CommandInput autoFocus placeholder="Jump to a console page..." />
-              <CommandList>
-                <CommandEmpty>No page found.</CommandEmpty>
-                {['Workspace', 'Identity', 'Runtime', 'Treasury', 'Org'].map((group) => (
-                  <CommandGroup heading={group} key={group}>
-                    {pages
-                      .filter((page) => page.group === group)
-                      .map((page) => (
-                        <CommandItem
-                          key={page.href}
-                          onSelect={() => navigate(page.href)}
-                          value={`${page.group} ${page.label}`}
-                        >
-                          <span>{page.label}</span>
-                          <IconArrowRight aria-hidden="true" className="command-item-arrow" size={15} />
-                        </CommandItem>
-                      ))}
-                  </CommandGroup>
-                ))}
-              </CommandList>
-            </Command>
-          </div>
-        </div>
-      ) : null}
+      {mounted ? createPortal(overlay, document.body) : null}
     </>
   );
 }
