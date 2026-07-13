@@ -32,8 +32,10 @@ import type {
   PaymentSourceRecord,
   RebalanceRecommendationRecord,
   RuntimeX402Accept,
+  RuntimePaidHttpX402Input,
   RuntimeX402PaymentInput,
   RuntimeX402PaymentRecord,
+  RuntimeX402PaymentResult,
   SetAgentPaymentAccessInput,
   TreasuryOverviewRecord,
   TreasuryRecord,
@@ -42,10 +44,28 @@ import {
   capabilitiesForMode,
   circleRailForChain,
   createCircleTreasuryProvider,
+  takeCircleProviderPaidRequestDebug,
+  type CircleGatewayX402SettlementResult,
   type CircleGatewayX402Requirements,
   type CircleTokenBalance,
   type CircleTreasuryProvider,
 } from './circle-provider.js';
+import {
+  assertPaidHttpUrlAllowed,
+  canonicalPaidHttpRequestHash,
+  executeBoundedHttpRequest,
+  normalizePaidHttpRequest,
+  paymentRequiredFromResponse,
+  type PaidHttpExecutionOptions,
+  type PaidHttpResponse,
+  type PaidHttpUrlPolicy,
+  type ValidatedPaidHttpDestination,
+} from './x402-http.js';
+import {
+  createPostgresX402AttemptStore,
+  type X402AttemptRecord,
+} from './x402-attempt-store.js';
+import type { X402ResultCryptoCodec } from './x402-result-crypto.js';
 
 type Db = pg.Pool | pg.PoolClient;
 
@@ -4764,7 +4784,8 @@ function railVerificationFailure(
   return null;
 }
 
-export async function payRuntimeX402(
+/** @deprecated Internal compatibility entry point for non-HTTP migration tests. */
+export async function payRuntimeX402Legacy(
   pool: pg.Pool,
   auth: ConnectionAuthResult,
   input: RuntimeX402PaymentInput,
@@ -5416,4 +5437,523 @@ export async function payRuntimeX402(
     throw conflict(transactionResult.code, transactionResult.message);
   }
   return transactionResult;
+}
+
+export type PayRuntimeX402Options = {
+  readonly paidHttpExecution?: PaidHttpExecutionOptions | undefined;
+  readonly paidHttpUrlPolicy?: PaidHttpUrlPolicy | undefined;
+  readonly resultCrypto?: X402ResultCryptoCodec | undefined;
+};
+
+type StoredRuntimeX402Result = {
+  readonly result: RuntimeX402PaymentResult;
+  readonly privateDebug?: unknown;
+};
+
+type PreparedPaidHttpPayment = {
+  readonly attempt: X402AttemptRecord;
+  readonly destination: ValidatedPaidHttpDestination;
+  readonly mode: PaymentMode;
+  readonly paymentInput: RuntimeX402PaymentInput;
+  readonly policyGate: { readonly approvalId: string | null; readonly decisionId: string };
+  readonly quote: RuntimeQuote;
+  readonly quoteHash: string;
+  readonly quotePayload: Record<string, unknown>;
+  readonly reservationId: string;
+  readonly resource: ReturnType<typeof x402Resource>;
+  readonly source: PaymentSourceRow;
+};
+
+function paymentResultFromAttempt(attempt: X402AttemptRecord): RuntimeX402PaymentResult {
+  const providerMode = attempt.payment_metadata.providerMode;
+  const rail = attempt.rail;
+  return {
+    payment: {
+      id: attempt.payment_metadata.eventId ?? null,
+      attemptId: attempt.id,
+      status: attempt.status,
+      providerMode:
+        providerMode === 'simulation' || providerMode === 'test' || providerMode === 'live'
+          ? providerMode
+          : null,
+      rail,
+      chain: rail === null ? null : chainFromRail(rail),
+      amount: attempt.amount_usdc === null ? null : formatDbUsdc(attempt.amount_usdc),
+      asset: attempt.asset,
+      agentId: attempt.agent_id,
+      connectionId: attempt.connection_id ?? '',
+      sourceId: attempt.source_id,
+      reservationId: attempt.payment_metadata.reservationId ?? null,
+      recipient: attempt.recipient,
+      network: attempt.network,
+      ...(attempt.payment_metadata.transactionHash === undefined
+        ? {}
+        : { transaction: attempt.payment_metadata.transactionHash }),
+      ...(attempt.payment_metadata.payer === undefined
+        ? {}
+        : { payer: attempt.payment_metadata.payer }),
+      ...(attempt.error_code === null ? {} : { errorCode: attempt.error_code }),
+      responseAvailable: false,
+    },
+  };
+}
+
+function safeResponseMetadata(response: PaidHttpResponse | undefined): {
+  readonly contentLength?: number;
+  readonly contentType?: string;
+  readonly statusCode?: number;
+} {
+  if (response === undefined) return {};
+  return {
+    contentLength: response.sizeBytes,
+    ...(response.contentType === undefined ? {} : { contentType: response.contentType }),
+    statusCode: response.status,
+  };
+}
+
+async function preparePaidHttpPayment(
+  pool: pg.Pool,
+  auth: ConnectionAuthResult,
+  input: RuntimePaidHttpX402Input,
+  requestHash: string,
+  destination: ValidatedPaidHttpDestination,
+  paymentInput: RuntimeX402PaymentInput,
+  resultCrypto: X402ResultCryptoCodec,
+): Promise<PreparedPaidHttpPayment> {
+  return withTransaction(pool, async (client) => {
+    const account = await activePaymentAccount(client, auth);
+    const mode = (await getOrgPaymentMode(client, auth.org_id)).mode;
+    const supportedQuotes = supportedRuntimeQuotes(paymentInput, mode);
+    const quote = supportedQuotes.find((candidate) => account.allowed_rails.includes(candidate.rail)) ?? null;
+    const resource = x402Resource(paymentInput);
+    if (supportedQuotes.length === 0) {
+      throw conflict(
+        'unsupported_payment_rail',
+        'The x402 payment request is not compatible with this workspace\'s supported USDC rails.',
+      );
+    }
+    if (quote === null) {
+      throw new IdentityError(
+        'payment_rail_not_allowed',
+        403,
+        'This agent is not allowed to use the requested payment rail.',
+      );
+    }
+    const cap = parseUsdcMicros(account.per_request_cap_usdc);
+    if (cap > 0n && quote.amountMicros > cap) {
+      throw conflict('per_request_cap_exceeded', 'Payment amount exceeds the agent per-request cap.');
+    }
+    const budget = parseUsdcMicros(account.budget_usdc);
+    const spent = parseUsdcMicros(account.spent_usdc);
+    const reserved = parseUsdcMicros(account.reserved_usdc);
+    if (spent + reserved + quote.amountMicros > budget) {
+      throw conflict('budget_exceeded', 'Payment amount exceeds the agent budget.');
+    }
+
+    const source = await activePaymentSource(client, auth.org_id, quote.rail, quote.chain);
+    if (
+      (source.provider === 'circle_gateway' || source.provider === 'circle_wallets') &&
+      (source.external_wallet_id === null || source.address === null)
+    ) {
+      throw conflict(
+        'payment_source_not_live',
+        'Circle payment source is missing its wallet address or Circle wallet id.',
+      );
+    }
+    if (quote.settlementKind === 'gateway' && source.provider !== 'circle_gateway' && source.provider !== 'simulation') {
+      throw conflict('payment_source_incompatible', 'Gateway x402 payments require a Gateway payment source.');
+    }
+    if (quote.settlementKind === 'direct_exact' && source.provider !== 'circle_wallets' && source.provider !== 'simulation') {
+      throw conflict('payment_source_incompatible', 'Exact x402 payments require a Circle Wallets payment source.');
+    }
+    if (source.provider === 'simulation' && parseUsdcMicros(source.simulated_balance_usdc) < quote.amountMicros) {
+      throw conflict('insufficient_payment_source_balance', 'Payment source does not have enough simulated balance.');
+    }
+
+    const capability = await getCircleChainCapability(client, mode, quote.chain);
+    const readinessFailure = railVerificationFailure(capability, quote);
+    if (readinessFailure !== null && source.provider !== 'simulation') {
+      throw conflict(readinessFailure.code, readinessFailure.message);
+    }
+
+    const approvalThreshold = account.approval_threshold_usdc === null
+      ? null
+      : parseUsdcMicros(account.approval_threshold_usdc);
+    const policyGate = await enforceX402Policy(
+      pool,
+      auth,
+      paymentInput,
+      quote,
+      resource,
+      approvalThreshold,
+    );
+
+    const providerMode = source.provider === 'simulation' ? 'simulation' : mode;
+    const quotePayload = {
+      accept: quote.accept,
+      resource: paymentInput.resource ?? {},
+      mode: providerMode,
+      x402: { amount: quote.x402Amount, network: quote.x402Network },
+    };
+    const quoteHash = sha256Hex(quotePayload);
+    const attemptStore = createPostgresX402AttemptStore(client, { resultCrypto });
+    const attempt = await attemptStore.createAttempt({
+      orgId: auth.org_id,
+      agentId: auth.agent_id,
+      connectionId: auth.connection_id,
+      sourceId: source.id,
+      idempotencyKey: input.idempotency_key,
+      requestHash,
+      quoteHash,
+      amountUsdc: quote.amount,
+      asset: quote.asset,
+      rail: quote.rail,
+      network: quote.x402Network,
+      recipient: quote.recipient,
+    });
+    const reservationId = prefixedId('payres');
+    await client.query(
+      `INSERT INTO payment_reservations (
+         id, org_id, agent_id, connection_id, source_id,
+         amount_usdc, asset, rail, status, reason_code, quote_hash, quote, expires_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, 'reserved', $9, $10, $11::jsonb, now() + interval '15 minutes')`,
+      [
+        reservationId,
+        auth.org_id,
+        auth.agent_id,
+        auth.connection_id,
+        source.id,
+        quote.amount,
+        quote.asset,
+        quote.rail,
+        `x402_attempt:${attempt.id}`,
+        quoteHash,
+        JSON.stringify(quotePayload),
+      ],
+    );
+    await client.query(
+      `UPDATE agent_payment_accounts
+          SET reserved_usdc = reserved_usdc + $3::numeric,
+              updated_at = now()
+        WHERE org_id = $1 AND agent_id = $2`,
+      [auth.org_id, auth.agent_id, quote.amount],
+    );
+    return {
+      attempt,
+      destination,
+      mode,
+      paymentInput,
+      policyGate,
+      quote,
+      quoteHash,
+      quotePayload,
+      reservationId,
+      resource,
+      source,
+    };
+  });
+}
+
+async function finalizeSettledPaidHttpPayment(
+  pool: pg.Pool,
+  auth: ConnectionAuthResult,
+  prepared: PreparedPaidHttpPayment,
+  settlement: CircleGatewayX402SettlementResult,
+  resultCrypto: X402ResultCryptoCodec,
+  privateDebug: unknown,
+): Promise<RuntimeX402PaymentResult> {
+  const payment = settlement.payment;
+  if (payment === undefined || payment.status !== 'settled') {
+    throw conflict(
+      payment?.errorCode ?? 'payment_settlement_unresolved',
+      'The x402 payment did not reach confirmed settlement.',
+    );
+  }
+  return withTransaction(pool, async (client) => {
+    const { attempt, quote, reservationId, resource, source } = prepared;
+    await client.query(
+      `UPDATE payment_reservations
+          SET status = 'settled', updated_at = now()
+        WHERE id = $1 AND org_id = $2 AND status = 'reserved'`,
+      [reservationId, auth.org_id],
+    );
+    await client.query(
+      `UPDATE agent_payment_accounts
+          SET reserved_usdc = reserved_usdc - $3::numeric,
+              spent_usdc = spent_usdc + $3::numeric,
+              updated_at = now()
+        WHERE org_id = $1 AND agent_id = $2`,
+      [auth.org_id, auth.agent_id, quote.amount],
+    );
+    if (source.provider === 'simulation') {
+      await client.query(
+        `UPDATE payment_sources
+            SET simulated_balance_usdc = simulated_balance_usdc - $2::numeric,
+                updated_at = now()
+          WHERE id = $1`,
+        [source.id, quote.amount],
+      );
+    }
+
+    await recordRouteObservation(client, {
+      orgId: auth.org_id,
+      agentId: auth.agent_id,
+      connectionId: auth.connection_id,
+      requestedNetwork: quote.network,
+      requestedAsset: quote.asset,
+      requestedRail: quote.rail,
+      supportedRail: quote.rail,
+      amount: quote.amount,
+      outcome: 'accepted',
+      reasonCode: 'settled',
+      resourceUrl: resource.url,
+      resourceCategory: resource.category,
+    });
+    const activity = await recordActivity(client, {
+      orgId: auth.org_id,
+      agentId: auth.agent_id,
+      connectionId: auth.connection_id,
+      decisionId: prepared.policyGate.decisionId,
+      approvalId: prepared.policyGate.approvalId ?? undefined,
+      category: 'payment',
+      action: 'payment.x402.settled',
+      outcome: 'success',
+      summary: `x402 payment settled on ${quote.rail}`,
+      payload: {
+        amount_usdc: quote.amount,
+        asset: quote.asset,
+        provider_mode: settlement.providerMode,
+        rail: quote.rail,
+        reservation_id: reservationId,
+        response: safeResponseMetadata(settlement.response),
+        source_id: source.id,
+        transaction: payment.transaction ?? null,
+      },
+    });
+    const eventId = prefixedId('payevt');
+    await client.query(
+      `INSERT INTO payment_events (
+         id, org_id, agent_id, connection_id, source_id, reservation_id,
+         decision, provider_mode, rail, chain, amount_usdc, asset,
+         recipient, network, resource_url, resource_category, quote, result, activity_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, 'settled', $7, $8, $9, $10::numeric, $11,
+               $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18)`,
+      [
+        eventId,
+        auth.org_id,
+        auth.agent_id,
+        auth.connection_id,
+        source.id,
+        reservationId,
+        settlement.providerMode,
+        quote.rail,
+        quote.chain,
+        quote.amount,
+        quote.asset,
+        quote.recipient,
+        quote.x402Network,
+        resource.url,
+        resource.category,
+        JSON.stringify(prepared.quotePayload),
+        JSON.stringify({
+          payment: {
+            network: payment.network,
+            status: payment.status,
+            transaction: payment.transaction ?? null,
+          },
+          response: safeResponseMetadata(settlement.response),
+        }),
+        activity.id,
+      ],
+    );
+    const result: RuntimeX402PaymentResult = {
+      payment: {
+        id: eventId,
+        attemptId: attempt.id,
+        status: 'settled',
+        providerMode: settlement.providerMode,
+        rail: quote.rail,
+        chain: quote.chain,
+        amount: quote.amount,
+        asset: quote.asset,
+        agentId: auth.agent_id,
+        connectionId: auth.connection_id,
+        sourceId: source.id,
+        reservationId,
+        recipient: quote.recipient,
+        network: payment.network,
+        ...(payment.transaction === undefined ? {} : { transaction: payment.transaction }),
+        ...(payment.payer === undefined ? {} : { payer: payment.payer }),
+        responseAvailable: settlement.response !== undefined,
+      },
+      ...(settlement.response === undefined ? {} : { response: settlement.response }),
+    };
+    const encrypted = resultCrypto.encrypt<StoredRuntimeX402Result>(
+      { attemptId: attempt.id, connectionId: auth.connection_id, orgId: auth.org_id },
+      { result, ...(privateDebug === undefined ? {} : { privateDebug }) },
+    );
+    const finalized = await client.query(
+      `UPDATE runtime_payment_attempts
+          SET status = 'settled',
+              payment_metadata = $4::jsonb,
+              response_metadata = $5::jsonb,
+              encrypted_result = $6::jsonb,
+              result_expires_at = now() + interval '15 minutes',
+              error_code = NULL,
+              finalized_at = now(),
+              updated_at = now()
+        WHERE id = $1 AND org_id = $2 AND connection_id = $3 AND status = 'submitting'`,
+      [
+        attempt.id,
+        auth.org_id,
+        auth.connection_id,
+        JSON.stringify({
+          eventId,
+          ...(payment.payer === undefined ? {} : { payer: payment.payer }),
+          providerMode: settlement.providerMode,
+          reservationId,
+          ...(payment.transaction === undefined ? {} : { transactionHash: payment.transaction }),
+        }),
+        JSON.stringify(safeResponseMetadata(settlement.response)),
+        JSON.stringify(encrypted),
+      ],
+    );
+    if (finalized.rowCount !== 1) throw conflict('payment_attempt_state_conflict', 'Payment attempt state changed.');
+    await recordAuditEvent(client, {
+      orgId: auth.org_id,
+      idempotencyKey: `payment.x402.settled:${attempt.id}`,
+      eventType: 'payment.x402.settled',
+      actor: { type: 'connection', id: auth.connection_id },
+      action: 'payment.x402.settled',
+      outcome: 'success',
+      resource: { type: 'payment_event', id: eventId },
+      classification: {
+        domain: 'payment',
+        category: 'financial',
+        severity: 'info',
+        tags: ['section_9', 'x402', quote.chain],
+      },
+      relations: { agent: auth.agent_id, connection: auth.connection_id },
+      refs: {
+        decision: prepared.policyGate.decisionId,
+        ...(prepared.policyGate.approvalId === null ? {} : { approval: prepared.policyGate.approvalId }),
+      },
+      source: { section: 'section_9', system: 'payments' },
+      retentionClass: 'payment',
+      payload: {
+        amount_usdc: quote.amount,
+        asset: quote.asset,
+        provider_mode: settlement.providerMode,
+        rail: quote.rail,
+        response: safeResponseMetadata(settlement.response),
+        transaction: payment.transaction ?? null,
+      },
+    });
+    return result;
+  });
+}
+
+export async function payRuntimeX402(
+  pool: pg.Pool,
+  auth: ConnectionAuthResult,
+  input: RuntimePaidHttpX402Input,
+  provider: CircleTreasuryProvider = createCircleTreasuryProvider(),
+  options: PayRuntimeX402Options = {},
+): Promise<RuntimeX402PaymentResult> {
+  const resultCrypto = options.resultCrypto;
+  if (resultCrypto === undefined) {
+    throw new IdentityError(
+      'x402_result_encryption_unavailable',
+      503,
+      'Durable x402 result encryption is not configured.',
+    );
+  }
+  const requestHash = canonicalPaidHttpRequestHash(input.request);
+  const attempts = createPostgresX402AttemptStore(pool, { resultCrypto });
+  const existing = await attempts.findAttempt(auth.connection_id, input.idempotency_key);
+  if (existing !== null) {
+    if (existing.org_id !== auth.org_id || existing.connection_id !== auth.connection_id) {
+      throw new IdentityError('payment_attempt_scope_invalid', 404, 'Payment attempt was not found.');
+    }
+    if (existing.request_hash !== requestHash) {
+      throw conflict(
+        'payment_idempotency_conflict',
+        'This idempotency key is already bound to a different payment request.',
+      );
+    }
+    if (existing.status === 'settled' && existing.encrypted_result !== null) {
+      return resultCrypto.decrypt<StoredRuntimeX402Result>(
+        { attemptId: existing.id, connectionId: auth.connection_id, orgId: auth.org_id },
+        existing.encrypted_result,
+      ).result;
+    }
+    return paymentResultFromAttempt(existing);
+  }
+
+  const normalizedRequest = normalizePaidHttpRequest(input.request);
+  const destination = await assertPaidHttpUrlAllowed(input.request.url, options.paidHttpUrlPolicy);
+  const discovery = await executeBoundedHttpRequest(normalizedRequest, destination, options.paidHttpExecution);
+  const required = paymentRequiredFromResponse(discovery);
+  if (new URL(required.resource.url).href !== destination.url) {
+    throw conflict(
+      'payment_quote_resource_mismatch',
+      'The discovered x402 quote does not match the requested resource.',
+    );
+  }
+  const resourceMethod = stringValue((required.resource as unknown as Record<string, unknown>).method);
+  if (resourceMethod !== null && resourceMethod.toUpperCase() !== input.request.method) {
+    throw conflict(
+      'payment_quote_resource_mismatch',
+      'The discovered x402 quote does not match the requested method.',
+    );
+  }
+  const paymentInput: RuntimeX402PaymentInput = {
+    resource: required.resource as unknown as Record<string, unknown>,
+    accepts: required.accepts,
+    context: { idempotency_key: input.idempotency_key },
+  };
+  const prepared = await preparePaidHttpPayment(
+    pool,
+    auth,
+    input,
+    requestHash,
+    destination,
+    paymentInput,
+    resultCrypto,
+  );
+  await attempts.markSubmitting(
+    { connectionId: auth.connection_id, orgId: auth.org_id },
+    prepared.attempt.id,
+  );
+
+  const settlement: CircleGatewayX402SettlementResult = prepared.source.provider === 'simulation'
+    ? {
+        network: prepared.quote.x402Network,
+        payment: { network: prepared.quote.x402Network, status: 'settled' as const },
+        providerMode: prepared.mode,
+        success: true,
+      }
+    : prepared.quote.settlementKind === 'gateway'
+      ? await provider.settleGatewayX402({
+          attemptId: prepared.attempt.id,
+          destination,
+          mode: prepared.mode,
+          request: input.request,
+          requirements: prepared.quote.x402Requirements,
+          walletAddress: prepared.source.address as string,
+          walletId: prepared.source.external_wallet_id as string,
+        })
+      : await provider.settleExactX402({
+          attemptId: prepared.attempt.id,
+          destination,
+          mode: prepared.mode,
+          request: input.request,
+          requirements: prepared.quote.x402Requirements,
+          walletAddress: prepared.source.address as string,
+          walletId: prepared.source.external_wallet_id as string,
+        });
+  const privateDebug = takeCircleProviderPaidRequestDebug(settlement);
+  return finalizeSettledPaidHttpPayment(pool, auth, prepared, settlement, resultCrypto, privateDebug);
 }

@@ -1,4 +1,5 @@
 import type { ActivityRecord } from '../approvals/types.js';
+import type { PaidHttpRequest, PaidHttpResponse } from './x402-http.js';
 
 export type PaymentMode = 'test' | 'live';
 export type PaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche';
@@ -319,6 +320,37 @@ export type RuntimeX402PaymentInput = {
   readonly resource?: Record<string, unknown> | undefined;
   readonly accepts: readonly RuntimeX402Accept[];
   readonly context?: Record<string, unknown> | undefined;
+};
+
+export type RuntimePaidHttpX402Input = {
+  readonly idempotency_key: string;
+  readonly request: PaidHttpRequest;
+};
+
+export type RuntimeX402PaymentTruth = {
+  readonly id: string | null;
+  readonly attemptId: string;
+  readonly status: 'reserved' | 'submitting' | 'settled' | 'failed' | 'unknown';
+  readonly providerMode: 'simulation' | 'test' | 'live' | null;
+  readonly rail: PaymentRail | null;
+  readonly chain: PaymentChain | null;
+  readonly amount: string | null;
+  readonly asset: string | null;
+  readonly agentId: string;
+  readonly connectionId: string;
+  readonly sourceId: string | null;
+  readonly reservationId: string | null;
+  readonly recipient: string | null;
+  readonly network: string | null;
+  readonly transaction?: string | undefined;
+  readonly payer?: string | undefined;
+  readonly errorCode?: string | undefined;
+  readonly responseAvailable: boolean;
+};
+
+export type RuntimeX402PaymentResult = {
+  readonly payment: RuntimeX402PaymentTruth;
+  readonly response?: PaidHttpResponse | undefined;
 };
 
 export type RuntimeX402PaymentRecord = {

@@ -1,8 +1,7 @@
-import type pg from 'pg';
+import pg from 'pg';
 import { conflict, IdentityError } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import type { PaymentRail } from './types.js';
-import type { PaidHttpResponse } from './x402-http.js';
 import {
   validateX402ResultEnvelope,
   type X402ResultCryptoCodec,
@@ -12,7 +11,11 @@ import {
 export type X402AttemptStatus = 'reserved' | 'submitting' | 'settled' | 'failed' | 'unknown';
 
 export type X402PaymentMetadata = {
+  readonly eventId?: string | undefined;
+  readonly payer?: string | undefined;
+  readonly providerMode?: string | undefined;
   readonly providerReference?: string | undefined;
+  readonly reservationId?: string | undefined;
   readonly receiptId?: string | undefined;
   readonly transactionHash?: string | undefined;
 };
@@ -72,7 +75,7 @@ export type X402AttemptScope = {
 type X402AttemptFinalizationInput = {
   readonly paymentMetadata?: X402PaymentMetadata | undefined;
   readonly responseMetadata?: X402SafeResponseMetadata | undefined;
-  readonly result?: PaidHttpResponse | undefined;
+  readonly result?: unknown;
 };
 
 export type FinalizeSettledX402AttemptInput = X402AttemptFinalizationInput;
@@ -117,6 +120,8 @@ export type X402AttemptStoreOptions = {
   readonly resultCrypto: X402ResultCryptoCodec;
 };
 
+type X402AttemptDb = pg.Pool | pg.PoolClient;
+
 type X402AttemptRow = {
   readonly id: string;
   readonly org_id: string;
@@ -151,7 +156,11 @@ const ATTEMPT_COLUMNS = `
 `;
 
 const PAYMENT_METADATA_KEYS = new Set([
+  'eventId',
+  'payer',
+  'providerMode',
   'providerReference',
+  'reservationId',
   'receiptId',
   'transactionHash',
 ]);
@@ -291,9 +300,10 @@ function scopeInvalid(): never {
 }
 
 async function transaction<T>(
-  pool: pg.Pool,
+  pool: X402AttemptDb,
   operation: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
+  if (!(pool instanceof pg.Pool)) return operation(pool);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -309,7 +319,7 @@ async function transaction<T>(
 }
 
 async function transition(
-  pool: pg.Pool,
+  pool: X402AttemptDb,
   scope: X402AttemptScope,
   attemptId: string,
   sql: string,
@@ -360,7 +370,7 @@ export async function purgeExpiredX402Results(
 }
 
 export function createPostgresX402AttemptStore(
-  pool: pg.Pool,
+  pool: X402AttemptDb,
   { resultCrypto }: X402AttemptStoreOptions,
 ): X402AttemptStore {
   const findAttempt = async (

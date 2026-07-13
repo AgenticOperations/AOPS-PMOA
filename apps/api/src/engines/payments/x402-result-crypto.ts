@@ -22,13 +22,13 @@ export type X402ResultEnvelope = {
 };
 
 export type X402ResultCryptoCodec = {
-  readonly decrypt: (
+  readonly decrypt: <T = PaidHttpResponse>(
     context: X402ResultCryptoContext,
     encrypted: X402ResultEnvelope,
-  ) => PaidHttpResponse;
-  readonly encrypt: (
+  ) => T;
+  readonly encrypt: <T = PaidHttpResponse>(
     context: X402ResultCryptoContext,
-    value: PaidHttpResponse,
+    value: T,
   ) => X402ResultEnvelope;
 };
 
@@ -122,7 +122,7 @@ export function createX402ResultCryptoCodec(keyBase64: string): X402ResultCrypto
   const key = resultKey(keyBase64);
 
   return {
-    decrypt: (context, input) => {
+    decrypt: <T = PaidHttpResponse>(context: X402ResultCryptoContext, input: X402ResultEnvelope): T => {
       try {
         const encrypted = validateX402ResultEnvelope(input);
         const decipher = createDecipheriv(
@@ -136,13 +136,13 @@ export function createX402ResultCryptoCodec(keyBase64: string): X402ResultCrypto
           decipher.update(Buffer.from(encrypted.ciphertext, 'base64')),
           decipher.final(),
         ]).toString('utf8');
-        return JSON.parse(plaintext) as PaidHttpResponse;
+        return JSON.parse(plaintext) as T;
       } catch {
         throw new Error('x402_result_decryption_failed');
       }
     },
 
-    encrypt: (context, value) => {
+    encrypt: <T = PaidHttpResponse>(context: X402ResultCryptoContext, value: T): X402ResultEnvelope => {
       const iv = randomBytes(IV_BYTES);
       const cipher = createCipheriv(ALGORITHM, key, iv);
       cipher.setAAD(aad(context));

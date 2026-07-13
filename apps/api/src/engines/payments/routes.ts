@@ -45,6 +45,14 @@ import {
 } from './store.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
+import {
+  type PaidHttpExecutionOptions,
+  type PaidHttpUrlPolicy,
+} from './x402-http.js';
+import {
+  createX402ResultCryptoCodec,
+  type X402ResultCryptoCodec,
+} from './x402-result-crypto.js';
 
 export type RegisterPaymentRoutesDeps = {
   readonly pool: pg.Pool;
@@ -54,6 +62,9 @@ export type RegisterPaymentRoutesDeps = {
   readonly circleProvider?: CircleTreasuryProvider | undefined;
   readonly circleProviderFactory?: ((orgId: string) => CircleTreasuryProvider) | undefined;
   readonly circleConnectionService?: CircleConnectionController | undefined;
+  readonly paidHttpExecution?: PaidHttpExecutionOptions | undefined;
+  readonly paidHttpUrlPolicy?: PaidHttpUrlPolicy | undefined;
+  readonly resultCrypto?: X402ResultCryptoCodec | undefined;
   readonly redis?: Redis | undefined;
 };
 
@@ -143,21 +154,23 @@ const bridgeTopUpSchema = z.object({
   to_chain: chainSchema,
 });
 
-const runtimeAcceptSchema = z.object({
-  scheme: z.string().trim().min(1).max(80),
-  network: z.string().trim().min(1).max(80),
-  asset: z.string().trim().min(1).max(80).optional(),
-  amount: z.union([z.string().trim().min(1).max(80), z.number()]).optional(),
-  maxAmountRequired: z.union([z.string().trim().min(1).max(80), z.number()]).optional(),
-  payTo: z.string().trim().min(1).max(240).optional(),
-  extra: z.record(z.string(), z.unknown()).optional(),
-});
+const paidHttpBodySchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('json'), value: z.unknown() }).strict(),
+  z.object({ kind: z.literal('text'), value: z.string() }).strict(),
+  z.object({ kind: z.literal('base64'), value: z.string() }).strict(),
+]);
+
+const paidHttpRequestSchema = z.object({
+  url: z.string().trim().min(1).max(4096),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+  headers: z.array(z.tuple([z.string(), z.string()])).max(100),
+  body: paidHttpBodySchema.optional(),
+}).strict();
 
 const runtimeX402Schema = z.object({
-  resource: z.record(z.string(), z.unknown()).optional(),
-  accepts: z.array(runtimeAcceptSchema).min(1).max(20),
-  context: z.record(z.string(), z.unknown()).optional(),
-});
+  idempotency_key: z.string().trim().min(1).max(200),
+  request: paidHttpRequestSchema,
+}).strict();
 
 const historyQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
@@ -243,6 +256,17 @@ function unavailableCircleProvider(): CircleTreasuryProvider {
     settleExactX402: unavailable,
     settleGatewayX402: unavailable,
   };
+}
+
+function runtimeX402ResultCrypto(deps: RegisterPaymentRoutesDeps): X402ResultCryptoCodec | undefined {
+  if (deps.resultCrypto !== undefined) return deps.resultCrypto;
+  const key = process.env.CIRCLE_PROFILE_MASTER_KEY;
+  if (key === undefined || key.length === 0) return undefined;
+  try {
+    return createX402ResultCryptoCodec(key);
+  } catch {
+    return undefined;
+  }
 }
 
 export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymentRoutesDeps): void {
@@ -601,13 +625,25 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
 
   app.post('/v1/runtime/payments/x402', async (request) => {
     const auth = await authenticateRuntimeConnection(deps.pool, requiredRuntimeBearerToken(request));
-    return {
-      payment: await payRuntimeX402(
-        deps.pool,
-        auth,
-        parseBody(runtimeX402Schema, request),
-        providerForOrg(auth.org_id),
-      ),
-    };
+    const input = parseBody(runtimeX402Schema, request);
+    return payRuntimeX402(
+      deps.pool,
+      auth,
+      {
+        idempotency_key: input.idempotency_key,
+        request: {
+          url: input.request.url,
+          method: input.request.method,
+          headers: input.request.headers,
+          ...(input.request.body === undefined ? {} : { body: input.request.body }),
+        },
+      },
+      providerForOrg(auth.org_id),
+      {
+        ...(deps.paidHttpExecution === undefined ? {} : { paidHttpExecution: deps.paidHttpExecution }),
+        ...(deps.paidHttpUrlPolicy === undefined ? {} : { paidHttpUrlPolicy: deps.paidHttpUrlPolicy }),
+        resultCrypto: runtimeX402ResultCrypto(deps),
+      },
+    );
   });
 }
