@@ -31,10 +31,75 @@ const DENIED_PAID_HTTP_HEADERS = new Set([
   'x-payment',
 ]);
 
-function stableJsonStringify(value: unknown): string {
+function bodyLimitError(): RangeError {
+  return new RangeError('Paid HTTP body exceeds the 256 KiB decoded limit');
+}
+
+class BoundedUtf8Writer {
+  readonly #buffer = new Uint8Array(MAX_PAID_HTTP_BODY_BYTES);
+  readonly #encoder = new TextEncoder();
+  #offset = 0;
+
+  append(value: string): void {
+    if (value.length > MAX_PAID_HTTP_BODY_BYTES - this.#offset) {
+      throw bodyLimitError();
+    }
+    const result = this.#encoder.encodeInto(
+      value,
+      this.#buffer.subarray(this.#offset),
+    );
+    if (result.read !== value.length) throw bodyLimitError();
+    this.#offset += result.written;
+  }
+
+  toBytes(): Uint8Array {
+    return this.#buffer.slice(0, this.#offset);
+  }
+}
+
+function appendJsonString(writer: BoundedUtf8Writer, value: string): void {
+  writer.append('"');
+  for (const character of value) {
+    switch (character) {
+      case '"':
+        writer.append('\\"');
+        break;
+      case '\\':
+        writer.append('\\\\');
+        break;
+      case '\b':
+        writer.append('\\b');
+        break;
+      case '\f':
+        writer.append('\\f');
+        break;
+      case '\n':
+        writer.append('\\n');
+        break;
+      case '\r':
+        writer.append('\\r');
+        break;
+      case '\t':
+        writer.append('\\t');
+        break;
+      default: {
+        const codePoint = character.codePointAt(0) ?? 0;
+        if (codePoint <= 0x1f || (codePoint >= 0xd800 && codePoint <= 0xdfff)) {
+          writer.append(`\\u${codePoint.toString(16).padStart(4, '0')}`);
+        } else {
+          writer.append(character);
+        }
+      }
+    }
+  }
+  writer.append('"');
+}
+
+function stableJsonBytes(value: unknown): Uint8Array {
+  const writer = new BoundedUtf8Writer();
   const ancestors = new Set<object>();
 
-  function serialize(current: unknown, key: string): string | undefined {
+  function prepare(current: unknown, key: string): unknown {
     const toJson = (
       current as { readonly toJSON?: (propertyKey: string) => unknown }
     )?.toJSON;
@@ -43,55 +108,86 @@ function stableJsonStringify(value: unknown): string {
       typeof current === 'object' &&
       typeof toJson === 'function'
     ) {
-      return serialize(toJson.call(current, key), key);
+      return toJson.call(current, key);
     }
+    return current;
+  }
 
-    if (current === null) return 'null';
-    if (typeof current === 'string') return JSON.stringify(current);
-    if (typeof current === 'boolean') return current ? 'true' : 'false';
+  function isOmitted(current: unknown): boolean {
+    return (
+      current === undefined ||
+      typeof current === 'function' ||
+      typeof current === 'symbol'
+    );
+  }
+
+  function serializePrepared(current: unknown): void {
+    if (current === null) {
+      writer.append('null');
+      return;
+    }
+    if (typeof current === 'string') {
+      appendJsonString(writer, current);
+      return;
+    }
+    if (typeof current === 'boolean') {
+      writer.append(current ? 'true' : 'false');
+      return;
+    }
     if (typeof current === 'number') {
-      return Number.isFinite(current) ? JSON.stringify(current) : 'null';
+      writer.append(Number.isFinite(current) ? String(current) : 'null');
+      return;
     }
     if (typeof current === 'bigint') {
       throw new TypeError('JSON body cannot contain bigint values');
     }
-    if (typeof current !== 'object') return undefined;
+    if (isOmitted(current)) return;
+    if (typeof current !== 'object') return;
 
     if (ancestors.has(current)) {
       throw new TypeError('JSON body cannot contain circular references');
     }
     ancestors.add(current);
 
-    let result: string;
-    if (Array.isArray(current)) {
-      result = `[${Array.from(
-        current,
-        (item, index) => serialize(item, String(index)) ?? 'null',
-      ).join(',')}]`;
-    } else {
-      const entries = Object.keys(current)
-        .sort()
-        .flatMap((entryKey) => {
-          const serialized = serialize(
-            (current as Record<string, unknown>)[entryKey],
-            entryKey,
-          );
-          return serialized === undefined
-            ? []
-            : [`${JSON.stringify(entryKey)}:${serialized}`];
-        });
-      result = `{${entries.join(',')}}`;
-    }
+    try {
+      if (Array.isArray(current)) {
+        writer.append('[');
+        for (let index = 0; index < current.length; index += 1) {
+          if (index > 0) writer.append(',');
+          const prepared = prepare(current[index], String(index));
+          if (isOmitted(prepared)) writer.append('null');
+          else serializePrepared(prepared);
+        }
+        writer.append(']');
+        return;
+      }
 
-    ancestors.delete(current);
-    return result;
+      writer.append('{');
+      let writtenProperties = 0;
+      for (const entryKey of Object.keys(current).sort()) {
+        const prepared = prepare(
+          (current as Record<string, unknown>)[entryKey],
+          entryKey,
+        );
+        if (isOmitted(prepared)) continue;
+        if (writtenProperties > 0) writer.append(',');
+        appendJsonString(writer, entryKey);
+        writer.append(':');
+        serializePrepared(prepared);
+        writtenProperties += 1;
+      }
+      writer.append('}');
+    } finally {
+      ancestors.delete(current);
+    }
   }
 
-  const serialized = serialize(value, '');
-  if (serialized === undefined) {
+  const prepared = prepare(value, '');
+  if (isOmitted(prepared)) {
     throw new TypeError('JSON body must be serializable');
   }
-  return serialized;
+  serializePrepared(prepared);
+  return writer.toBytes();
 }
 
 export function normalizePaidHttpRequest(
@@ -138,20 +234,39 @@ export function normalizePaidHttpRequest(
   let bytes: Uint8Array;
   switch (body.kind) {
     case 'json':
-      bytes = new TextEncoder().encode(stableJsonStringify(body.value));
+      bytes = stableJsonBytes(body.value);
       break;
-    case 'text':
-      bytes = new TextEncoder().encode(body.value);
+    case 'text': {
+      if (body.value.length > MAX_PAID_HTTP_BODY_BYTES) {
+        throw bodyLimitError();
+      }
+      const writer = new BoundedUtf8Writer();
+      writer.append(body.value);
+      bytes = writer.toBytes();
       break;
+    }
     case 'base64': {
-      const unpadded = body.value.replace(/=+$/, '');
+      const maxEncodedLength = Math.ceil(MAX_PAID_HTTP_BODY_BYTES / 3) * 4;
+      if (body.value.length > maxEncodedLength) {
+        throw bodyLimitError();
+      }
       if (
         !/^[A-Za-z0-9+/]*={0,2}$/.test(body.value) ||
-        unpadded.length % 4 === 1 ||
+        body.value.replace(/=+$/, '').length % 4 === 1 ||
         (body.value.includes('=') && body.value.length % 4 !== 0)
       ) {
         throw new TypeError('Invalid base64 paid HTTP body');
       }
+      const padding = body.value.endsWith('==')
+        ? 2
+        : body.value.endsWith('=')
+          ? 1
+          : 0;
+      const decodedLength = Math.floor((body.value.length * 3) / 4) - padding;
+      if (decodedLength > MAX_PAID_HTTP_BODY_BYTES) {
+        throw bodyLimitError();
+      }
+      const unpadded = body.value.replace(/=+$/, '');
       const decoded = Buffer.from(body.value, 'base64');
       if (decoded.toString('base64').replace(/=+$/, '') !== unpadded) {
         throw new TypeError('Invalid base64 paid HTTP body');
@@ -166,7 +281,7 @@ export function normalizePaidHttpRequest(
   }
 
   if (bytes.byteLength > MAX_PAID_HTTP_BODY_BYTES) {
-    throw new RangeError('Paid HTTP body exceeds the 256 KiB decoded limit');
+    throw bodyLimitError();
   }
 
   return {
@@ -208,6 +323,13 @@ export type PaidHttpUrlPolicy = {
   readonly resolveHostname?: PaidHttpDnsResolver;
 };
 
+export type ValidatedPaidHttpDestination = {
+  readonly url: string;
+  readonly hostname: string;
+  readonly addresses: readonly string[];
+  readonly resolveHostname: PaidHttpDnsResolver;
+};
+
 function parseIpv4(
   address: string,
 ): readonly [number, number, number, number] | undefined {
@@ -227,7 +349,7 @@ function parseIpv4(
 function isUnsafeIpv4(address: string): boolean {
   const octets = parseIpv4(address);
   if (octets === undefined) return false;
-  const [first, second] = octets;
+  const [first, second, third] = octets;
   return (
     first === 0 ||
     first === 10 ||
@@ -235,7 +357,12 @@ function isUnsafeIpv4(address: string): boolean {
     (first === 100 && second >= 64 && second <= 127) ||
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0 && (third === 0 || third === 2)) ||
     (first === 192 && second === 168) ||
+    (first === 192 && second === 88 && third === 99) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113) ||
     first >= 224
   );
 }
@@ -305,6 +432,36 @@ function isUnsafeIpAddress(address: string): boolean {
     bytes[11] === 0xff;
   const compatibleIpv4 = bytes.slice(0, 12).every((byte) => byte === 0);
   const embeddedIpv4 = Array.from(bytes.slice(12)).join('.');
+  const globalUnicast = (firstByte & 0xe0) === 0x20;
+  const documentation =
+    (bytes[0] === 0x20 &&
+      bytes[1] === 0x01 &&
+      bytes[2] === 0x0d &&
+      bytes[3] === 0xb8) ||
+    (bytes[0] === 0x3f &&
+      bytes[1] === 0xff &&
+      ((bytes[2] ?? 0) & 0xf0) === 0x00);
+  const benchmarking =
+    bytes[0] === 0x20 &&
+    bytes[1] === 0x01 &&
+    bytes[2] === 0x00 &&
+    bytes[3] === 0x02 &&
+    bytes[4] === 0x00 &&
+    bytes[5] === 0x00;
+  const transitionOrOverlay =
+    (bytes[0] === 0x20 && bytes[1] === 0x02) ||
+    (bytes[0] === 0x20 &&
+      bytes[1] === 0x01 &&
+      bytes[2] === 0x00 &&
+      bytes[3] === 0x00) ||
+    (bytes[0] === 0x20 &&
+      bytes[1] === 0x01 &&
+      ((bytes[2] ?? 0) & 0xf0) === 0x10) ||
+    (bytes[0] === 0x20 &&
+      bytes[1] === 0x01 &&
+      ((bytes[2] ?? 0) & 0xf0) === 0x20);
+
+  if (mappedIpv4) return isUnsafeIpv4(embeddedIpv4);
 
   return (
     allZero ||
@@ -312,7 +469,11 @@ function isUnsafeIpAddress(address: string): boolean {
     linkLocal ||
     uniqueLocal ||
     multicast ||
-    ((mappedIpv4 || compatibleIpv4) && isUnsafeIpv4(embeddedIpv4))
+    compatibleIpv4 ||
+    !globalUnicast ||
+    documentation ||
+    benchmarking ||
+    transitionOrOverlay
   );
 }
 
@@ -322,7 +483,7 @@ const defaultPaidHttpDnsResolver: PaidHttpDnsResolver = async (hostname) =>
 export async function assertPaidHttpUrlAllowed(
   url: string,
   policy: PaidHttpUrlPolicy = {},
-): Promise<void> {
+): Promise<ValidatedPaidHttpDestination> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -334,16 +495,16 @@ export async function assertPaidHttpUrlAllowed(
     throw new TypeError('Paid HTTP URL must use HTTP or HTTPS');
   }
 
-  const explicitlyAllowed = policy.allowHttpOrigins?.some((origin) => {
-    try {
-      return new URL(origin).origin === parsed.origin;
-    } catch {
-      return false;
-    }
-  });
-  if (explicitlyAllowed) return;
-
-  if (parsed.protocol !== 'https:') {
+  const explicitlyAllowed =
+    parsed.protocol === 'http:' &&
+    policy.allowHttpOrigins?.some((origin) => {
+      try {
+        return new URL(origin).origin === parsed.origin;
+      } catch {
+        return false;
+      }
+    });
+  if (parsed.protocol !== 'https:' && !explicitlyAllowed) {
     throw new TypeError('Paid HTTP URL must use HTTPS');
   }
 
@@ -355,13 +516,37 @@ export async function assertPaidHttpUrlAllowed(
   if (resolved.length === 0) {
     throw new TypeError('Paid HTTP hostname resolved to no addresses');
   }
-  for (const result of resolved) {
-    const address = typeof result === 'string' ? result : result.address;
+  const resolvedAddresses = resolved.map((result) =>
+    typeof result === 'string' ? result : result.address,
+  );
+  for (const address of resolvedAddresses) {
     const [addressWithoutZone = ''] = address.split('%', 1);
-    if (isIP(addressWithoutZone) === 0 || isUnsafeIpAddress(address)) {
+    if (
+      isIP(addressWithoutZone) === 0 ||
+      (!explicitlyAllowed && isUnsafeIpAddress(address))
+    ) {
       throw new TypeError(
         `Paid HTTP URL resolved to a disallowed address: ${address}`,
       );
     }
   }
+
+  const addresses = Object.freeze(resolvedAddresses);
+  const resolveHostname: PaidHttpDnsResolver = (requestedHostname) => {
+    if (requestedHostname !== hostname) {
+      return Promise.reject(
+        new TypeError(
+          `Pinned paid HTTP destination cannot resolve: ${requestedHostname}`,
+        ),
+      );
+    }
+    return Promise.resolve(addresses);
+  };
+
+  return Object.freeze({
+    url: parsed.href,
+    hostname,
+    addresses,
+    resolveHostname,
+  });
 }

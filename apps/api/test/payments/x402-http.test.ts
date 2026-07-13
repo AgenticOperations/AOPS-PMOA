@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   assertPaidHttpUrlAllowed,
@@ -147,6 +147,63 @@ describe("normalizePaidHttpRequest", () => {
     ).toThrow(/256 KiB/i);
   });
 
+  it("rejects oversized text before allocating encoded bytes", () => {
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    try {
+      expect(() =>
+        normalizePaidHttpRequest({
+          url: "https://example.com/pay",
+          method: "POST",
+          headers: [],
+          body: { kind: "text", value: "a".repeat(256 * 1024 + 1) },
+        }),
+      ).toThrow(/256 KiB/i);
+      expect(encode).not.toHaveBeenCalled();
+    } finally {
+      encode.mockRestore();
+    }
+  });
+
+  it("rejects oversized base64 before invoking the decoder", () => {
+    const encoded = "AAAA".repeat(Math.floor((256 * 1024) / 3) + 1);
+    const decode = vi.spyOn(Buffer, "from").mockImplementation(() => {
+      throw new Error("base64 decoder was called");
+    });
+    try {
+      expect(() =>
+        normalizePaidHttpRequest({
+          url: "https://example.com/pay",
+          method: "POST",
+          headers: [],
+          body: { kind: "base64", value: encoded },
+        }),
+      ).toThrow(/256 KiB/i);
+      expect(decode).not.toHaveBeenCalled();
+    } finally {
+      decode.mockRestore();
+    }
+  });
+
+  it("aborts canonical JSON serialization as soon as the byte limit is exceeded", () => {
+    const chunks = Array.from({ length: 300 }, () => "x".repeat(1024));
+    Object.defineProperty(chunks, 299, {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        throw new Error("serializer read beyond the bounded output");
+      },
+    });
+
+    expect(() =>
+      normalizePaidHttpRequest({
+        url: "https://example.com/pay",
+        method: "POST",
+        headers: [],
+        body: { kind: "json", value: chunks },
+      }),
+    ).toThrow(/256 KiB/i);
+  });
+
   it("preserves ordered allowed headers and rejects denied headers case-insensitively", () => {
     const headers = [
       ["X-First", "1"],
@@ -225,6 +282,69 @@ describe("canonicalPaidHttpRequestHash", () => {
 });
 
 describe("assertPaidHttpUrlAllowed", () => {
+  it("applies allowHttpOrigins only to exact HTTP local-dev origins", async () => {
+    await expect(
+      assertPaidHttpUrlAllowed("https://127.0.0.1/pay", {
+        allowHttpOrigins: ["https://127.0.0.1"],
+      }),
+    ).rejects.toThrow(/address/i);
+    await expect(
+      assertPaidHttpUrlAllowed("http://127.0.0.1/pay", {
+        allowHttpOrigins: ["http://127.0.0.1"],
+      }),
+    ).resolves.toMatchObject({
+      url: "http://127.0.0.1/pay",
+      hostname: "127.0.0.1",
+      addresses: ["127.0.0.1"],
+    });
+  });
+
+  it("returns an immutable destination with a pinned checked resolver", async () => {
+    const upstreamResolver = vi.fn(() =>
+      Promise.resolve([
+        { address: "93.184.216.34" },
+        "2606:2800:220:1::1",
+      ]),
+    );
+
+    const destination = await assertPaidHttpUrlAllowed(
+      "https://merchant.example:443/pay?a=1&a=2",
+      { resolveHostname: upstreamResolver },
+    );
+
+    expect(destination).toMatchObject({
+      url: "https://merchant.example/pay?a=1&a=2",
+      hostname: "merchant.example",
+      addresses: ["93.184.216.34", "2606:2800:220:1::1"],
+    });
+    expect(Object.isFrozen(destination.addresses)).toBe(true);
+    await expect(
+      destination.resolveHostname("merchant.example"),
+    ).resolves.toEqual(["93.184.216.34", "2606:2800:220:1::1"]);
+    await expect(
+      destination.resolveHostname("unvalidated.example"),
+    ).rejects.toThrow(/pinned/i);
+    expect(upstreamResolver).toHaveBeenCalledTimes(1);
+  });
+
+  it("snapshots each resolved address exactly once before validation", async () => {
+    let reads = 0;
+    const changingResult = {
+      get address(): string {
+        reads += 1;
+        return reads === 1 ? "93.184.216.34" : "127.0.0.1";
+      },
+    };
+
+    const destination = await assertPaidHttpUrlAllowed(
+      "https://merchant.example/pay",
+      { resolveHostname: () => Promise.resolve([changingResult]) },
+    );
+
+    expect(destination.addresses).toEqual(["93.184.216.34"]);
+    expect(reads).toBe(1);
+  });
+
   it("requires HTTPS unless the exact HTTP origin is allowed", async () => {
     const resolveHostname = () =>
       Promise.resolve(["93.184.216.34"] as const);
@@ -235,12 +355,9 @@ describe("assertPaidHttpUrlAllowed", () => {
     await expect(
       assertPaidHttpUrlAllowed("http://localhost:8080/pay", {
         allowHttpOrigins: ["http://localhost:8080"],
-        resolveHostname: () =>
-          Promise.reject(
-            new Error("explicitly allowed origins should bypass DNS"),
-          ),
+        resolveHostname: () => Promise.resolve(["127.0.0.1"]),
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ addresses: ["127.0.0.1"] });
     await expect(
       assertPaidHttpUrlAllowed("http://localhost:8081/pay", {
         allowHttpOrigins: ["http://localhost:8080"],
@@ -258,13 +375,20 @@ describe("assertPaidHttpUrlAllowed", () => {
       "169.254.1.1",
       "169.254.169.254",
       "172.16.0.1",
+      "192.0.0.1",
+      "192.0.2.1",
       "192.168.1.1",
+      "198.18.0.1",
+      "198.51.100.1",
+      "203.0.113.1",
       "224.0.0.1",
       "::",
       "::1",
       "::ffff:127.0.0.1",
       "fc00::1",
+      "fec0::1",
       "fe80::1",
+      "2001:db8::1",
       "ff02::1",
     ]) {
       await expect(
@@ -285,6 +409,13 @@ describe("assertPaidHttpUrlAllowed", () => {
         resolveHostname: () =>
           Promise.resolve(["93.184.216.34", "2606:2800:220:1::1"]),
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+      addresses: ["93.184.216.34", "2606:2800:220:1::1"],
+    });
+    await expect(
+      assertPaidHttpUrlAllowed("https://merchant.example/pay", {
+        resolveHostname: () => Promise.resolve(["3ff1::1"]),
+      }),
+    ).resolves.toMatchObject({ addresses: ["3ff1::1"] });
   });
 });
