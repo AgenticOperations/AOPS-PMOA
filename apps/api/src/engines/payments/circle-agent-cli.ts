@@ -1,8 +1,19 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, rm, symlink } from 'node:fs/promises';
+import {
+  chmod,
+  type FileHandle,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  rm,
+  symlink,
+  unlink,
+} from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import type { PaymentChain, PaymentMode } from './types.js';
 import { normalizePaidHttpRequest, type PaidHttpRequest } from './x402-http.js';
 
@@ -20,9 +31,15 @@ export type CircleCliResult = {
 
 export type CircleCliRunner = (invocation: CircleCliInvocation) => Promise<CircleCliResult>;
 
+type CircleAgentCliPaidRequestFileSystem = {
+  readonly eraseDebugHandle: (handle: FileHandle) => Promise<void>;
+  readonly removeIsolatedHome: (path: string) => Promise<void>;
+};
+
 export type CircleAgentCliExecutorOptions = {
   readonly command?: string | undefined;
   readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly internalPaidRequestFileSystem?: Partial<CircleAgentCliPaidRequestFileSystem> | undefined;
   readonly maxRetries?: number | undefined;
   readonly retryDelayMs?: number | undefined;
   readonly runner?: CircleCliRunner | undefined;
@@ -72,6 +89,10 @@ export type CircleAgentGatewayDeposit = {
 };
 
 export type CircleAgentServicePayment = {
+  readonly maintenance: {
+    cleanupPending: boolean;
+    debugErasureFailed: boolean;
+  };
   readonly payment: {
     readonly amount: string | null;
     readonly chain: string | null;
@@ -95,6 +116,10 @@ export class CircleAgentCliPaidRequestError extends Error {
     | 'circle_cli_paid_request_pre_submit'
     | 'circle_cli_paid_request_ambiguous_post_submit';
   readonly killed: boolean;
+  readonly maintenance = {
+    cleanupPending: false,
+    debugErasureFailed: false,
+  };
   override readonly name = 'CircleAgentCliPaidRequestError';
   readonly processCode: number | string | null;
   readonly signal: string | null;
@@ -124,6 +149,13 @@ export class CircleAgentCliPaidRequestError extends Error {
 export type CircleAgentCliPaidRequestDebug = Readonly<Record<string, unknown>>;
 
 const PAID_REQUEST_DEBUG = new WeakMap<CircleAgentCliPaidRequestError, CircleAgentCliPaidRequestDebug>();
+const PAID_REQUEST_CLEANUP_JOBS = new Map<string, {
+  attempts: number;
+  readonly removeIsolatedHome: (path: string) => Promise<void>;
+}>();
+const PAID_REQUEST_HOME_NAME = /^agentops-circle-paid-[A-Za-z0-9]{6}$/;
+const MAX_PAID_REQUEST_CLEANUP_ATTEMPTS = 3;
+let paidRequestCleanupTimer: NodeJS.Timeout | undefined;
 
 export function takeCircleAgentCliPaidRequestDebug(
   error: CircleAgentCliPaidRequestError,
@@ -131,6 +163,66 @@ export function takeCircleAgentCliPaidRequestDebug(
   const debug = PAID_REQUEST_DEBUG.get(error);
   PAID_REQUEST_DEBUG.delete(error);
   return debug;
+}
+
+function isOwnedPaidRequestHome(path: string): boolean {
+  const absolutePath = resolve(path);
+  return dirname(absolutePath) === resolve(tmpdir()) &&
+    PAID_REQUEST_HOME_NAME.test(basename(absolutePath));
+}
+
+function schedulePaidRequestCleanupJanitor(): void {
+  if (paidRequestCleanupTimer !== undefined) return;
+  paidRequestCleanupTimer = setTimeout(() => {
+    paidRequestCleanupTimer = undefined;
+    void runCircleAgentCliPaidRequestCleanupJanitor();
+  }, 1_000);
+  paidRequestCleanupTimer.unref();
+}
+
+function enqueuePaidRequestCleanup(
+  path: string,
+  removeIsolatedHome: (ownedPath: string) => Promise<void>,
+): void {
+  if (!isOwnedPaidRequestHome(path)) return;
+  PAID_REQUEST_CLEANUP_JOBS.set(path, { attempts: 0, removeIsolatedHome });
+  schedulePaidRequestCleanupJanitor();
+}
+
+export async function runCircleAgentCliPaidRequestCleanupJanitor(): Promise<void> {
+  for (const [path, job] of [...PAID_REQUEST_CLEANUP_JOBS]) {
+    if (!isOwnedPaidRequestHome(path)) {
+      PAID_REQUEST_CLEANUP_JOBS.delete(path);
+      continue;
+    }
+    let pathStat;
+    try {
+      pathStat = await lstat(path);
+    } catch (error) {
+      if (paidRequestErrorMetadata(error).code === 'ENOENT') {
+        PAID_REQUEST_CLEANUP_JOBS.delete(path);
+      }
+      continue;
+    }
+    if (!pathStat.isDirectory() || pathStat.isSymbolicLink()) {
+      PAID_REQUEST_CLEANUP_JOBS.delete(path);
+      continue;
+    }
+    try {
+      await job.removeIsolatedHome(path);
+      PAID_REQUEST_CLEANUP_JOBS.delete(path);
+    } catch {
+      job.attempts += 1;
+      if (job.attempts >= MAX_PAID_REQUEST_CLEANUP_ATTEMPTS) {
+        PAID_REQUEST_CLEANUP_JOBS.delete(path);
+      }
+    }
+  }
+  if (PAID_REQUEST_CLEANUP_JOBS.size > 0) schedulePaidRequestCleanupJanitor();
+  else if (paidRequestCleanupTimer !== undefined) {
+    clearTimeout(paidRequestCleanupTimer);
+    paidRequestCleanupTimer = undefined;
+  }
 }
 
 export type CircleAgentTransfer = {
@@ -505,6 +597,10 @@ function servicePaymentFrom(value: unknown): CircleAgentServicePayment {
   const payment = record(item.payment);
   const hasPayment = item.payment !== null && typeof item.payment === 'object' && !Array.isArray(item.payment);
   return {
+    maintenance: {
+      cleanupPending: false,
+      debugErasureFailed: false,
+    },
     payment: hasPayment
       ? {
           amount: stringField(payment.amount) ?? (
@@ -632,45 +728,96 @@ async function createIsolatedPaidRequestHome(sourceHome: string): Promise<string
 
 async function readPaidRequestDebug(
   isolatedHome: string,
-): Promise<CircleAgentCliPaidRequestDebug | undefined> {
+  fileSystem: CircleAgentCliPaidRequestFileSystem,
+): Promise<{
+  readonly debug: CircleAgentCliPaidRequestDebug | undefined;
+  readonly erasureFailed: boolean;
+}> {
   const paymentsDirectory = join(isolatedHome, 'payments');
   const paymentsStat = await lstat(paymentsDirectory);
-  if (!paymentsStat.isDirectory() || paymentsStat.isSymbolicLink()) return undefined;
+  if (!paymentsStat.isDirectory() || paymentsStat.isSymbolicLink()) {
+    return { debug: undefined, erasureFailed: false };
+  }
   const entries = await readdir(paymentsDirectory, { withFileTypes: true });
   const candidates = entries.filter((entry) => (
     entry.isFile() && PAID_REQUEST_DEBUG_FILENAME.test(entry.name)
   ));
-  if (candidates.length !== 1) return undefined;
+  if (candidates.length !== 1) return { debug: undefined, erasureFailed: false };
 
   const candidate = candidates[0];
-  if (candidate === undefined) return undefined;
+  if (candidate === undefined) return { debug: undefined, erasureFailed: false };
+  const candidatePath = join(paymentsDirectory, candidate.name);
   const handle = await open(
-    join(paymentsDirectory, candidate.name),
-    constants.O_RDONLY | constants.O_NOFOLLOW,
+    candidatePath,
+    constants.O_RDWR | constants.O_NOFOLLOW,
   );
+  let debug: CircleAgentCliPaidRequestDebug | undefined;
+  let erasureFailed = false;
+  let validatedFile = false;
   try {
     const fileStat = await handle.stat();
-    if (!fileStat.isFile() || fileStat.size <= 0 || fileStat.size > MAX_PAID_REQUEST_DEBUG_BYTES) {
-      return undefined;
+    validatedFile = fileStat.isFile();
+    if (validatedFile && fileStat.size > 0 && fileStat.size <= MAX_PAID_REQUEST_DEBUG_BYTES) {
+      const buffer = Buffer.alloc(fileStat.size);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
+      const parsed = JSON.parse(buffer.subarray(0, bytesRead).toString('utf8')) as unknown;
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        debug = parsed as CircleAgentCliPaidRequestDebug;
+      }
     }
-    const content = await handle.readFile({ encoding: 'utf8' });
-    const parsed = JSON.parse(content) as unknown;
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-    return parsed as CircleAgentCliPaidRequestDebug;
+  } catch {
+    debug = undefined;
   } finally {
-    await handle.close();
+    if (validatedFile) {
+      try {
+        await fileSystem.eraseDebugHandle(handle);
+      } catch {
+        erasureFailed = true;
+      }
+    }
+    try {
+      await handle.close();
+    } catch {
+      erasureFailed = true;
+    }
   }
+  if (validatedFile) {
+    try {
+      await unlink(candidatePath);
+    } catch {
+      erasureFailed = true;
+    }
+  }
+  return {
+    debug: erasureFailed ? undefined : debug,
+    erasureFailed,
+  };
 }
 
 async function privatelyCapturePaidRequestDebug(
   isolatedHome: string,
   error: CircleAgentCliPaidRequestError,
+  fileSystem: CircleAgentCliPaidRequestFileSystem,
 ): Promise<void> {
   try {
-    const debug = await readPaidRequestDebug(isolatedHome);
-    if (debug !== undefined) PAID_REQUEST_DEBUG.set(error, debug);
+    const outcome = await readPaidRequestDebug(isolatedHome, fileSystem);
+    if (outcome.erasureFailed) error.maintenance.debugErasureFailed = true;
+    if (outcome.debug !== undefined) PAID_REQUEST_DEBUG.set(error, outcome.debug);
   } catch {
-    // Capture is best-effort; the externally visible error remains sanitized and ambiguous.
+    error.maintenance.debugErasureFailed = true;
+  }
+}
+
+async function eraseSuccessfulPaidRequestDebug(
+  isolatedHome: string,
+  payment: CircleAgentServicePayment,
+  fileSystem: CircleAgentCliPaidRequestFileSystem,
+): Promise<void> {
+  try {
+    const outcome = await readPaidRequestDebug(isolatedHome, fileSystem);
+    if (outcome.erasureFailed) payment.maintenance.debugErasureFailed = true;
+  } catch {
+    payment.maintenance.debugErasureFailed = true;
   }
 }
 
@@ -745,6 +892,15 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
   const retryDelayMs = options.retryDelayMs ?? Number(process.env.CIRCLE_CLI_RETRY_DELAY_MS ?? '5000');
   const runner = options.runner ?? defaultRunner;
   const timeoutMs = options.timeoutMs ?? defaultCircleCliTimeoutMs();
+  const paidRequestFileSystem: CircleAgentCliPaidRequestFileSystem = {
+    eraseDebugHandle: options.internalPaidRequestFileSystem?.eraseDebugHandle ?? (async (handle) => {
+      await handle.truncate(0);
+      await handle.sync();
+    }),
+    removeIsolatedHome: options.internalPaidRequestFileSystem?.removeIsolatedHome ?? (async (path) => {
+      await rm(path, { force: true, recursive: true });
+    }),
+  };
   const runJson = async (args: readonly string[]): Promise<unknown> => {
     let lastError: unknown;
     const attempts = Math.max(1, Math.floor(maxRetries) + 1);
@@ -1020,15 +1176,19 @@ export function createCircleAgentCliExecutor(options: CircleAgentCliExecutorOpti
           }
         }
         if (failure?.classification === 'ambiguous_post_submit') {
-          await privatelyCapturePaidRequestDebug(isolatedHome, failure);
+          await privatelyCapturePaidRequestDebug(isolatedHome, failure, paidRequestFileSystem);
+        } else if (payment !== undefined) {
+          await eraseSuccessfulPaidRequestDebug(isolatedHome, payment, paidRequestFileSystem);
         }
       } finally {
         try {
-          await rm(isolatedHome, { force: true, recursive: true });
+          await paidRequestFileSystem.removeIsolatedHome(isolatedHome);
         } catch (error) {
-          if (failure === undefined) {
-            failure = paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
-          }
+          if (failure !== undefined) failure.maintenance.cleanupPending = true;
+          else if (payment !== undefined) payment.maintenance.cleanupPending = true;
+          else failure = paidRequestErrorFrom(error, attemptId, 'ambiguous_post_submit');
+          if (failure !== undefined) failure.maintenance.cleanupPending = true;
+          enqueuePaidRequestCleanup(isolatedHome, paidRequestFileSystem.removeIsolatedHome);
         }
       }
 

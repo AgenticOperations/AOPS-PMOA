@@ -8,6 +8,7 @@ import {
   circleBlockchainForChain,
   createCircleAgentCliExecutor,
   gatewayBalanceBlockchainForChain,
+  runCircleAgentCliPaidRequestCleanupJanitor,
   takeCircleAgentCliPaidRequestDebug,
   type CircleCliInvocation,
   type CircleCliRunner,
@@ -811,6 +812,202 @@ describe('Circle Agent Wallet CLI executor', () => {
       if (isolatedHome !== undefined && isolatedHome !== sourceHome) {
         await rm(isolatedHome, { force: true, recursive: true });
       }
+      await rm(sourceRoot, { force: true, recursive: true });
+    }
+  });
+
+  it('erases captured payment debug before a recursive cleanup failure', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'agentops-circle-erase-'));
+    const sourceHome = join(sourceRoot, 'circle-home');
+    const unrelatedHome = await mkdtemp(join(tmpdir(), 'agentops-circle-unrelated-'));
+    let isolatedHome: string | undefined;
+    let cleanupAttempts = 0;
+    try {
+      await mkdir(sourceHome, { recursive: true, mode: 0o700 });
+      const runner: CircleCliRunner = async (invocation) => {
+        isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+        if (isolatedHome === undefined) throw new Error('missing isolated Circle CLI home');
+        await writeFile(
+          join(isolatedHome, 'payments', 'payment-cleanup-private.json'),
+          JSON.stringify({ paymentPayload: 'SENTINEL_ERASE_BEFORE_CLEANUP' }),
+          { mode: 0o600 },
+        );
+        throw Object.assign(new Error('runner failed'), { code: 1, signal: null });
+      };
+      const executor = createCircleAgentCliExecutor({
+        environment: { CIRCLE_CLI_HOME: sourceHome },
+        internalPaidRequestFileSystem: {
+          removeIsolatedHome: async (path) => {
+            cleanupAttempts += 1;
+            if (cleanupAttempts === 1) throw new Error('forced cleanup failure');
+            await rm(path, { force: true, recursive: true });
+          },
+        },
+        runner,
+      });
+
+      const failure = await executor.payService({
+        address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        attemptId: 'attempt_erase_before_cleanup_1',
+        chain: 'base',
+        maxAmount: '0.01',
+        mode: 'test',
+        rail: 'exact',
+        request: {
+          headers: [],
+          method: 'POST',
+          url: 'https://x402.example.test/erase-before-cleanup',
+        },
+        timeoutSeconds: 30,
+      }).catch((error: unknown) => error);
+
+      expect(isolatedHome).toBeDefined();
+      await expect(access(isolatedHome as string)).resolves.toBeUndefined();
+      await expect(access(join(
+        isolatedHome as string,
+        'payments',
+        'payment-cleanup-private.json',
+      ))).rejects.toThrow();
+      expect(failure).toMatchObject({
+        classification: 'ambiguous_post_submit',
+        maintenance: { cleanupPending: true },
+      });
+      expect(inspect(failure)).not.toContain('SENTINEL_ERASE_BEFORE_CLEANUP');
+      expect(inspect(failure)).not.toContain(isolatedHome as string);
+      expect(JSON.stringify(failure)).not.toContain(isolatedHome as string);
+      expect(takeCircleAgentCliPaidRequestDebug(failure as CircleAgentCliPaidRequestError)).toEqual({
+        paymentPayload: 'SENTINEL_ERASE_BEFORE_CLEANUP',
+      });
+      await runCircleAgentCliPaidRequestCleanupJanitor();
+      expect(cleanupAttempts).toBe(2);
+      await expect(access(isolatedHome as string)).rejects.toThrow();
+      await expect(access(unrelatedHome)).resolves.toBeUndefined();
+    } finally {
+      if (isolatedHome !== undefined) await rm(isolatedHome, { force: true, recursive: true });
+      await rm(unrelatedHome, { force: true, recursive: true });
+      await rm(sourceRoot, { force: true, recursive: true });
+    }
+  });
+
+  it('withholds private debug when secure erasure fails', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'agentops-circle-erase-failure-'));
+    const sourceHome = join(sourceRoot, 'circle-home');
+    let isolatedHome: string | undefined;
+    try {
+      await mkdir(sourceHome, { recursive: true, mode: 0o700 });
+      const runner: CircleCliRunner = async (invocation) => {
+        isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+        if (isolatedHome === undefined) throw new Error('missing isolated Circle CLI home');
+        await writeFile(
+          join(isolatedHome, 'payments', 'payment-erase-failure.json'),
+          JSON.stringify({ paymentPayload: 'SENTINEL_UNERASED_PRIVATE_DEBUG' }),
+          { mode: 0o600 },
+        );
+        throw Object.assign(new Error('runner failed'), { code: 1, signal: null });
+      };
+      const executor = createCircleAgentCliExecutor({
+        environment: { CIRCLE_CLI_HOME: sourceHome },
+        internalPaidRequestFileSystem: {
+          eraseDebugHandle: () => Promise.reject(new Error('SENTINEL_ERASURE_FAILURE')),
+        },
+        runner,
+      });
+
+      const failure = await executor.payService({
+        address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        attemptId: 'attempt_erasure_failure_1',
+        chain: 'base',
+        maxAmount: '0.01',
+        mode: 'test',
+        rail: 'exact',
+        request: {
+          headers: [],
+          method: 'POST',
+          url: 'https://x402.example.test/erasure-failure',
+        },
+        timeoutSeconds: 30,
+      }).catch((error: unknown) => error);
+
+      expect(failure).toMatchObject({
+        attemptId: 'attempt_erasure_failure_1',
+        classification: 'ambiguous_post_submit',
+        maintenance: {
+          cleanupPending: false,
+          debugErasureFailed: true,
+        },
+      });
+      expect(takeCircleAgentCliPaidRequestDebug(failure as CircleAgentCliPaidRequestError)).toBeUndefined();
+      expect(inspect(failure)).not.toContain('SENTINEL_');
+      expect(JSON.stringify(failure)).not.toContain('SENTINEL_');
+      await expect(access(isolatedHome as string)).rejects.toThrow();
+    } finally {
+      if (isolatedHome !== undefined) await rm(isolatedHome, { force: true, recursive: true });
+      await rm(sourceRoot, { force: true, recursive: true });
+    }
+  });
+
+  it('returns a successful payment with maintenance pending when recursive cleanup fails', async () => {
+    const sourceRoot = await mkdtemp(join(tmpdir(), 'agentops-circle-success-cleanup-'));
+    const sourceHome = join(sourceRoot, 'circle-home');
+    let isolatedHome: string | undefined;
+    let cleanupAttempts = 0;
+    try {
+      await mkdir(sourceHome, { recursive: true, mode: 0o700 });
+      const runner: CircleCliRunner = async (invocation) => {
+        isolatedHome = invocation.environment?.CIRCLE_CLI_HOME;
+        if (isolatedHome === undefined) throw new Error('missing isolated Circle CLI home');
+        await writeFile(
+          join(isolatedHome, 'payments', 'payment-success-private.json'),
+          JSON.stringify({ paymentPayload: 'SENTINEL_SUCCESS_PRIVATE_DEBUG' }),
+          { mode: 0o600 },
+        );
+        return { stderr: '', stdout: JSON.stringify({ data: { response: 'paid' } }) };
+      };
+      const executor = createCircleAgentCliExecutor({
+        environment: { CIRCLE_CLI_HOME: sourceHome },
+        internalPaidRequestFileSystem: {
+          removeIsolatedHome: async (path) => {
+            cleanupAttempts += 1;
+            if (cleanupAttempts === 1) throw new Error('forced cleanup failure');
+            await rm(path, { force: true, recursive: true });
+          },
+        },
+        runner,
+      });
+
+      const payment = await executor.payService({
+        address: '0xf8ea6209f5dd5a8b8ac34bb90990a3f5f32fa839',
+        attemptId: 'attempt_success_cleanup_1',
+        chain: 'base',
+        maxAmount: '0.01',
+        mode: 'test',
+        rail: 'exact',
+        request: {
+          headers: [],
+          method: 'POST',
+          url: 'https://x402.example.test/success-cleanup',
+        },
+        timeoutSeconds: 30,
+      });
+
+      expect(payment).toMatchObject({
+        response: 'paid',
+        maintenance: {
+          cleanupPending: true,
+          debugErasureFailed: false,
+        },
+      });
+      await expect(access(isolatedHome as string)).resolves.toBeUndefined();
+      await expect(access(join(
+        isolatedHome as string,
+        'payments',
+        'payment-success-private.json',
+      ))).rejects.toThrow();
+      expect(inspect(payment)).not.toContain('SENTINEL_');
+      await runCircleAgentCliPaidRequestCleanupJanitor();
+      await expect(access(isolatedHome as string)).rejects.toThrow();
+    } finally {
+      if (isolatedHome !== undefined) await rm(isolatedHome, { force: true, recursive: true });
       await rm(sourceRoot, { force: true, recursive: true });
     }
   });
