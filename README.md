@@ -1,6 +1,6 @@
 ---
 created: 2026-07-06
-updated: 2026-07-12
+updated: 2026-07-13
 project: agentOps
 ecosystem: circle
 tags: [readme, product, setup, testnet, mcp, circle]
@@ -74,7 +74,7 @@ The setup command:
 1. Validates Node and npm.
 2. Creates missing `apps/api/.env` and `apps/web/.env.local` files from their templates.
 3. Asks one at a time for missing Google OAuth values. Secret input is not echoed.
-4. Generates a base64 32-byte Circle profile encryption key and a random internal worker token when absent.
+4. Generates distinct base64 32-byte Circle profile and x402 result encryption keys plus a random internal worker token when absent.
 5. Starts local PostgreSQL and Redis only when the configured local ports are not already reachable.
 6. Installs the locked npm dependency graph, verifies the pinned Circle CLI, rejects high/critical npm advisories, and builds shared packages/migrations.
 7. Starts and health-checks web `3005`, hosted MCP `8070`, API `8080`, and Circle worker `8090`.
@@ -109,6 +109,7 @@ Local secrets remain gitignored. The bootstrap validates these cross-service inv
 - Google OAuth redirects through the web BFF callback.
 - `CIRCLE_WORKER_TOKEN` is at least 32 characters.
 - `CIRCLE_PROFILE_MASTER_KEY` decodes to exactly 32 bytes.
+- `X402_RESULT_ENCRYPTION_KEY` decodes to exactly 32 bytes and is distinct from the worker-only Circle profile key.
 - Database and Redis URLs use supported URL schemes.
 
 See [docs/env-inventory.md](docs/env-inventory.md) for the current key inventory. To use managed PostgreSQL or Redis, populate their URLs before running setup; the bootstrap skips local Docker startup for non-local endpoints.
@@ -122,6 +123,8 @@ http://127.0.0.1:8070/mcp
 ```
 
 Create an agent in the console, open **Credentials & wallets**, and issue a credential. The one-time reveal provides the endpoint, Claude Code configuration, Codex command, local adapter, governance instruction, and a browser verification action. Remote calls authenticate with `Authorization: Bearer <agent credential>`; plaintext credentials are never stored or shown again.
+
+Agents call `agentops.payment_x402` with one bounded HTTP request and an idempotency key. AgentOps performs discovery, policy and approval enforcement, budget reservation, Circle settlement, durable recovery, and the paid retry, then returns the exact bounded merchant response to the same MCP caller. Production paid-resource URLs require HTTPS; the local QA merchant fixtures remain disabled unless `ENABLE_TESTNET_X402_FIXTURES=true` is explicitly set for an isolated test run.
 
 The local stdio adapter remains supported for repository-local hosts:
 
@@ -171,6 +174,7 @@ All `/internal/circle/*` routes require the worker bearer token. The worker owns
 - [docs/env-inventory.md](docs/env-inventory.md): current environment keys and ownership.
 - [docs/deployment/testnet-circle-worker.md](docs/deployment/testnet-circle-worker.md): deployment and worker security model.
 - [docs/deployment/hosted-mcp.md](docs/deployment/hosted-mcp.md): hosted MCP deployment, security, and client contract.
+- [docs/qa/2026-07-13-x402-paid-http-evidence.md](docs/qa/2026-07-13-x402-paid-http-evidence.md): real-agent MCP settlement, replay, credential lifecycle, and final verification evidence.
 - [docs/qa/2026-07-12-testnet-release-evidence.md](docs/qa/2026-07-12-testnet-release-evidence.md): latest accepted testnet evidence.
 - [docs/features-to-discuss-later.md](docs/features-to-discuss-later.md): deliberately deferred product work.
 
