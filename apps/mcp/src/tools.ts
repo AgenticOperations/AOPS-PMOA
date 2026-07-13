@@ -123,6 +123,17 @@ async function safeExecute(
     return textResult(summarize(label, payload), payload);
   } catch (error) {
     const message = errorText(error);
+    if (error instanceof RuntimeApiError && error.code === 'policy_requires_approval') {
+      const approvalId = typeof error.details.approvalId === 'string' ? error.details.approvalId : null;
+      const decisionId = typeof error.details.decisionId === 'string' ? error.details.decisionId : null;
+      const approval = approvalId === null ? '' : ` Approval: ${approvalId}.`;
+      const decision = decisionId === null ? '' : ` Decision: ${decisionId}.`;
+      return textResult(
+        `${label}: approval required.${approval}${decision}`,
+        errorContent(error, message),
+        false,
+      );
+    }
     if (error instanceof RuntimeApiError && error.code === 'liquidity_preparing') {
       const retryAfter = typeof error.details.retryAfterSeconds === 'number'
         ? ` Retry after ${error.details.retryAfterSeconds} seconds.`

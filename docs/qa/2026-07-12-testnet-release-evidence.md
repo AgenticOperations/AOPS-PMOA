@@ -1,6 +1,6 @@
 ---
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-13
 project: agentOps
 ecosystem: circle
 tags: [qa, testnet, release, circle, x402, treasury]
@@ -117,3 +117,33 @@ Source: `apps/api/src/engines/payments/store.ts`, migration `0020_liquidity_job_
 - Local integration hardening changed the advertised endpoint to the exact IPv4 listener, injects the same value into the web and MCP processes, and permits a private-network preflight only after exact host and origin validation.
 
 No bearer credential, OAuth token, session cookie, or one-time secret is included in this evidence.
+
+## Real-Agent Policy Matrix — 2026-07-13
+
+A second browser-authored test identity, `Hosted Policy Matrix Agent 2026-07-13` (`agt_ee020502-1b8b-4b3e-a856-df0016551186`), was used to exercise the hosted MCP contract beyond the basic allow path. Claude Code `2.1.207` with `claude-haiku-4-5-20251001` ran with built-in tools disabled, strict MCP configuration, and only `mcp__agentops__*` allowed. The agent did not receive an HTTP, shell, or direct runtime API tool.
+
+| Scenario | Result | Evidence |
+|---|---|---|
+| Default operation | Allow | `pdec_6514a9ed-fee8-4f27-9ef3-e54d981605a2`, `no_matching_policy` |
+| Observed HTTP policy | Observe | `pdec_623f7f51-e86e-4cb6-98e1-4518224383c9` |
+| Denied HTTP policy | Deny | `pdec_86ad6198-741b-450b-a9f6-4bf3380ad01c`, `policy_denied` |
+| Incomplete tool context | Needs more info | Required `tool.name` without creating an operation |
+| Rate limit | First allow, second blocked | `opdec_3637a28b-ed8e-45a5-a044-5939e20c864d`, then `opdec_87275a95-ac69-4283-9a70-f0c9d53f184a` / `operation_rate_limited` |
+| Tool approval | Approved and consumed once | `apv_8167ac3d-5bdc-420d-96fa-28e8241e6065`, `apcons_f8fcb054-fe3a-4733-8ac8-3ebc3837596c`; repeat consumption failed closed |
+| Tool denial | Denied and not consumable | `apv_778b53d8-5563-41d3-889f-7a389e1c7858`; consumption returned `Approval must be approved before it can be consumed.` |
+| Payment access disabled | Blocked | `Payment access is disabled for this agent` |
+| Payment policy | Deny | `pdec_d1c5176b-8a75-44ca-a6da-f6ed1e3ad6c1`, `policy_denied` |
+| Disallowed rail | Blocked | `payment_rail_not_allowed` |
+| Per-request cap | Blocked | `Payment amount exceeds the agent per-request cap.` |
+| Monthly budget | Blocked | `Payment amount exceeds the agent budget.` |
+| Approval threshold | Approval required | `apv_3618bdc1-c08a-4669-9117-357bc488e334`, `pdec_9ea58d9e-0cef-4079-858d-ad146230e829` |
+| Approved x402 retry | Delivered | `payevt_1214265e-621b-4bdb-a4f8-7cfb34cd5218`, `0.001 USDC`, Gateway Base Sepolia, provider mode `test` |
+| Payment approval consumption | Consumed | `apcons_a6851923-0085-4976-8952-c06318753718` |
+
+The final x402 fulfillment used reservation `payres_8d2e5145-501f-4fb7-8198-5d491edb4a96`, source `paysrc_c1af1e7c-7421-40b3-8686-61286852a289`, network `eip155:84532`, and provider reference `bbd17811-83a4-4a07-80de-3bfea718712b`. The authenticated browser independently showed the payment as `Delivered`, the approval as `consumed`, the denied approval as `denied`, and the second rate-limited operation as `Rate limited`.
+
+The real client exposed one integration defect: `policy_requires_approval` was returned with MCP `isError=true`, causing Claude to lose the structured `approvalId` and `decisionId` needed to continue the approval lifecycle. `apps/mcp/src/tools.ts` now treats that expected governance outcome as a successful structured MCP result while preserving the runtime error code and details. The regression test in `apps/mcp/test/tools.test.ts` was observed failing before the implementation change and passing after it.
+
+Fresh post-fix `npm run verify` passed lint, typecheck, all production builds, bootstrap `14/14`, config/contracts `2/2`, database `6/6`, API `196/196`, MCP `183/183`, and web `243/243`. Browser cleanup then disabled payment access and the temporary rate limit, revoked connection `conn_887f290c-d81b-427a-ba64-c5b113aa23b2`, detached and archived the four temporary policies, discarded the duplicate draft, and deactivated the test identity. A final strict Claude retry received no AgentOps tools after revocation, so it could not issue another managed call.
+
+Source: real Claude stream-json sessions, the authenticated AgentOps Chrome session, and the fresh local `npm run verify` output captured on 2026-07-13.

@@ -176,13 +176,17 @@ describe('agentOps MCP tools', () => {
       resource: { category: 'market-data' },
     });
 
-    expect(result.isError).toBe(true);
+    expect(result.isError).toBe(false);
     expect(result.structuredContent).toMatchObject({
       approvalId: 'apv_payment',
       code: 'policy_requires_approval',
       decisionId: 'pdec_payment',
       statusCode: 409,
     });
+    const firstContent = result.content[0];
+    expect(firstContent?.type).toBe('text');
+    if (firstContent?.type !== 'text') throw new Error('Expected text content.');
+    expect(firstContent.text).toContain('approval required');
   });
 
   it('returns liquidity preparation as a retryable non-error x402 result', async () => {
