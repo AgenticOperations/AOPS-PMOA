@@ -66,6 +66,60 @@ describe('Circle worker client', () => {
     });
   });
 
+  it('serializes only the authenticated paid HTTP destination snapshot', async () => {
+    let seenInit: RequestInit | undefined;
+    vi.stubGlobal('fetch', vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+      seenInit = init;
+      return Promise.resolve(new Response(JSON.stringify({
+        network: 'eip155:84532',
+        providerMode: 'test',
+        success: true,
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    }));
+    const provider = createCircleWorkerTreasuryProvider({
+      baseUrl: 'http://circle-worker:8090',
+      orgId: 'org_1',
+      token: 'worker-secret',
+    });
+    const destination = {
+      addresses: ['203.0.113.10'],
+      hostname: 'merchant.example',
+      resolverMetadata: 'must-not-cross-worker-boundary',
+      resolveHostname: () => Promise.resolve(['203.0.113.10']),
+      url: 'https://merchant.example/weather',
+    };
+
+    await provider.settleExactX402({
+      attemptId: 'attempt_1',
+      destination,
+      mode: 'test',
+      request: {
+        headers: [],
+        method: 'GET',
+        url: destination.url,
+      },
+      requirements: {
+        amount: '10000',
+        asset: '0xasset',
+        extra: {},
+        maxTimeoutSeconds: 300,
+        network: 'eip155:84532',
+        payTo: '0xpayto',
+        scheme: 'exact',
+      },
+      walletAddress: '0xwallet',
+      walletId: 'wallet_1',
+    });
+
+    const requestBody = typeof seenInit?.body === 'string' ? seenInit.body : '';
+    const body = JSON.parse(requestBody) as { input: { destination: unknown } };
+    expect(body.input.destination).toEqual({
+      addresses: ['203.0.113.10'],
+      hostname: 'merchant.example',
+      url: 'https://merchant.example/weather',
+    });
+  });
+
   it('fails closed when live mode is requested', async () => {
     const provider = createCircleWorkerTreasuryProvider({ baseUrl: 'http://circle-worker:8090', orgId: 'org_1', token: 'secret' });
 

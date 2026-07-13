@@ -4,6 +4,10 @@ import { z } from 'zod';
 import { IdentityError } from '../identity/errors.js';
 import type { CircleConnectionService } from './circle-connection-service.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
+import {
+  PaidHttpError,
+  rehydratePaidHttpDestination,
+} from './x402-http.js';
 
 const connectionInitSchema = z.object({
   email: z.string().trim().email().max(320),
@@ -65,6 +69,18 @@ function assertTestInput(input: Record<string, unknown>): void {
   if (input.mode !== 'test') throw new Error('circle_worker_testnet_only');
 }
 
+function rehydrateSettlementInput(
+  rawInput: Record<string, unknown>,
+): Parameters<CircleTreasuryProvider['settleExactX402']>[0] {
+  if (!Object.hasOwn(rawInput, 'destination')) {
+    return rawInput as Parameters<CircleTreasuryProvider['settleExactX402']>[0];
+  }
+  return {
+    ...rawInput,
+    destination: rehydratePaidHttpDestination(rawInput.destination),
+  } as Parameters<CircleTreasuryProvider['settleExactX402']>[0];
+}
+
 async function executeProviderOperation(
   provider: CircleTreasuryProvider,
   operation: z.infer<typeof operationSchema>,
@@ -90,9 +106,9 @@ async function executeProviderOperation(
     case 'requestTestnetFunds':
       return provider.requestTestnetFunds(rawInput as Parameters<CircleTreasuryProvider['requestTestnetFunds']>[0]);
     case 'settleExactX402':
-      return provider.settleExactX402(rawInput as Parameters<CircleTreasuryProvider['settleExactX402']>[0]);
+      return provider.settleExactX402(rehydrateSettlementInput(rawInput));
     case 'settleGatewayX402':
-      return provider.settleGatewayX402(rawInput as Parameters<CircleTreasuryProvider['settleGatewayX402']>[0]);
+      return provider.settleGatewayX402(rehydrateSettlementInput(rawInput));
   }
 }
 
@@ -107,6 +123,9 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
+      return reply.code(400).send({ error: 'circle_worker_validation_error' });
+    }
+    if (error instanceof PaidHttpError && error.code === 'invalid_destination') {
       return reply.code(400).send({ error: 'circle_worker_validation_error' });
     }
     if (error instanceof IdentityError) {

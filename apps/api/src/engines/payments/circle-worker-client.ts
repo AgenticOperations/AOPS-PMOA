@@ -1,5 +1,11 @@
 import type { CircleConnectionService } from './circle-connection-service.js';
-import type { CircleTreasuryProvider, ProviderMode } from './circle-provider.js';
+import type {
+  CircleCanonicalX402SettlementInput,
+  CircleGatewayX402SettlementInput,
+  CircleTreasuryProvider,
+  ProviderMode,
+} from './circle-provider.js';
+import { serializePaidHttpDestination } from './x402-http.js';
 import { IdentityError } from '../identity/errors.js';
 
 type WorkerClientOptions = {
@@ -77,6 +83,13 @@ export function createCircleWorkerTreasuryProvider(options: WorkerProviderOption
   const assertOrg = (orgId: string): void => {
     if (orgId !== options.orgId) throw new Error('circle_worker_org_mismatch');
   };
+  const serializeSettlementInput = (
+    input: CircleGatewayX402SettlementInput,
+  ): CircleGatewayX402SettlementInput | (Omit<CircleCanonicalX402SettlementInput, 'destination'> & {
+    readonly destination: ReturnType<typeof serializePaidHttpDestination>;
+  }) => 'destination' in input
+    ? { ...input, destination: serializePaidHttpDestination(input.destination) }
+    : input;
 
   return {
     bridgeWalletTopUp: (input) => execute('bridgeWalletTopUp', input),
@@ -98,7 +111,7 @@ export function createCircleWorkerTreasuryProvider(options: WorkerProviderOption
     }),
     initiateGatewayDeposit: (input) => execute('initiateGatewayDeposit', input),
     requestTestnetFunds: (input) => execute('requestTestnetFunds', input),
-    settleExactX402: (input) => execute('settleExactX402', input),
-    settleGatewayX402: (input) => execute('settleGatewayX402', input),
+    settleExactX402: (input) => execute('settleExactX402', serializeSettlementInput(input)),
+    settleGatewayX402: (input) => execute('settleGatewayX402', serializeSettlementInput(input)),
   };
 }

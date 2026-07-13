@@ -351,6 +351,21 @@ export type ValidatedPaidHttpDestination = {
   readonly resolveHostname: PaidHttpDnsResolver;
 };
 
+export type SerializedPaidHttpDestination = Pick<
+  ValidatedPaidHttpDestination,
+  'url' | 'hostname' | 'addresses'
+>;
+
+export function serializePaidHttpDestination(
+  destination: ValidatedPaidHttpDestination,
+): SerializedPaidHttpDestination {
+  return {
+    url: destination.url,
+    hostname: destination.hostname,
+    addresses: [...destination.addresses],
+  };
+}
+
 function parseIpv4(
   address: string,
 ): readonly [number, number, number, number] | undefined {
@@ -609,6 +624,85 @@ export class PaidHttpError extends Error {
   ) {
     super(message, options);
   }
+}
+
+const MAX_SERIALIZED_PAID_HTTP_ADDRESSES = 16;
+const MAX_SERIALIZED_PAID_HTTP_URL_LENGTH = 4096;
+
+function invalidSerializedPaidHttpDestination(): PaidHttpError {
+  return new PaidHttpError(
+    'invalid_destination',
+    'Serialized paid HTTP destination is invalid',
+  );
+}
+
+function isSerializedPaidHttpAddressList(value: unknown): value is string[] {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_SERIALIZED_PAID_HTTP_ADDRESSES &&
+    value.every((address: unknown) => typeof address === 'string' && isIP(address) !== 0);
+}
+
+/**
+ * Reconstructs an authenticated destination capability after worker transport.
+ * This validates the serialized shape and pin consistency only; it deliberately
+ * does not repeat URL allowlist checks or DNS resolution performed upstream.
+ */
+export function rehydratePaidHttpDestination(
+  value: unknown,
+): ValidatedPaidHttpDestination {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidSerializedPaidHttpDestination();
+  }
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw invalidSerializedPaidHttpDestination();
+  }
+  const keys = Object.keys(value);
+  const expectedKeys = new Set(['addresses', 'hostname', 'url']);
+  if (keys.length !== expectedKeys.size || keys.some((key) => !expectedKeys.has(key))) {
+    throw invalidSerializedPaidHttpDestination();
+  }
+
+  const destination = value as Record<string, unknown>;
+  if (
+    typeof destination.url !== 'string' ||
+    destination.url.length === 0 ||
+    destination.url.length > MAX_SERIALIZED_PAID_HTTP_URL_LENGTH ||
+    typeof destination.hostname !== 'string' ||
+    destination.hostname.length === 0 ||
+    destination.hostname.length > 253 ||
+    !isSerializedPaidHttpAddressList(destination.addresses)
+  ) {
+    throw invalidSerializedPaidHttpDestination();
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(destination.url);
+  } catch {
+    throw invalidSerializedPaidHttpDestination();
+  }
+  if (
+    (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+    parsed.hostname.replace(/^\[|\]$/g, '') !== destination.hostname
+  ) {
+    throw invalidSerializedPaidHttpDestination();
+  }
+
+  const hostname = destination.hostname;
+  const url = destination.url;
+  const addresses = Object.freeze([...destination.addresses]);
+  const resolveHostname: PaidHttpDnsResolver = (requestedHostname) => {
+    if (requestedHostname !== hostname) {
+      return Promise.reject(new PaidHttpError(
+        'invalid_destination',
+        'Paid HTTP resolver hostname does not match the authenticated destination',
+      ));
+    }
+    return Promise.resolve(addresses);
+  };
+  return Object.freeze({ addresses, hostname, resolveHostname, url });
 }
 
 export type PaidHttpExecutionOptions = {
