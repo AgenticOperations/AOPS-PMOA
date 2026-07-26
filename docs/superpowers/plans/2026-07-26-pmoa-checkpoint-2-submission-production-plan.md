@@ -13,7 +13,7 @@ tags: [pmoa, checkpoint-2, presentation, arc, circle, implementation-plan]
 
 **Architecture:** Build the deck as native editable PowerPoint objects with the explicitly authorized PptxGenJS fallback in an external retained scratch workspace. Source every material claim from repository evidence, use verified AOPS assets and approved console-system captures, then commit only the final judge-facing artifacts and documentation to `feat/mcp-paid-http`; keep `main` untouched.
 
-**Tech Stack:** PptxGenJS, Playwright Core with system Chrome, Keynote, `pdftoppm`, PowerPoint PPTX, PNG, Git/GitHub CLI.
+**Tech Stack:** PptxGenJS, Playwright Core with system Chrome, headless LibreOffice, `pdftoppm`, PowerPoint PPTX, PDF, PNG, Git/GitHub CLI.
 
 ---
 
@@ -30,7 +30,7 @@ fallback presentation implementation.
 The execution runtime is therefore:
 
 - PptxGenJS for the editable `.pptx`.
-- Keynote for PPTX-to-PDF rendering on macOS.
+- Keynote was the planned PPTX-to-PDF renderer on macOS.
 - `pdftoppm` for full-resolution slide PNGs.
 - Native editable text, shapes, images, and connectors; no full-slide bitmap
   construction.
@@ -38,12 +38,20 @@ The execution runtime is therefore:
 The approved content, visual system, claim boundaries, evidence requirements,
 repository scope, and QA acceptance criteria are unchanged.
 
+Keynote could not import documents through AppleScript in the headless host
+session after five bounded attempts. The editable PPTX remained valid, and the
+final deck was rendered with headless LibreOffice for PDF/PNG visual QA. The
+Keynote-specific blocker is recorded in
+`Brain/40-Memory/bug-reports/agentOps-20260726-keynote-headless-render.md`.
+
 ## File Map
 
 ### Repository files
 
 - Create: `submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pptx`
   - Editable eight-slide judge presentation.
+- Create: `submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pdf`
+  - Browser-friendly judge presentation and Checkpoint form link.
 - Create: `submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2-cover.png`
   - Slide 1 export for the checkpoint/project preview.
 - Create: `submission/pmoa-checkpoint-2/README.md`

@@ -12,11 +12,18 @@ tags: [pmoa, checkpoint-2, arc, circle, submission]
 ## Submission
 
 - **Track:** Agentic Economy
-- **Repository:** `https://github.com/AgenticOperations/AOPS-PMOA`
+- **Repository:** `https://github.com/AgenticOperations/AOPS-PMOA/tree/feat/mcp-paid-http`
 - **Latest working branch:** `feat/mcp-paid-http`
 - **Tested code checkpoint:** `add41aa`
 - **Verification:** lint, typecheck, production builds, and `878/878` tests
-- **Presentation:** [AOPS-PMOA-Checkpoint-2.pptx](AOPS-PMOA-Checkpoint-2.pptx)
+- **Judge deck:** [AOPS-PMOA-Checkpoint-2.pdf](AOPS-PMOA-Checkpoint-2.pdf)
+- **Editable deck:** [AOPS-PMOA-Checkpoint-2.pptx](AOPS-PMOA-Checkpoint-2.pptx)
+- **Project image:** [AOPS-PMOA-Checkpoint-2-cover.png](AOPS-PMOA-Checkpoint-2-cover.png)
+
+### Checkpoint Form Links
+
+- **Code:** `https://github.com/AgenticOperations/AOPS-PMOA/tree/feat/mcp-paid-http`
+- **Presentation:** `https://github.com/AgenticOperations/AOPS-PMOA/blob/feat/mcp-paid-http/submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pdf`
 
 ## Progress Summary
 

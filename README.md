@@ -21,7 +21,9 @@ The latest tested checkpoint is on
 It demonstrates the working Circle-native control foundation that AOPS is
 taking onto Arc next.
 
-- [Pitch deck](submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pptx)
+- [Judge deck (PDF)](submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pdf)
+- [Editable deck (PPTX)](submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pptx)
+- [Checkpoint cover](submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2-cover.png)
 - [Judge factsheet](submission/pmoa-checkpoint-2/README.md)
 - [Paid HTTP release evidence](docs/qa/2026-07-13-x402-paid-http-evidence.md)
 
