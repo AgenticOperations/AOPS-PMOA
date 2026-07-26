@@ -11,13 +11,32 @@ tags: [pmoa, checkpoint-2, presentation, arc, circle, implementation-plan]
 
 **Goal:** Produce and publish the complete PMOA Checkpoint 2 package: an editable AOPS-aligned pitch deck, reusable cover image, judge factsheet, and public feature-branch repository path.
 
-**Architecture:** Build the deck as native editable PowerPoint objects with `@oai/artifact-tool` in an external retained scratch workspace. Source every material claim from the repository and QA evidence, use real AOPS assets and product screenshots, then commit only the final judge-facing artifacts and documentation to `feat/mcp-paid-http`; keep `main` untouched.
+**Architecture:** Build the deck as native editable PowerPoint objects with the explicitly authorized PptxGenJS fallback in an external retained scratch workspace. Source every material claim from repository evidence, use verified AOPS assets and approved console-system captures, then commit only the final judge-facing artifacts and documentation to `feat/mcp-paid-http`; keep `main` untouched.
 
-**Tech Stack:** `@oai/artifact-tool`, Node.js via `node_repl`, Chrome CDP for product screenshots, PowerPoint PPTX, PNG, Git/GitHub CLI.
+**Tech Stack:** PptxGenJS, Playwright Core with system Chrome, Keynote, `pdftoppm`, PowerPoint PPTX, PNG, Git/GitHub CLI.
 
 ---
 
 [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/superpowers/specs/2026-07-26-pmoa-checkpoint-2-submission-design]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/DESIGN]]
+
+## Execution Amendment — Authorized Presentation Fallback
+
+On 2026-07-26 the required Node REPL rejected all calls before JavaScript
+execution because host-provided `sandboxPolicy` metadata was absent.
+`@oai/artifact-tool` was also unavailable on disk and from the public npm
+registry. After five bounded diagnostics, Abhinav explicitly authorized a
+fallback presentation implementation.
+
+The execution runtime is therefore:
+
+- PptxGenJS for the editable `.pptx`.
+- Keynote for PPTX-to-PDF rendering on macOS.
+- `pdftoppm` for full-resolution slide PNGs.
+- Native editable text, shapes, images, and connectors; no full-slide bitmap
+  construction.
+
+The approved content, visual system, claim boundaries, evidence requirements,
+repository scope, and QA acceptance criteria are unchanged.
 
 ## File Map
 
@@ -260,14 +279,20 @@ hierarchy:
 - Verification: `878/878` tests plus lint, typecheck, and production builds
 
 ## Progress summary
-[One paragraph: working Circle-native authority layer, MCP policy enforcement,
-real USDC paid-service flow, replay-safe result return, Arc integration next.]
+AOPS is a working Circle-native authority layer for teams operating autonomous
+agents. The current branch proves policy enforcement, hosted MCP execution, a
+real USDC paid-service flow, replay-safe result return, credential lifecycle,
+and failure-safe reconciliation. Arc-native execution is the next milestone.
 
 ## Proof index
-[Repository evidence path → supported claim table]
+| Claim | Evidence |
+|---|---|
+| Complete verification gate | `docs/qa/2026-07-13-x402-paid-http-evidence.md` |
+| Broader product E2E | `docs/qa/2026-07-12-testnet-release-evidence.md` |
 
 ## Honest boundary
-[No public deployment required for Checkpoint 2; Arc settlement is next.]
+No public deployment is required or claimed for Checkpoint 2. Arc settlement
+is the next milestone, and the paid HTTP feature remains unmerged.
 ```
 
 - [ ] **Step 2: Add a compact README checkpoint banner**

@@ -14,6 +14,17 @@ agentOps is a testnet control plane for teams operating autonomous agents. It co
 
 The current release is intentionally **testnet only**. It does not represent mainnet payment execution as available.
 
+## Build on Arc — Checkpoint 2
+
+The latest tested checkpoint is on
+[`feat/mcp-paid-http`](https://github.com/AgenticOperations/AOPS-PMOA/tree/feat/mcp-paid-http).
+It demonstrates the working Circle-native control foundation that AOPS is
+taking onto Arc next.
+
+- [Pitch deck](submission/pmoa-checkpoint-2/AOPS-PMOA-Checkpoint-2.pptx)
+- [Judge factsheet](submission/pmoa-checkpoint-2/README.md)
+- [Paid HTTP release evidence](docs/qa/2026-07-13-x402-paid-http-evidence.md)
+
 ## Product Surface
 
 - **Organizations and access:** Google OAuth, organization membership, roles, teams, and tenant-isolated reads and mutations.
