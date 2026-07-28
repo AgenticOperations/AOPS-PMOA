@@ -1,0 +1,234 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:aops:schema:release-certificate:1",
+  "title": "AOPS Release Certificate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "certificate_id",
+    "status",
+    "certificate_epoch",
+    "scope",
+    "core",
+    "execution_profile",
+    "market",
+    "evidence",
+    "approvals",
+    "issued_at",
+    "expires_at",
+    "revocation_conditions",
+    "signature"
+  ],
+  "properties": {
+    "certificate_id": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": ["candidate", "valid", "revoked", "expired"]
+    },
+    "certificate_epoch": { "type": "integer", "minimum": 1 },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope_type", "scope_id"],
+      "properties": {
+        "scope_type": {
+          "enum": ["platform", "provider", "tenant", "tenant_provider_binding"]
+        },
+        "scope_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "core": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_result_id",
+        "gate_result_digest",
+        "release_digest",
+        "source_commit",
+        "migration_digest",
+        "policy_schema_version",
+        "ledger_schema_version",
+        "evidence_schema_version"
+      ],
+      "properties": {
+        "gate_result_id": { "type": "string", "minLength": 1 },
+        "gate_result_digest": { "type": "string", "minLength": 1 },
+        "release_digest": { "type": "string" },
+        "source_commit": { "type": "string" },
+        "migration_digest": { "type": "string" },
+        "policy_schema_version": { "type": "string" },
+        "ledger_schema_version": { "type": "string" },
+        "evidence_schema_version": { "type": "string" }
+      }
+    },
+    "execution_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_result_id",
+        "gate_result_digest",
+        "kind",
+        "profile_id",
+        "profile_version",
+        "environment",
+        "enforcement_strength",
+        "credential_profile",
+        "exposure_limits"
+      ],
+      "properties": {
+        "gate_result_id": { "type": "string", "minLength": 1 },
+        "gate_result_digest": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["runtime", "financial"] },
+        "profile_id": { "type": "string", "minLength": 1 },
+        "profile_version": { "type": "string", "minLength": 1 },
+        "environment": { "enum": ["sandbox", "testnet", "mainnet"] },
+        "enforcement_strength": {
+          "enum": ["advisory", "mediated", "controlled"]
+        },
+        "credential_profile": { "type": "string", "minLength": 1 },
+        "transport": { "type": ["string", "null"] },
+        "deployment_identity": { "type": ["string", "null"] },
+        "provider": { "type": ["string", "null"] },
+        "rail": { "type": ["string", "null"] },
+        "provider_api_version": { "type": ["string", "null"] },
+        "provider_account": { "type": ["string", "null"] },
+        "network": { "type": ["string", "null"] },
+        "chain_id": { "type": ["string", "null"] },
+        "asset": { "type": ["string", "null"] },
+        "asset_contract": { "type": ["string", "null"] },
+        "webhook_schema_version": { "type": ["string", "null"] },
+        "facilitator": { "type": ["string", "null"] },
+        "signer_profile": { "type": ["string", "null"] },
+        "maximum_loss_bound": { "type": ["string", "null"] },
+        "exposure_limits": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "excluded_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "financial" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": [
+              "provider",
+              "rail",
+              "provider_api_version",
+              "provider_account",
+              "network",
+              "asset",
+              "signer_profile",
+              "maximum_loss_bound"
+            ]
+          }
+        }
+      ]
+    },
+    "market": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_result_id",
+        "gate_result_digest",
+        "legal_entity",
+        "jurisdiction",
+        "tenant_id",
+        "use_case",
+        "eligibility_evidence"
+      ],
+      "properties": {
+        "gate_result_id": { "type": "string", "minLength": 1 },
+        "gate_result_digest": { "type": "string", "minLength": 1 },
+        "legal_entity": { "type": "string" },
+        "jurisdiction": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "use_case": { "type": "string" },
+        "eligibility_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_digest",
+        "requirements",
+        "gate_results",
+        "external_truth_verification",
+        "independent_verifier"
+      ],
+      "properties": {
+        "manifest_digest": { "type": "string" },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "gate_results": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "external_truth_verification": { "type": "string" },
+        "independent_verifier": { "type": "string" },
+        "excluded_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "open_s2_risks": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engineering",
+        "security",
+        "treasury",
+        "operations",
+        "privacy_legal",
+        "execution_profile_owner"
+      ],
+      "properties": {
+        "engineering": { "$ref": "#/definitions/approval" },
+        "security": { "$ref": "#/definitions/approval" },
+        "treasury": { "$ref": "#/definitions/approval" },
+        "operations": { "$ref": "#/definitions/approval" },
+        "privacy_legal": { "$ref": "#/definitions/approval" },
+        "execution_profile_owner": { "$ref": "#/definitions/approval" }
+      }
+    },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "revocation_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "signature": { "type": "string" }
+  },
+  "definitions": {
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["principal", "approved_at", "signature"],
+      "properties": {
+        "principal": { "type": "string", "minLength": 1 },
+        "approved_at": { "type": "string", "format": "date-time" },
+        "signature": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

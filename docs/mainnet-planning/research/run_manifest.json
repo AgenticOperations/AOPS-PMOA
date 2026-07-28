@@ -1,0 +1,22 @@
+{
+  "version": "3.0.0",
+  "query": "AOPS production-ready domain architecture, lifecycle, assurance, Circle mainnet adapters, and Arc conformance",
+  "mode": "deep",
+  "started_at": "2026-07-28T06:12:26.847849+00:00",
+  "finished_at": "2026-07-28T06:52:00+00:00",
+  "assumptions": [],
+  "provider_config": {
+    "primary": "search-cli",
+    "scholarly": null
+  },
+  "report_dir": "/Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/agentOps/BUILD-PMOA/docs/mainnet-planning/research",
+  "artifact_paths": {
+    "sources": "sources.jsonl",
+    "evidence": "evidence.jsonl",
+    "claims": "claims.jsonl",
+    "report": "../reference/research-synthesis.md",
+    "html": "../output/html/research-synthesis.html",
+    "pdf": "../output/pdf/research-synthesis.pdf"
+  },
+  "continuation": null
+}

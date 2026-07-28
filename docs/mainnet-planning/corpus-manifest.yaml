@@ -1,0 +1,164 @@
+corpus:
+  id: aops-mainnet-planning
+  version: 1.0.0-draft
+  status: target
+  effective_date: 2026-07-28
+  source_repository: BUILD-PMOA
+  current_source_commit: ef4e42e3a2bb2072d03917459974d59183708692
+  paid_http_candidate_commit: a0556e69a0ab03d5fa4153b654d30746766c3ef2
+  lifecycle_status: target
+  product_owner: founder-product
+  engineering_owner: architecture
+  security_owner: security-assurance
+  required_approvers:
+    - product
+    - engineering
+    - security
+  mandatory_review_date: 2026-08-27
+  applicable_profiles:
+    - core-target
+  source_commit_basis:
+    - ef4e42e3a2bb2072d03917459974d59183708692
+    - a0556e69a0ab03d5fa4153b654d30746766c3ef2
+  production_claim: false
+  arc_mainnet_claim: false
+  authority_order:
+    - 00-corpus-governance.md
+    - 01-product-and-release-boundary.md
+    - 02-canonical-kernel.md
+    - 03-interface-event-and-error-contract.md
+    - 04-trust-tenancy-and-threat-model.md
+    - domains
+    - journeys
+    - assurance
+    - roadmap
+
+release_identity:
+  expression: CORE × EXECUTION_PROFILE × MARKET
+  certificate_template: assurance/release-certificate-template.json
+  testnet_transitive_to_mainnet: false
+  prose_can_enable_production: false
+
+traceability:
+  requirement_catalog: reference/requirements.jsonl
+  current_stage: architecture_definition
+  certification_eligible: false
+  implementation_gate: every_s0_s1_has_test_and_evidence_ids
+
+architecture_validation:
+  status: blocked
+  gate: reference/architecture-validation-gate.md
+  implementation_plan_authorized: false
+  required_spikes:
+    - atomic_financial_control_boundary
+    - first_circle_financial_profile
+    - revocation_and_tenant_isolation
+
+claim_class_defaults:
+  foundations: TARGET
+  domains: TARGET
+  journeys: TARGET
+  assurance: TARGET
+  roadmap: TARGET
+  current_code_reality_and_gap_register: CURRENT-SOURCE
+  research_synthesis_and_bibliography: RESEARCH
+  decision_register_unresolved_rows: DECISION-REQUIRED
+  override_rule: an inline class or evidence reference overrides only the identified statement
+
+groups:
+  foundations:
+    owner: product-architecture
+    documents:
+      - README.md
+      - 00-corpus-governance.md
+      - 01-product-and-release-boundary.md
+      - 02-canonical-kernel.md
+      - 03-interface-event-and-error-contract.md
+      - 04-trust-tenancy-and-threat-model.md
+      - 05-current-code-reality-and-gap-register.md
+      - 06-dependency-and-ownership-map.md
+      - 07-operator-experience-and-route-contract.md
+  domains:
+    owner: domain-owners
+    documents:
+      - domains/01-organization-tenancy-human-iam.md
+      - domains/02-agent-workload-identity.md
+      - domains/03-mandates-and-missions.md
+      - domains/04-policy-and-authority.md
+      - domains/05-approvals-grants-and-emergency-controls.md
+      - domains/06-runtime-enforcement.md
+      - domains/07-provider-and-service-commerce.md
+      - domains/08-treasury-ledger-and-reconciliation.md
+      - domains/09-wallet-key-signing-and-custody.md
+      - domains/10-financial-execution-and-adapters.md
+      - domains/11-evidence-assurance-and-privacy.md
+      - domains/12-platform-operations.md
+  journeys:
+    owner: product-assurance
+    documents:
+      - journeys/01-organization-and-agent-onboarding.md
+      - journeys/02-governed-nonfinancial-action.md
+      - journeys/03-governed-paid-service-purchase.md
+      - journeys/04-unknown-outcome-and-recovery.md
+      - journeys/05-provider-refund-reversal-and-dispute.md
+      - journeys/06-emergency-containment.md
+      - journeys/07-audit-export-retention-and-dsar.md
+  assurance:
+    owner: release-assurance
+    documents:
+      - assurance/01-production-core-gates.md
+      - assurance/02-adapter-conformance-standard.md
+      - assurance/02a-runtime-enforcement-conformance-standard.md
+      - assurance/03-market-tenant-and-use-case-profile.md
+      - assurance/04-journey-test-chaos-and-recovery-standard.md
+      - assurance/05-release-certification-and-revocation.md
+  roadmap:
+    owner: product-delivery
+    documents:
+      - roadmap/00-build-sequence.md
+      - roadmap/01-phase-0-safety-correction.md
+      - roadmap/02-phase-1-production-core.md
+      - roadmap/03-phase-2-circle-mainnet-profile.md
+      - roadmap/04-phase-3-arc-testnet-profile.md
+      - roadmap/05-phase-4-provider-and-rail-expansion.md
+  references:
+    owner: research-assurance
+    documents:
+      - reference/requirement-index.md
+      - reference/requirements.jsonl
+      - reference/decision-register.md
+      - reference/architecture-validation-gate.md
+      - reference/source-bibliography.md
+      - reference/research-synthesis.md
+
+artifacts:
+  research_registries:
+    - research/run_manifest.json
+    - research/sources.jsonl
+    - research/evidence.jsonl
+    - research/claims.jsonl
+  generated_outputs:
+    - path: output/html/research-synthesis.html
+      source: reference/research-synthesis.md
+      source_sha256: f29270f26b5bb36b812befc38fd7347a76b6e848f91148c7e7c97f36ba40a690
+      artifact_sha256: 187a9539a5bd4d9ed7f8d51bdc6f0f6f243d22f456a0ffab99fd52ad4d506105
+      generated: true
+    - path: output/pdf/research-synthesis.pdf
+      source: output/html/research-synthesis.html
+      source_sha256: 187a9539a5bd4d9ed7f8d51bdc6f0f6f243d22f456a0ffab99fd52ad4d506105
+      artifact_sha256: a5bab8387bd9409e6c37d0cc40119a6a8fe6f14cf499721e37616854bb01d718
+      generated: true
+  schemas:
+    - assurance/release-certificate-template.json
+
+invalidation_triggers:
+  - canonical_object_or_state_change
+  - identity_or_authority_semantics_change
+  - policy_or_approval_schema_change
+  - ledger_or_reservation_schema_change
+  - signer_kms_or_custody_change
+  - adapter_provider_or_api_change
+  - webhook_or_reconciliation_change
+  - network_chain_asset_or_contract_change
+  - tenant_isolation_or_retention_change
+  - deployment_backup_or_restore_change
