@@ -549,9 +549,9 @@ describe('PMOA database migrations', () => {
         [`cjob_${jobType.replace(/\./g, '_')}`, jobType],
       );
     }
-    const jobCount = await pool.query(
+    const jobCount = await pool.query<{ count: string }>(
       "SELECT count(*) FROM circle_provider_jobs WHERE org_id = 'org_eoa_default'",
     );
-    expect(Number(jobCount.rows[0].count)).toBe(13);
+    expect(Number(jobCount.rows[0]?.count)).toBe(13);
   });
 });
