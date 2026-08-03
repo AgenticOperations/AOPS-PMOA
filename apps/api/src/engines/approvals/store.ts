@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { sha256Hex } from '../evidence/canonical-json.js';
 import { recordAuditEvent } from '../evidence/audit-writer.js';
-import { badRequest, conflict, forbidden, notFound } from '../identity/errors.js';
+import { badRequest, conflict, forbidden, IdentityError, notFound } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import type { ConnectionAuthResult } from '../identity/store.js';
 import type { OperatorContext } from '../identity/types.js';
@@ -363,6 +363,29 @@ export async function createApprovalRequest(
   });
 }
 
+/**
+ * The approve/deny UPDATEs exclude requested_by = approver in their WHERE
+ * clause, so a self-approval attempt affects zero rows -- indistinguishable
+ * from "not pending" or "expired" without this re-read. Called only on the
+ * zero-rows path, so it costs nothing on the (overwhelmingly common)
+ * success path.
+ */
+async function assertNotSelfApproval(
+  client: pg.PoolClient,
+  orgId: string,
+  approvalId: string,
+  actorId: string,
+): Promise<void> {
+  const result = await client.query<{ requested_by: string }>(
+    `SELECT requested_by FROM approval_requests
+      WHERE org_id = $1 AND id = $2 AND status = 'pending' AND expires_at > now()`,
+    [orgId, approvalId],
+  );
+  if (result.rows[0]?.requested_by === actorId) {
+    throw new IdentityError('self_approval_forbidden', 403, 'The requester cannot approve or deny their own request.');
+  }
+}
+
 export async function approveApproval(
   pool: pg.Pool,
   operator: OperatorContext,
@@ -382,11 +405,15 @@ export async function approveApproval(
           AND id = $2
           AND status = 'pending'
           AND expires_at > now()
+          AND requested_by <> $3
         RETURNING *`,
       [orgId, approvalId, operator.actorId, note],
     );
     const row = updated.rows[0];
-    if (row === undefined) throw conflict('approval_not_pending', 'Approval is not pending or has expired.');
+    if (row === undefined) {
+      await assertNotSelfApproval(client, orgId, approvalId, operator.actorId);
+      throw conflict('approval_not_pending', 'Approval is not pending or has expired.');
+    }
 
     await client.query(
       `INSERT INTO approval_actions (id, org_id, approval_id, actor_type, actor_id, action, note)
@@ -450,11 +477,15 @@ export async function denyApproval(
           AND id = $2
           AND status = 'pending'
           AND expires_at > now()
+          AND requested_by <> $3
         RETURNING *`,
       [orgId, approvalId, operator.actorId, note],
     );
     const row = updated.rows[0];
-    if (row === undefined) throw conflict('approval_not_pending', 'Approval is not pending or has expired.');
+    if (row === undefined) {
+      await assertNotSelfApproval(client, orgId, approvalId, operator.actorId);
+      throw conflict('approval_not_pending', 'Approval is not pending or has expired.');
+    }
     await client.query(
       `INSERT INTO approval_actions (id, org_id, approval_id, actor_type, actor_id, action, note)
        VALUES ($1, $2, $3, 'user', $4, 'denied', $5)`,
