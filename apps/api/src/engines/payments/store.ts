@@ -5083,7 +5083,7 @@ async function preparePaidHttpPayment(
     // value once that table lands rather than hardcoding a guess now.
     const agentWallet = await findAgentWallet(client, auth.agent_id, mode, quote.chain);
     if (agentWallet !== null) {
-      const spendable = await readSpendableMicros(agentWallet, 0n, { nativeBalanceMicros });
+      const spendable = await readSpendableMicros(agentWallet, 0n, { nativeBalanceMicros }, mode);
       if (quote.amountMicros > spendable) {
         throw conflict(
           'insufficient_agent_wallet_balance',

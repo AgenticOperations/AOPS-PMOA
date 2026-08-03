@@ -489,6 +489,7 @@ describe('Arc gas headroom', () => {
       { address: '0xabc', chain: 'arc' },
       500_000n,                                   // $0.50 reserve
       { nativeBalanceMicros: () => Promise.resolve(200_000n) }, // $0.20 held
+      'test',
     );
     expect(spendable).toBe(0n);   // must clamp, never go negative
   });
@@ -500,6 +501,7 @@ describe('Arc gas headroom', () => {
       { address: '0xabc', chain: 'arc' },
       0n,
       { nativeBalanceMicros: () => Promise.resolve(1n) },   // sub-cent, non-zero
+      'test',
     );
     expect(spendable).toBe(1n);
   });
@@ -509,6 +511,7 @@ describe('Arc gas headroom', () => {
       { address: '0xabc', chain: 'arc' },
       500_000n,
       { nativeBalanceMicros: () => Promise.resolve(500_000n) },
+      'test',
     );
     expect(spendable).toBe(0n);
   });
@@ -517,15 +520,19 @@ describe('Arc gas headroom', () => {
 describe('nativeBalanceMicros', () => {
   const originalFetch = global.fetch;
   const originalRpcUrl = process.env.ARC_RPC_URL;
+  const originalBaseRpcUrl = process.env.BASE_SEPOLIA_RPC_URL;
 
   beforeEach(() => {
     process.env.ARC_RPC_URL = 'https://rpc.testnet.arc.network';
+    delete process.env.BASE_SEPOLIA_RPC_URL;
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     if (originalRpcUrl === undefined) delete process.env.ARC_RPC_URL;
     else process.env.ARC_RPC_URL = originalRpcUrl;
+    if (originalBaseRpcUrl === undefined) delete process.env.BASE_SEPOLIA_RPC_URL;
+    else process.env.BASE_SEPOLIA_RPC_URL = originalBaseRpcUrl;
   });
 
   it('converts native wei to USDC micros -- 1e12 ratio confirmed by spike S6', async () => {
@@ -561,5 +568,30 @@ describe('nativeBalanceMicros', () => {
 
   it('throws for a chain with no configured RPC URL', async () => {
     await expect(nativeBalanceMicros('0xabc', 'base')).rejects.toThrow('agent_wallet_balance_rpc_not_configured:base');
+  });
+
+  it('reads the real USDC ERC-20 balanceOf on Base, NOT the native ETH balance', async () => {
+    // Unlike Arc (USDC IS the native gas token), Base's USDC is a real
+    // ERC-20 separate from ETH -- eth_getBalance would report ETH held,
+    // which is simply the wrong number here.
+    process.env.BASE_SEPOLIA_RPC_URL = 'https://sepolia.base.org';
+    let capturedMethod: string | undefined;
+    let capturedTo: string | undefined;
+    global.fetch = vi.fn((_url, init) => {
+      const body = JSON.parse((init as { body: string }).body) as { method: string; params: [{ to: string }, string] };
+      capturedMethod = body.method;
+      capturedTo = body.params[0].to;
+      // 5_000_000 (uint256, no scaling needed -- Base USDC is 6dp, same as micros)
+      return Promise.resolve({ json: () => Promise.resolve({ result: `0x${(5_000_000).toString(16)}` }) });
+    }) as unknown as typeof fetch;
+
+    const testAddress = `0x${'a'.repeat(39)}1`; // 40 hex chars after 0x
+    const micros = await nativeBalanceMicros(testAddress, 'base', 'test');
+
+    expect(micros).toBe(5_000_000n);
+    expect(capturedMethod).toBe('eth_call');
+    // Must call against the USDC token contract, not eth_getBalance's
+    // implicit "the address itself" target.
+    expect(capturedTo).toBe('0x036CbD53842c5426634e7929541eC2318f3dCF7e');
   });
 });

@@ -134,7 +134,7 @@ function formatUsdc(micros: bigint): string {
 }
 
 export type ProcessAgentWalletSweepJobDeps = {
-  readonly nativeBalanceMicros?: (address: string, chain: PaymentChain) => Promise<bigint>;
+  readonly nativeBalanceMicros?: (address: string, chain: PaymentChain, mode: PaymentMode) => Promise<bigint>;
   readonly gasNeededMicros: bigint;
 };
 
@@ -193,7 +193,7 @@ export async function processAgentWalletSweepJob(
     const treasuryRow = treasuryWallet.rows[0];
     if (treasuryRow === undefined) throw new Error('circle_wallet_missing');
 
-    const balance = await readBalance(agentWalletRow.address, job.chain);
+    const balance = await readBalance(agentWalletRow.address, job.chain, job.mode);
     const amountMicros = sweepAmountMicros({ balanceMicros: balance, gasNeededMicros: deps.gasNeededMicros });
 
     let providerRef: string | null = null;

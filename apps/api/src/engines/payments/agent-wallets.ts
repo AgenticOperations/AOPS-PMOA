@@ -1,7 +1,9 @@
+import { encodeFunctionData, parseAbi } from 'viem';
 import type pg from 'pg';
 import { prefixedId } from '../identity/ids.js';
 import { parseUsdcMicros } from './allocations.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
+import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 type Db = pg.Pool | pg.PoolClient;
@@ -28,51 +30,81 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Reads an address's NATIVE balance (not the ERC-20 view) and converts it
- * to USDC micros. On Arc, USDC is the native gas asset, and the ERC-20
- * view truncates -- balanceOf can read 0 while the native balance is
- * genuinely non-zero (constraint I.8, confirmed in spike S6). Budget and
- * gas decisions must use this, never the ERC-20 view.
- *
- * Retries with backoff: spike S6 found Arc's public RPC failing ~56% of
- * identical balanceOf calls. A failed read must never be silently coerced
- * to zero -- that would reject valid payments and could trigger spurious
- * top-ups -- so this throws after exhausting retries rather than
- * returning a default.
- */
-export async function nativeBalanceMicros(address: string, chain: PaymentChain): Promise<bigint> {
-  const rpcUrl = chainRpcUrl(chain);
-  if (rpcUrl === undefined || rpcUrl.length === 0) {
-    throw new Error(`agent_wallet_balance_rpc_not_configured:${chain}`);
-  }
-
+async function rpcCallWithRetry(
+  rpcUrl: string,
+  method: string,
+  params: readonly unknown[],
+  errorPrefix: string,
+): Promise<string> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= NATIVE_BALANCE_MAX_ATTEMPTS; attempt += 1) {
     try {
       const response = await fetch(rpcUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_getBalance',
-          params: [address, 'latest'],
-        }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
       });
       const body = await response.json() as { readonly result?: string; readonly error?: { readonly message?: string } };
-      if (body.error !== undefined) throw new Error(body.error.message ?? 'eth_getBalance_rpc_error');
-      if (body.result === undefined) throw new Error('eth_getBalance_empty_response');
-      const weiBalance = BigInt(body.result);
-      return weiBalance / WEI_PER_MICRO;
+      if (body.error !== undefined) throw new Error(body.error.message ?? `${errorPrefix}_rpc_error`);
+      if (body.result === undefined) throw new Error(`${errorPrefix}_empty_response`);
+      return body.result;
     } catch (error) {
       lastError = error;
       if (attempt < NATIVE_BALANCE_MAX_ATTEMPTS) await sleep(NATIVE_BALANCE_RETRY_DELAY_MS);
     }
   }
-  throw new Error(
-    `agent_wallet_balance_unavailable:${lastError instanceof Error ? lastError.message : 'unknown'}`,
+  throw new Error(`${errorPrefix}_unavailable:${lastError instanceof Error ? lastError.message : 'unknown'}`);
+}
+
+const erc20BalanceOfAbi = parseAbi(['function balanceOf(address account) view returns (uint256)']);
+
+// USDC's real on-chain decimals differ by chain: 6 on Arc (matches
+// micros 1:1) and every Circle-supported EVM chain EXCEPT native-gas
+// chains -- Base/Arbitrum/Polygon/Optimism/Avalanche USDC is all 6dp
+// too, so no scaling is needed here; this constant exists so a future
+// chain with different USDC decimals doesn't silently misconvert.
+const USDC_DECIMALS_MICROS_SCALE = 1n;
+
+/**
+ * Reads an address's spendable balance and converts it to USDC micros.
+ *
+ * On Arc, USDC IS the native gas asset -- the ERC-20 view truncates
+ * (constraint I.8, confirmed in spike S6): balanceOf can read 0 while the
+ * native balance is genuinely non-zero. Budget and gas decisions on Arc
+ * must read the native balance, never the ERC-20 view.
+ *
+ * On every OTHER chain (Base, etc.), USDC is a real ERC-20, separate from
+ * the native gas token -- reading eth_getBalance there would report ETH,
+ * not USDC, which is simply wrong. This reads the real balanceOf via the
+ * same USDC token address every other settlement path already uses
+ * (circle-provider.ts's usdcTokenAddress).
+ *
+ * Retries with backoff on both paths: spike S6 found Arc's public RPC
+ * failing ~56% of identical calls. A failed read must never be silently
+ * coerced to zero -- that would reject valid payments and could trigger
+ * spurious top-ups -- so this throws after exhausting retries rather than
+ * returning a default.
+ */
+export async function nativeBalanceMicros(address: string, chain: PaymentChain, mode: PaymentMode = 'test'): Promise<bigint> {
+  const rpcUrl = chainRpcUrl(chain);
+  if (rpcUrl === undefined || rpcUrl.length === 0) {
+    throw new Error(`agent_wallet_balance_rpc_not_configured:${chain}`);
+  }
+
+  if (chain === 'arc') {
+    const result = await rpcCallWithRetry(rpcUrl, 'eth_getBalance', [address, 'latest'], 'agent_wallet_balance');
+    return BigInt(result) / WEI_PER_MICRO;
+  }
+
+  const tokenAddress = usdcTokenAddress(mode, chain);
+  const data = encodeFunctionData({ abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [address as `0x${string}`] });
+  const result = await rpcCallWithRetry(
+    rpcUrl,
+    'eth_call',
+    [{ to: tokenAddress, data }, 'latest'],
+    'agent_wallet_balance',
   );
+  return BigInt(result) / USDC_DECIMALS_MICROS_SCALE;
 }
 
 async function circleBlockchainForChain(db: Db, mode: PaymentMode, chain: PaymentChain): Promise<string> {
@@ -395,9 +427,10 @@ export async function processAgentWalletTopUpJob(
 export async function readSpendableMicros(
   wallet: Pick<AgentChainWalletRow, 'address' | 'chain'>,
   gasReserveMicros: bigint,
-  deps: { readonly nativeBalanceMicros: (address: string, chain: PaymentChain) => Promise<bigint> },
+  deps: { readonly nativeBalanceMicros: (address: string, chain: PaymentChain, mode: PaymentMode) => Promise<bigint> },
+  mode: PaymentMode,
 ): Promise<bigint> {
-  const balance = await deps.nativeBalanceMicros(wallet.address, wallet.chain);
+  const balance = await deps.nativeBalanceMicros(wallet.address, wallet.chain, mode);
   const spendable = balance - gasReserveMicros;
   return spendable > 0n ? spendable : 0n;
 }

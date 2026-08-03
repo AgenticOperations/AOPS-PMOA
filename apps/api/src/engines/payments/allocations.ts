@@ -177,7 +177,7 @@ export async function setAllocation(
   }));
 }
 
-type NativeBalanceReader = (address: string, chain: PaymentChain) => Promise<bigint>;
+type NativeBalanceReader = (address: string, chain: PaymentChain, mode: PaymentMode) => Promise<bigint>;
 
 export type EvaluateTopUpsInput = {
   readonly mode: PaymentMode;
@@ -228,7 +228,7 @@ async function evaluateSingleTopUp(
   nativeBalanceMicros: NativeBalanceReader,
   allocation: AllocationWithWalletRow,
 ): Promise<void> {
-  const rawBalance = await nativeBalanceMicros(allocation.wallet_address, allocation.chain);
+  const rawBalance = await nativeBalanceMicros(allocation.wallet_address, allocation.chain, allocation.mode);
   const gasReserve = parseUsdcMicros(allocation.gas_reserve_usdc);
   const spendable = rawBalance > gasReserve ? rawBalance - gasReserve : 0n;
   const lowWaterMark = parseUsdcMicros(allocation.low_water_mark_usdc);
