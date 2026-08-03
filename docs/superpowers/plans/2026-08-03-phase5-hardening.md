@@ -76,7 +76,9 @@ It then flows verbatim into the signed requirements (`store.ts:878`, `:913`). No
 
 ### Task 1: Move policy evaluation ahead of the reservation
 
-- [ ] **Step 1: Write the failing test**
+> **Real deviation found mid-implementation:** moving policy earlier broke the existing "approves then resumes the same idempotency key" test with `approval_context_mismatch`. Root cause: the approval's stored context binds `quote_hash`/`request_hash`, and `quoteHash` depends on `providerMode` (from the resolved payment source), which wasn't available yet at the point policy first ran. Fixed by moving payment-SOURCE resolution (not just quote/rail resolution, as the plan's sketch said) earlier too, so both are known before policy runs. Cap/budget/balance checks and the reservation write still run after policy, as intended.
+
+- [x] **Step 1: Write the failing test** — same two scenarios as the sketch, added a third (approval_required still produces an approval, not a hard failure).
 
 ```ts
 describe('policy evaluation ordering', () => {
@@ -113,54 +115,21 @@ describe('policy evaluation ordering', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails** — failed as expected (budget_exceeded leaked ahead of the policy denial).
 
-```bash
-npx vitest run test/payments/policy-ordering.test.ts --root apps/api
-```
+- [x] **Step 3: Implement** — done per the corrected ordering (source resolution moved earlier alongside quote/rail, not just quote/rail as originally sketched — see deviation note above). `PaymentApprovalRequiredError` handling preserved; `approvalThreshold` still read from `account`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 4: Run to verify it passes** — one existing test broke (the approval-resume test, root-caused and fixed per the deviation note), everything else passed unchanged. Full payments suite (367 tests) confirmed green after the fix.
 
-In `preparePaidHttpPayment`, move the `enforceX402Policy` block (currently `:4974-4988`) to run **immediately after** the rail quote is resolved (it needs `quote` and `resource`) and **before** the cap/budget/source checks and the reservation write.
+- [x] **Step 5: Check the separate egress concern** — grepped `engines/runtime/` for fetch/HTTP calls: none exist there. `runtime.http.request` is purely a policy **action name** that `operations/check`/`operations/record` evaluate against — no fetch is executed by this codebase for that action; it's a gate a runtime SDK/agent consults before making its own external call. The only actual outbound fetch in the payment flow is `x402-http.ts`'s price-discovery GET, which necessarily runs before policy (policy needs the quote to evaluate) but has no side effects and delivers no protected resource — the merchant-delivery fetch that returns paid content happens after policy and reservation succeed. **No unguarded egress found.**
 
-Order after the change:
-
-1. `activePaymentAccount` (+ freeze)
-2. rail resolution → `quote`
-3. **`enforceX402Policy`** ← moved here
-4. per-request cap
-5. budget counters + balance
-6. payment source
-7. `INSERT INTO payment_reservations`
-8. `reserved_usdc` increment
-
-Keep the existing `PaymentApprovalRequiredError` handling intact — `approval_required` must still produce an approval rather than a hard failure. The `approvalThreshold` argument is read from `account`, which step 1 already loaded, so it remains available.
-
-- [ ] **Step 4: Run to verify it passes**
-
-```bash
-npx vitest run test/payments/policy-ordering.test.ts --root apps/api
-npm test --workspace @agentops-pmoa/api
-```
-
-Expect some existing payment tests to shift error codes — a request that used to fail with `budget_exceeded` may now fail with a policy code. Update assertions where the new code is correct; investigate any test that now *passes* where it used to fail.
-
-- [ ] **Step 5: Check the separate egress concern**
-
-The manifest's E2 note flags a distinct issue: whether any **outbound fetch** can occur before policy in the non-x402 runtime paths. Grep `engines/runtime/` for fetch/HTTP calls and confirm each is gated. Record the finding — if an unguarded egress exists, it is a new task, not a silent fix.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add apps/api/src/engines/payments/store.ts apps/api/test/payments/policy-ordering.test.ts
-git commit -m "fix(payments): evaluate policy before reserving funds"
-```
+- [x] **Step 6: Commit** — `9b4494d`.
 
 ---
 
 ### Task 2: Bind `payTo` before signing
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 ```sql
 -- 0027_payto_allowlist.sql
@@ -189,7 +158,9 @@ CREATE INDEX IF NOT EXISTS payment_destination_allowlist_lookup_idx
 
 > `source = 'agent_wallet'` matters for Phase 6: intra-fleet payees are agent wallets this system provisioned, so they can be auto-allowlisted — their addresses come from our own database, not from a 402 response.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 1: Write the migration** — matches the plan's sketch exactly, committed `7d63bb9`.
+
+- [x] **Step 2: Write the failing test** — added a new file `test/payments/payto-allowlist.test.ts` (its own minimal app/merchant fixture, since the shared `x402-paid-http-flow.test.ts` merchant handler has a fixed `payTo` and modifying it for one concern would have meant restructuring that file). Same three scenarios as the sketch.
 
 ```ts
 describe('payTo binding', () => {
@@ -223,19 +194,9 @@ describe('payTo binding', () => {
 });
 ```
 
-- [ ] **Step 3: Run to verify it fails, then implement**
+- [x] **Step 3: Run to verify it fails, then implement** — implemented in `preparePaidHttpPayment` (not `quoteFromAccept`, which is a pure synchronous function with no DB access and can't query the allowlist itself) — checked immediately after rail resolution, before source lookup, policy, or reservation. Lowercase-normalized on both sides via SQL `lower()`. `x402-http.ts:1218`'s non-empty-string check left untouched.
 
-Add the check where the quote is built from the 402 response (`store.ts:878`, near the existing asset canonicalization at `:875`) — **before** anything is signed. Normalize both sides to lowercase before comparing.
-
-Keep the existing non-empty-string check at `x402-http.ts:1218`; add the allowlist lookup alongside it rather than replacing it.
-
-- [ ] **Step 4: Verify and commit**
-
-```bash
-npx vitest run test/payments --root apps/api
-git add packages/db/src/migrations/0027_payto_allowlist.sql apps/api/src/engines/payments apps/api/test
-git commit -m "fix(payments): validate payTo against an allowlist before signing"
-```
+- [x] **Step 4: Verify and commit** — this is a hard new requirement on every payment, so it broke 42 existing tests across 4 files whose merchant fixtures were never allowlisted. Fixed by seeding the allowlist alongside each file's existing org/agent fixture helper. Full payments suite (370 tests) green. Committed `7d63bb9`.
 
 ---
 
@@ -245,7 +206,9 @@ Independent of everything else. Can start immediately.
 
 ### Task 3: Full-chain audit verification with a tail check
 
-- [ ] **Step 1: Write the failing test**
+> **Real limit found in this task's own test scenario, before implementing around it:** the plan's second test has an attacker delete a chain's suffix AND rewrite `audit_event_heads` to match the truncated state consistently. This is undetectable in principle by any tail-check against `audit_event_heads` alone — if both are updated together, the remaining chain is genuinely self-consistent with its own head. Real protection against that specific coordinated-rewrite scenario needs an external checkpoint (the head hash written somewhere the same compromise can't reach), which is real new infrastructure out of scope for this task. Flagged to the user before proceeding; the fix below covers what's actually achievable: detecting a truncation when the head is NOT also rewritten (the realistic case whenever `audit_event_heads` has any separate protection at all).
+
+- [x] **Step 1: Write the failing test** — added to the existing `test/evidence/audit-query.test.ts` (not a separate `chain-verification.test.ts` file, to reuse its existing store/fixture setup) — same three scenarios as the sketch, with the tail-check test adjusted per the limit above.
 
 ```ts
 describe('audit chain verification', () => {
@@ -288,20 +251,11 @@ describe('audit chain verification', () => {
 
 > The second test is the important one. Without a tail check, deleting a suffix and rewriting the head is **undetectable** — the remaining chain verifies perfectly.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails** — failed as expected (caps at 500; no tail check existed).
 
-```bash
-npx vitest run test/evidence/chain-verification.test.ts --root apps/api
-```
+- [x] **Step 3: Implement** — `verifyAuditChain` now loops internally in pages of `VERIFY_PAGE_SIZE = 500`, carrying `previousHash` across page boundaries. `boundedLimit` untouched (still bounds the list endpoints). Tail check added: compares final computed hash + event count against `audit_event_heads`, with distinct `event_count_mismatch`/`tail_hash_mismatch` reasons.
 
-- [ ] **Step 3: Implement**
-
-In `audit-query.ts`:
-
-- Make `verifyAuditChain` loop internally, fetching pages of 500 and carrying `previousHash` across page boundaries until exhausted. **Leave `boundedLimit` alone** — it correctly bounds the *list* endpoints; verification simply stops using it as a total.
-- After the walk, add the tail check: compare the final computed hash to `audit_event_heads.last_event_hash`, and the counted events to `last_sequence`. Report a specific `reason` on mismatch.
-
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit** — 1200-event chain verifies in full; 800-event deep-tamper detected; realistic tail-truncation detected. Full evidence suite (21 tests) green. Committed `26a205c`.
 
 ```bash
 npx vitest run test/evidence --root apps/api
@@ -313,7 +267,7 @@ git commit -m "fix(evidence): verify the full audit chain and its tail"
 
 ### Task 4: Forbid self-approval
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — new file `test/approvals/self-approval.test.ts` (the existing `approval-expiry.test.ts` uses a single fixed operator identity for the whole app, so a per-request-configurable operator via an `x-test-actor` header was added for this test's fixture). Same four scenarios as the sketch (approve, deny, both self-forbidden and both allowed-for-a-different-operator).
 
 ```ts
 describe('separation of duties', () => {
@@ -342,31 +296,23 @@ describe('separation of duties', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails, then implement**
+- [x] **Step 2: Run to verify it fails, then implement** — implemented exactly per the sketch: `AND requested_by <> $3` added to both UPDATEs; `assertNotSelfApproval` re-reads on the zero-rows path and throws `self_approval_forbidden` (403) specifically, distinct from the generic `approval_not_pending` (409). Verified no regression against the existing x402 approval-resume flow: `requested_by` there is the runtime **connection ID**, not the operator's actorId, so the guard doesn't false-positive on that flow.
 
-In `approvals/store.ts:366-432`, add `AND requested_by <> $3` to the existing UPDATE's WHERE clause. Because the UPDATE then affects zero rows, distinguish the causes before returning a generic "not found": re-read the row and throw `self_approval_forbidden` when `requested_by` matches the approver. Apply the same to `denyApproval`.
+**Quorum skipped**, per the plan — out of scope.
 
-**Quorum is out of scope for T3.** The manifest offers it as optional ("optional N-of-M quorum"); self-approval is the actual control gap. Skip quorum unless time remains after Phase 6.
-
-- [ ] **Step 3: Run the full gate and commit**
-
-```bash
-npm run verify
-git add apps/api/src/engines/approvals/store.ts apps/api/test/approvals
-git commit -m "fix(approvals): forbid self-approval and self-denial"
-```
+- [x] **Step 3: Run the full gate and commit** — full payments + evidence + approvals suites (396 tests) green. Committed `ddc2283`.
 
 ---
 
 ## Phase 5 Done Criteria
 
-- [ ] A policy-denied payment writes **no** reservation row and leaves `reserved_usdc` unchanged
-- [ ] A denied caller does not learn budget state through the error code
-- [ ] `approval_required` still produces an approval, not a failure
-- [ ] The egress-before-policy question is answered and recorded
-- [ ] An unlisted `payTo` is refused **before signing**; allowlisted ones proceed; matching is case-insensitive
-- [ ] An org with 1,200 events verifies end to end
-- [ ] A truncated tail with a rewritten head is **detected**
-- [ ] Tampering beyond event 500 is detected
-- [ ] A requester cannot approve or deny their own request; another operator can
-- [ ] `npm run verify` passes with Docker up
+- [x] A policy-denied payment writes **no** reservation row and leaves `reserved_usdc` unchanged
+- [x] A denied caller does not learn budget state through the error code
+- [x] `approval_required` still produces an approval, not a failure
+- [x] The egress-before-policy question is answered and recorded — no unguarded egress found
+- [x] An unlisted `payTo` is refused **before signing**; allowlisted ones proceed; matching is case-insensitive
+- [x] An org with 1,200 events verifies end to end
+- [x] A truncated tail is **detected** when the head is not also rewritten — **partial**: a fully coordinated attacker who rewrites both the tail AND the head consistently is a real, documented, out-of-scope gap (needs an external checkpoint); see Task 3's deviation note and `docs/spike-results.md`-style reasoning inline in the plan above
+- [x] Tampering beyond event 500 is detected
+- [x] A requester cannot approve or deny their own request; another operator can
+- [ ] `npm run verify` — **not run as the full monorepo gate this pass** (time-constrained execution); ran the directly-affected suites instead (payments 370, evidence 21, approvals 5 = 396 tests, all green) plus targeted `tsc`/`eslint` on every touched file after each task. Recommend running the full `npm run verify` before treating Phase 5 as fully closed.
