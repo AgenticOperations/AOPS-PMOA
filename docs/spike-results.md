@@ -60,13 +60,13 @@ Fill in as each runs. Do not mark a row answered without evidence.
 | **S1** `[K-17]` | Arc chain ID: docs `5042002` vs facilitator `eip155:14601` | ✅ **RESOLVED** | See S1 below — **manifest's premise was wrong** |
 | **S2** `[A2]` | Dev-controlled EOA wallets on `ARC-TESTNET`, end to end | ✅ **PASS** | Two EOA wallets provisioned — see S2 below |
 | **S3** `[A1]` | Can the entity secret sweep funds out to treasury? | ✅ **PASS** | Real sweep executed, tx `0x0cb4fe4...d252a3` — see S3 below |
-| **S4** `[K-12]` | Permit2 `approve` + `transferFrom` on Arc's native-USDC view | 🟡 **READ-PATH PASS** | Permit2 live, 9152 bytes; write path blocked on S5 funding |
+| **S4** `[K-12]` | Permit2 `approve` + `transferFrom` on Arc's native-USDC view | ✅ **PASS** | Full write cycle confirmed, 3 real tx hashes — see S4 below |
 | **S5** `[K-4]` | Arc testnet USDC faucet path | ❌ **BLOCKED** | Faucet 403 — **key scope, not Arc** — see S5 below |
 | **S6** `[C3]` | ERC-20 `balanceOf` truncation vs native balance | ✅ **RESOLVED** | 1:1 ratio confirmed; **new RPC finding** below |
 | **S7** `[A5]` | Compliance / Transaction Screening API access | ⬜ not run | |
 | **S8** `[K-5]` | ERC-8183 funding mechanics + registry addresses (Phase 7) | ⬜ not run | |
 
-**Tier decision:** **T3 provisionally confirmed.** Permit2 is live on Arc at the canonical address with a working `allowance()` against the native-USDC view. The read path passes. Final confirmation needs a real `approve` + `transferFrom` (S4 Step 2), which requires funded wallets from S2.
+**Tier decision:** **T3 fully confirmed.** Permit2 is live on Arc at the canonical address, with a complete `approve -> permit -> transferFrom` cycle confirmed on-chain: the allowance decrements by exactly the drawn amount, and funds move. Phase 6 proceeds on the Permit2 architecture — no fallback to per-payment `exact` authorizations needed.
 
 ---
 
@@ -96,7 +96,7 @@ Decisive evidence — the USDC addresses differ:
 
 ---
 
-### S4 `[K-12]` — Permit2 on Arc — READ PATH PASSES
+### S4 `[K-12]` — Permit2 on Arc — READ + WRITE PATH BOTH PASS
 
 ```
 chainId: 5042002
@@ -110,9 +110,17 @@ Arc USDC 0x3600...0000
 
 **Permit2 accepts Arc's native-USDC address as a token argument and returns the expected `(amount uint160, expiration uint48, nonce uint48)` tuple.** That was the specific fear in K-12 — it does not revert on the native-gas asset.
 
-**Still outstanding before Lane 2 is fully cleared:** a real `approve` → `PermitSingle` → `transferFrom`, confirming the allowance *decrements*. Needs funded wallets from S2. Do this before Phase 6 starts.
+**Write path confirmed live, before Phase 6 started (real infra, real funded wallets, real tx hashes):**
 
-> **Tooling note:** viem's `readContract` reported "RPC Request failed" for `allowance` and `symbol` while raw `eth_call` returned correct data for both. The contracts are fine — see the RPC reliability finding below.
+1. Payer (`0xecf29492264424ae73fc1434a30a66d2f6a9b48f`) calls `approve(Permit2, maxUint160)` on Arc's USDC address — tx `0xff5410c60a4a697427b232afcd349a68761babe7f673290d1172daa2f35c1aaa`.
+2. Payer signs a real EIP-712 `PermitSingle` (domain `{name: "Permit2", chainId: 5042002, verifyingContract: Permit2}`) via Circle's `signTypedData` — spender = `0x216c05b8d3409d2fd2b82375334d4b87e789367e`, amount = 20000 (0.02 USDC), nonce read live from `allowance()`.
+3. Spender submits `permit()` with that signature — tx `0x96f050c234137c33c2069650ac10fed9e4728d2fabfebcbb46e6612c306a5d45`. `allowance()` read after: `(20000, expiration, nonce+1)` — **the signed permit was recorded on-chain.**
+4. Spender calls `transferFrom(payer, spender, 10000, ARC_USDC)` — tx `0x5161d370609fcb7ee4e574b2ae9f71bcf3523c1b3448285f9e783d0a722679e8`. `allowance()` read after: `20000 -> 10000` — **decremented by exactly the drawn amount.**
+5. Real balances confirmed the transfer via raw `eth_getBalance`: payer's balance dropped, spender's balance rose by the drawn amount (net of each side's own gas).
+
+**Answer: yes, unconditionally.** Permit2's full `approve → permit → transferFrom` cycle works against Arc's native-USDC ERC-20 view, with the allowance decrementing exactly as expected. **Lane 2 / T3's scoped-delegation claim is fully cleared — no fallback to per-payment `exact` authorizations is needed.**
+
+> **Tooling note:** viem's `readContract` reported "RPC Request failed" for `allowance` and `symbol` while raw `eth_call` returned correct data for both. The contracts are fine — see the RPC reliability finding below. The write-path proof above used `viem.encodeFunctionData` for ABI encoding (works reliably) combined with raw `eth_call`/`eth_getBalance` for reads and Circle's `createContractExecutionTransaction`/`signTypedData` for signing and submission.
 
 ---
 
