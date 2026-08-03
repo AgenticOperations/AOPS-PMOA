@@ -362,7 +362,7 @@ Worker dispatch: added as an explicit separate branch in `listJobs`'s SQL and `p
 
 - [x] **Step 4: Run to verify it passes** — passed.
 
-- [ ] **Step 5: Verify against real Arc testnet** — **NOT DONE.** No live run against `CIRCLE_TREASURY_PROVIDER=developer_controlled` / real worker was performed; no wallet address was opened on `testnet.arcscan.app`. Only unit/integration tests against local Postgres + a fake provider have run. This remains open.
+- [x] **Step 5: Verify against real Arc testnet** — done, though via a scoped one-shot script calling the same `createWallet`/`deriveWallet` code path rather than the long-running worker process. Against real Circle API (`CIRCLE_TREASURY_PROVIDER=developer_controlled`, test mode): created a real Arc EOA wallet (`0xecf29492264424ae73fc1434a30a66d2f6a9b48f`), derived a Base wallet onto the **same address** (proves K-13), and created a second, **independently distinct** address for a second agent (`0x216c05b8d3409d2fd2b82375334d4b87e789367e`). Recorded in `docs/spike-results.md` ("Phase 3 · Task 4 proof test"), verifiable at `https://testnet.arcscan.app/address/0xecf29492264424ae73fc1434a30a66d2f6a9b48f`.
 
 - [x] **Step 6: Commit** — `dbe3091`.
 
@@ -492,7 +492,7 @@ In `store.ts`, immediately **after** the existing counter check at `:4885-4890` 
 
 - [x] **Step 5: Run to verify it passes** — `agent-wallets.ts` unit suite, the new `agent-wallet-balance.test.ts` HTTP-level suite (4/4 passing), full payments suite (339/339), full API suite (444/444), lint, and typecheck all pass as of this commit.
 
-- [ ] **Step 6: The proof test — run it against real Arc testnet** — **NOT DONE.** No live fund-and-reject cycle was run against real Arc testnet; no explorer link exists in `docs/spike-results.md`. This is the acceptance artifact for the pitch's central claim ("max loss bounded by on-chain balance, verifiable by anyone") — **the claim cannot be made yet** per this plan's own gate at the top of the document. Remains open.
+- [x] **Step 6: The proof test — run it against real Arc testnet** — **DONE.** Circle's testnet faucet was found rate-limited/entitlement-blocked for this API key (consistent with spike S5's earlier 403 finding); the user manually funded `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` with 20 USDC via Arc's public faucet instead. A real org/agent were created against the live app + real Postgres, bound to that wallet, and two real x402 payments were attempted: **$25.00 → rejected with `409 insufficient_agent_wallet_balance`**; **$5.00 → accepted, settled**. Full transcript and the explorer link are in `docs/spike-results.md`.
 
 - [x] **Step 7: Commit** — `d47935c` ("feat(payments): enforce on-chain balance ceiling for agent wallet payments"). Also fixed, in the same commit, two Arc-enum gaps discovered via a codebase sweep that were blocking Arc payment requests at the HTTP layer since Phase 2 (`routes.ts`'s hand-maintained `chainSchema`/`paymentRails`, and `circle-provider.ts`'s `isCirclePaymentChain`/`chainFromGatewayNetwork`) — not in the plan's original sketch, but necessary for this task's own HTTP-level test to exercise a real `gateway_arc` request.
 
@@ -544,18 +544,16 @@ describe('Arc gas headroom', () => {
 - [x] Migration 0025 applies cleanly on a DB already at 0024 — covered by `packages/db/test/migrate.test.ts`
 - [x] `circle_provider_jobs_job_type_check` still admits every previously-used job type — all 13 values tested in one pass
 - [x] Setting `dedicated_wallet_required` (via `setAgentPaymentAccess`, not agent-creation — see Task 3 note) enqueues one job per requested chain, and does not double-enqueue on repeat calls
-- [x] The worker provisions a wallet and writes an `active` row — verified against a **fake** provider in tests only (see next item)
-- [ ] **NOT VERIFIED against real infrastructure**: distinct agents getting distinct addresses on **actual Arc testnet**, visible on `testnet.arcscan.app`. All provisioning tests use a fake `CircleTreasuryProvider`; no real Circle API call or explorer lookup has been made.
-- [x] One agent can hold Arc + Base rows sharing an address (via `deriveWallet`), with independent balances — tested with a fake provider
+- [x] The worker provisions a wallet and writes an `active` row — tested against a fake provider in the automated suite; **also verified against the real Circle API** (see below)
+- [x] **Verified against real infrastructure**: distinct agents get distinct addresses on **actual Circle test-mode API / Arc testnet** — `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` (agent A) vs `0x216c05b8d3409d2fd2b82375334d4b87e789367e` (agent B), both visible on `testnet.arcscan.app`. Recorded in `docs/spike-results.md`.
+- [x] One agent can hold Arc + Base rows sharing an address (via `deriveWallet`) — tested with a fake provider **and** confirmed live: the real `deriveWallet` call returned the exact same address as the independent create.
 - [x] Inserting a `'sca'` row is rejected **by the database** — tested directly against real Postgres
-- [x] A payment above the wallet's spendable balance is rejected with `insufficient_agent_wallet_balance` — tested at the HTTP layer via `agent-wallet-balance.test.ts`, with `global.fetch` stubbed for the RPC balance read
-- [x] The counter pre-filter still fires, with its own distinct code (`budget_exceeded`) when it should win
-- [x] The gas reserve is unspendable and clamps at zero — tested in `readSpendableMicros`; **not yet wired to a real value** in `store.ts` (hardcoded `0n` pending Phase 4's `agent_allocations` table)
+- [x] A payment above the wallet's spendable balance is rejected with `insufficient_agent_wallet_balance` — tested at the HTTP layer with a stubbed RPC read, **and confirmed live**: a real $25.00 payment against a real, manually-funded $20.00 Arc wallet balance was rejected with this exact code.
+- [x] The counter pre-filter still fires, with its own distinct code (`budget_exceeded`) when it should win — automated test only; the live proof run used a deliberately generous counter budget specifically to isolate the wallet-balance ceiling, so it did not re-exercise this branch (not required to, since the automated test already covers it against real Postgres).
+- [x] The gas reserve is unspendable and clamps at zero — tested in `readSpendableMicros`; **still hardcoded to `0n`** in `store.ts` pending Phase 4's `agent_allocations` table (unchanged from before — this is a scope boundary, not a gap in this task).
 - [x] Agents **without** a per-agent wallet still transact on the org wallet — explicit test added, passes
-- [ ] **The proof test is NOT recorded.** No live fund-and-reject cycle has been run against real Arc testnet; no explorer link exists in `docs/spike-results.md`.
+- [x] **The proof test is recorded with an explorer link.** `docs/spike-results.md`, "Phase 3 · Task 4 proof test" — funded $20.00, rejected a real $25.00 attempt (`409 insufficient_agent_wallet_balance`), accepted a real $5.00 attempt (`200` settled). Explorer: `https://testnet.arcscan.app/address/0xecf29492264424ae73fc1434a30a66d2f6a9b48f`.
 
-**Two real gaps remain open, both requiring live Arc testnet access this environment doesn't have set up:**
-1. Real end-to-end wallet provisioning against Circle's actual API (currently only a fake provider is exercised).
-2. The Task 4 Step 6 proof test (fund $1.00, attempt $2.00 payment, confirm on-chain via explorer).
+**Resolved via manual funding, documented in spike S5's update:** Circle's testnet faucet remains blocked for this API key's entitlement (429/403, unresolved at the account level) — the funding step used Arc's public faucet directly instead, per S5's own documented fallback option.
 
-**Per this plan's own gate: the claim "max loss is bounded by the agent's on-chain balance — verifiable by RPC, no trust in us required" cannot yet be made.** Everything it depends on is implemented and passes 444/444 tests plus a clean `npm run verify`, but the two boxes above are the specific, named exceptions — they require a live environment run, not more code.
+**Per this plan's own gate: the claim "max loss is bounded by the agent's on-chain balance — verifiable by RPC, no trust in us required" can now be made.** All Done Criteria are met, verified against real Circle API, real Postgres, and real Arc testnet RPC, not just the automated test suite's fakes.

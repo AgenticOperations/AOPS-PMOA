@@ -205,6 +205,41 @@ POST /v1/faucet/drips  { blockchain: 'BASE-SEPOLIA', usdc: true } -> 403 {"code"
 
 **Not blocked:** Phases 1, 2, 3, and 5 can all proceed. Phase 3's acceptance artifact (fund $1.00, attempt $2.00, observe rejection) needs funding, but the code and unit tests do not.
 
+**Update — S5 resolved via manual funding.** The Circle API key still lacks faucet entitlement (confirmed again during Phase 3 Task 4's proof test: `POST /v1/faucet/drips` now returns `429 API rate limit error` rather than `403 Forbidden`, but the effect is the same — no funds land via the SDK). Circle console access to fix the key's entitlement was not available in this environment. Worked around per option 2 above: the user manually funded `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` via Arc's public testnet faucet. See Phase 3 Task 4 below for the resulting proof.
+
+---
+
+### Phase 3 · Task 4 proof test — real infrastructure, real rejection
+
+Run against **real** Circle developer-controlled-wallets API (test mode), **real** Postgres, and **real** Arc testnet RPC — not the automated test suite's fakes/stubs. `CIRCLE_TREASURY_PROVIDER=developer_controlled`.
+
+**Real wallets created via the Circle SDK this session** (`client.createWallets` / `client.deriveWallet`, no `--type agent` CLI fallback):
+
+| Wallet | Address | Chain |
+|---|---|---|
+| Agent A (independent create) | `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` | ARC-TESTNET |
+| Agent A (derived, same address — proves K-13) | `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` | BASE-SEPOLIA |
+| Agent B (independent create, distinct address) | `0x216c05b8d3409d2fd2b82375334d4b87e789367e` | ARC-TESTNET |
+
+`deriveWallet` produced the **exact same address** as the independent create for the same agent; Agent B's independent create produced a **genuinely distinct** address — both confirmed by reading the SDK response directly, not asserted from a mock.
+
+**Funding:** user manually sent testnet USDC to `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` via Arc's public faucet. Confirmed on-chain via raw `eth_getBalance` against `$ARC_RPC_URL`:
+
+```
+0xecf29492264424ae73fc1434a30a66d2f6a9b48f -> 20000000000000000000 wei = 20.00 USDC
+```
+
+Independently verifiable: **https://testnet.arcscan.app/address/0xecf29492264424ae73fc1434a30a66d2f6a9b48f**
+
+**Proof run** — a real org/agent were created via the live HTTP API (`buildApp`, real Postgres), the agent was bound to the wallet above via `recordProvisionedWallet`, granted a deliberately generous counter budget ($1,000, to isolate the wallet-balance ceiling as the actual gate), and two real x402 payment attempts were made through `POST /v1/runtime/payments/x402`:
+
+| Attempt | Amount | Result |
+|---|---|---|
+| Over the real $20.00 balance | $25.00 | `409 insufficient_agent_wallet_balance` |
+| Within the real $20.00 balance | $5.00 | `200`, settled |
+
+The rejection was driven by `nativeBalanceMicros` reading the wallet's live balance over RPC in the same request — not a stub, not a counter. This is the acceptance artifact Task 4 required: **"max loss is bounded by the agent's on-chain balance"** is now true and demonstrated against real infrastructure.
+
 ---
 
 ## Acceptance artifacts
@@ -213,8 +248,8 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 
 | Milestone | Artifact | Status |
 |---|---|---|
-| Phase 3 · Task 4 — provable max-loss | Fund $1.00, attempt $2.00, show rejection + explorer balance | ⬜ |
-| Phase 3 · Task 3 — distinct agent wallets | Two agent addresses on `testnet.arcscan.app` | ⬜ |
+| Phase 3 · Task 4 — provable max-loss | Funded $20.00, attempted $25.00 → `409 insufficient_agent_wallet_balance`; attempted $5.00 → `200` settled. See "Phase 3 · Task 4 proof test" above. | ✅ |
+| Phase 3 · Task 3 — distinct agent wallets | Two real addresses via Circle SDK: `0xecf2...9b48f` (Agent A) vs `0x216c...9367e` (Agent B) — see above | ✅ |
 | Phase 4 · Task 5 — sweep-revocation | Balance drains to treasury, tx hash | ⬜ |
 | Phase 6 · Task 2 — Permit2 drawdown | Allowance decrementing across 3 payments, then `lockdown()` | ⬜ |
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
