@@ -13,6 +13,7 @@ import {
   checkRuntimeOperation,
   createRateLimit,
   disableRateLimit,
+  freezeOrg,
   importTools,
   listAgentAllowedActions,
   listBlockedOperations,
@@ -22,6 +23,7 @@ import {
   listTools,
   recordOperation,
   recordRuntimeOperation,
+  unfreezeOrg,
   updateRateLimit,
   updateTool,
 } from './store.js';
@@ -104,6 +106,10 @@ const decisionQuerySchema = z.object({
   action: operationalActionSchema.optional(),
   decision: z.enum(['allow', 'deny', 'approval_required', 'observe', 'rate_limited']).optional(),
   limit: z.coerce.number().int().positive().max(200).optional(),
+});
+
+const freezeOrgSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
 });
 
 function extractBearerToken(request: FastifyRequest, sessionCookieName = 'agentops_session'): string | null {
@@ -297,5 +303,25 @@ export function registerOperationRoutes(app: FastifyInstance, deps: RegisterOper
   app.post('/v1/runtime/operations/record', async (request) => {
     const auth = await authenticateRuntimeConnection(deps.pool, requiredBearerToken(request));
     return recordRuntimeOperation(deps.pool, auth, parseBody(runtimeOperationRecordSchema, request));
+  });
+
+  // Emergency stop. 'admin' rather than 'operator' because this halts every
+  // agent and payment in the org at once -- a higher bar than day-to-day
+  // controls like rate limits. Unfreeze uses the same bar deliberately: a
+  // frozen org can still call its own unfreeze route (nothing here checks
+  // `frozen`), so the control cannot lock out its own release.
+  app.post('/v1/orgs/:orgId/freeze', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const body = parseBody(freezeOrgSchema, request);
+    const org = await freezeOrg(deps.pool, operator, params.orgId, body.reason);
+    return reply.code(200).send({ org });
+  });
+
+  app.post('/v1/orgs/:orgId/unfreeze', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const org = await unfreezeOrg(deps.pool, operator, params.orgId);
+    return { org };
   });
 }

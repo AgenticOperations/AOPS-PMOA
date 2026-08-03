@@ -752,6 +752,122 @@ export async function disableRateLimit(
   return updateRateLimit(pool, operator, orgId, rateLimitId, { status: 'disabled' });
 }
 
+export type OrgFreezeRecord = {
+  readonly org_id: string;
+  readonly frozen: boolean;
+  readonly frozen_reason: string | null;
+  readonly frozen_at: string | null;
+  readonly frozen_by: string | null;
+};
+
+function orgFreezeFromRow(row: {
+  readonly id: string;
+  readonly frozen: boolean;
+  readonly frozen_reason: string | null;
+  readonly frozen_at: Date | null;
+  readonly frozen_by: string | null;
+}): OrgFreezeRecord {
+  return {
+    org_id: row.id,
+    frozen: row.frozen,
+    frozen_reason: row.frozen_reason,
+    frozen_at: row.frozen_at === null ? null : row.frozen_at.toISOString(),
+    frozen_by: row.frozen_by,
+  };
+}
+
+export async function freezeOrg(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  reason: string,
+): Promise<OrgFreezeRecord> {
+  return withTransaction(pool, async (client) => {
+    const updated = await client.query<{
+      readonly id: string;
+      readonly frozen: boolean;
+      readonly frozen_reason: string | null;
+      readonly frozen_at: Date | null;
+      readonly frozen_by: string | null;
+    }>(
+      `UPDATE orgs
+          SET frozen = true,
+              frozen_reason = $2,
+              frozen_at = now(),
+              frozen_by = $3
+        WHERE id = $1
+        RETURNING id, frozen, frozen_reason, frozen_at, frozen_by`,
+      [orgId, reason, operator.actorId],
+    );
+    const row = updated.rows[0];
+    if (row === undefined) throw notFound('Org was not found.');
+
+    await recordAuditEvent(client, {
+      orgId,
+      idempotencyKey: `org.freeze.enabled:${orgId}:${row.frozen_at?.toISOString() ?? ''}`,
+      eventType: 'org.freeze.enabled',
+      actor: { type: 'user', id: operator.actorId },
+      action: 'org.freeze.enabled',
+      outcome: 'success',
+      resource: { type: 'org', id: orgId },
+      classification: {
+        domain: 'system',
+        category: 'security',
+        severity: 'warning',
+        tags: ['emergency_stop', 'org_frozen'],
+      },
+      payload: { reason },
+    });
+
+    return orgFreezeFromRow(row);
+  });
+}
+
+export async function unfreezeOrg(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+): Promise<OrgFreezeRecord> {
+  return withTransaction(pool, async (client) => {
+    const updated = await client.query<{
+      readonly id: string;
+      readonly frozen: boolean;
+      readonly frozen_reason: string | null;
+      readonly frozen_at: Date | null;
+      readonly frozen_by: string | null;
+    }>(
+      `UPDATE orgs
+          SET frozen = false,
+              frozen_reason = NULL,
+              frozen_at = NULL,
+              frozen_by = NULL
+        WHERE id = $1
+        RETURNING id, frozen, frozen_reason, frozen_at, frozen_by`,
+      [orgId],
+    );
+    const row = updated.rows[0];
+    if (row === undefined) throw notFound('Org was not found.');
+
+    await recordAuditEvent(client, {
+      orgId,
+      idempotencyKey: `org.freeze.disabled:${orgId}:${prefixedId('unfreeze')}`,
+      eventType: 'org.freeze.disabled',
+      actor: { type: 'user', id: operator.actorId },
+      action: 'org.freeze.disabled',
+      outcome: 'success',
+      resource: { type: 'org', id: orgId },
+      classification: {
+        domain: 'system',
+        category: 'security',
+        severity: 'info',
+        tags: ['emergency_stop', 'org_frozen'],
+      },
+    });
+
+    return orgFreezeFromRow(row);
+  });
+}
+
 async function assertTargetExists(
   db: Db,
   orgId: string,

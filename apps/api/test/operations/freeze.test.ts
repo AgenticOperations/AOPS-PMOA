@@ -134,6 +134,7 @@ async function createFundedAgent(app: FastifyInstance, store: PostgresTestStore)
 describe('emergency freeze', () => {
   let store: PostgresTestStore;
   let app: FastifyInstance;
+  let viewerApp: FastifyInstance;
 
   beforeAll(async () => {
     vi.stubEnv('LOG_LEVEL', 'silent');
@@ -161,11 +162,27 @@ describe('emergency freeze', () => {
       runtime: {
         pool: store.pool,
       },
+      operations: {
+        pool: store.pool,
+        resolveOperator: () => Promise.resolve({ actorId: 'usr_freeze_owner', role: 'owner' }),
+      },
+    });
+    // A non-admin operator, to prove freeze/unfreeze require the admin role.
+    viewerApp = buildApp({
+      identity: {
+        pool: store.pool,
+        resolveOperator: () => Promise.resolve({ actorId: 'usr_freeze_viewer', role: 'viewer' }),
+      },
+      operations: {
+        pool: store.pool,
+        resolveOperator: () => Promise.resolve({ actorId: 'usr_freeze_viewer', role: 'viewer' }),
+      },
     });
   }, 90_000);
 
   afterAll(async () => {
     if (app !== undefined) await app.close();
+    if (viewerApp !== undefined) await viewerApp.close();
     if (store !== undefined) await store.stop();
     vi.unstubAllEnvs();
   });
@@ -292,5 +309,69 @@ describe('emergency freeze', () => {
       headers: { authorization: `Bearer ${secret}` },
     });
     expect(onboard.statusCode, onboard.body).toBe(200);
+  });
+
+  it('freezes and unfreezes an org with an audit trail, requiring admin role', async () => {
+    const { orgId, secret } = await createFundedAgent(app, store);
+
+    const denied = await viewerApp.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/freeze`,
+      payload: { reason: 'incident-1234' },
+    });
+    expect(denied.statusCode, denied.body).toBe(403);
+
+    const frozen = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/freeze`,
+      payload: { reason: 'incident-1234' },
+    });
+    expect(frozen.statusCode, frozen.body).toBe(200);
+    expect(frozen.json()).toMatchObject({ org: { frozen: true } });
+
+    const row = await store.pool.query<{
+      frozen: boolean;
+      frozen_reason: string | null;
+      frozen_by: string | null;
+    }>('SELECT frozen, frozen_reason, frozen_by FROM orgs WHERE id = $1', [orgId]);
+    expect(row.rows[0]?.frozen).toBe(true);
+    expect(row.rows[0]?.frozen_reason).toBe('incident-1234');
+    expect(row.rows[0]?.frozen_by).not.toBeNull();
+
+    const events = await store.pool.query(
+      "SELECT 1 FROM audit_events WHERE org_id = $1 AND event_type = 'org.freeze.enabled'",
+      [orgId],
+    );
+    expect(events.rowCount).toBe(1);
+
+    // Frozen orgs must still be able to unfreeze themselves -- an incident
+    // response control that locks its own release would be useless.
+    const stillBlocked = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/onboard',
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    expect(stillBlocked.statusCode, stillBlocked.body).toBe(403);
+
+    const unfrozen = await app.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/unfreeze`,
+      payload: {},
+    });
+    expect(unfrozen.statusCode, unfrozen.body).toBe(200);
+    expect(unfrozen.json()).toMatchObject({ org: { frozen: false } });
+
+    const unfreezeEvents = await store.pool.query(
+      "SELECT 1 FROM audit_events WHERE org_id = $1 AND event_type = 'org.freeze.disabled'",
+      [orgId],
+    );
+    expect(unfreezeEvents.rowCount).toBe(1);
+
+    const onboardAfter = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/onboard',
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    expect(onboardAfter.statusCode, onboardAfter.body).toBe(200);
   });
 });
