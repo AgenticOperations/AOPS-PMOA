@@ -255,4 +255,42 @@ describe('emergency freeze', () => {
     expect(allowed.statusCode, allowed.body).not.toBe(401);
     expect(allowed.statusCode, allowed.body).not.toBe(403);
   });
+
+  it('rejects non-payment runtime actions for a frozen org', async () => {
+    const { orgId, secret } = await createFundedAgent(app, store);
+    await store.pool.query('UPDATE orgs SET frozen = true WHERE id = $1', [orgId]);
+
+    const onboard = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/onboard',
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    expect(onboard.statusCode, onboard.body).toBe(403);
+    expect(onboard.json()).toMatchObject({ error: 'org_frozen' });
+
+    const check = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/check',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        action: 'runtime.http.request',
+        resource: { category: 'open-data', url: 'https://docs.example.test/status' },
+      },
+    });
+    expect(check.statusCode, check.body).toBe(403);
+    expect(check.json()).toMatchObject({ error: 'org_frozen' });
+  });
+
+  it('allows runtime actions once unfrozen', async () => {
+    const { orgId, secret } = await createFundedAgent(app, store);
+    await store.pool.query('UPDATE orgs SET frozen = true WHERE id = $1', [orgId]);
+    await store.pool.query('UPDATE orgs SET frozen = false WHERE id = $1', [orgId]);
+
+    const onboard = await app.inject({
+      method: 'POST',
+      url: '/v1/runtime/onboard',
+      headers: { authorization: `Bearer ${secret}` },
+    });
+    expect(onboard.statusCode, onboard.body).toBe(200);
+  });
 });

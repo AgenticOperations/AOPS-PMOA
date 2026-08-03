@@ -16,6 +16,18 @@ type AgentRow = {
 export async function authenticateRuntimeConnection(pool: pg.Pool, token: string): Promise<ConnectionAuthResult> {
   const auth = await authenticateConnection(pool, token);
   if (auth === null) throw new IdentityError('invalid_connection', 401, 'Connection credential is invalid.');
+
+  // Emergency stop: every runtime route resolves auth here first, so this
+  // is the single choke point for halting a frozen org before any policy
+  // or business logic runs. Agent-level freeze is already covered by
+  // authenticateConnection's `agents.status = 'active'` join.
+  const frozen = await pool.query<{ readonly frozen: boolean }>('SELECT frozen FROM orgs WHERE id = $1', [
+    auth.org_id,
+  ]);
+  if (frozen.rows[0]?.frozen === true) {
+    throw new IdentityError('org_frozen', 403, 'This workspace is frozen. No actions can proceed.');
+  }
+
   return auth;
 }
 
