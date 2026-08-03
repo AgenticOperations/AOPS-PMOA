@@ -3,10 +3,36 @@ created: 2026-08-03
 project: agentOps (AOPS-PMOA)
 ecosystem: [circle, arc]
 source: docs/change-manifest.md
-status: actionable implementation plan — verified against codebase at commit 349b4e1
+status: SUPERSEDED — see docs/superpowers/plans/2026-08-03-scope-and-cuts.md
 ---
 
-# agentOps — Implementation Plan
+> ## ⚠️ SUPERSEDED — do not execute this document
+>
+> This was the first-pass milestone plan. It has been replaced by executable
+> phase plans with step-by-step TDD tasks:
+>
+> **Start here:** [`superpowers/plans/2026-08-03-scope-and-cuts.md`](superpowers/plans/2026-08-03-scope-and-cuts.md)
+>
+> | Phase | File |
+> |---|---|
+> | 0 — Gates | `superpowers/plans/2026-08-03-phase0-gates.md` |
+> | 1 — Critical fixes | `superpowers/plans/2026-08-03-phase1-critical-fixes.md` |
+> | 2 — Arc enablement | `superpowers/plans/2026-08-03-phase2-arc-enablement.md` |
+> | 3 — Per-agent wallets | `superpowers/plans/2026-08-03-phase3-agent-wallets.md` |
+> | 4 — Treasury | `superpowers/plans/2026-08-03-phase4-treasury.md` |
+> | 5 — Hardening | `superpowers/plans/2026-08-03-phase5-hardening.md` |
+> | 6 — Agent-to-agent | `superpowers/plans/2026-08-03-phase6-a2a.md` |
+>
+> **Why superseded:** this document included efficiency and refactor work that
+> was deliberately cut — moving shared types into `packages/contracts`, port
+> doc reconciliation, the advisory-lock mode key, Circle error granularity,
+> and splitting `store.ts`. See Part 2 of the scope-and-cuts doc for each cut
+> and its reasoning.
+>
+> **Still useful below:** Sections 0 and 1 record the manifest corrections and
+> the verified codebase baseline. Those findings carry forward unchanged.
+
+# agentOps — Implementation Plan (superseded)
 
 **What this is:** the milestone-by-milestone build plan derived from `change-manifest.md`, with every code-level claim in that manifest re-verified against the actual codebase. Each milestone states exact files, exact insertion points, acceptance criteria, and the verification command that proves it.
 
