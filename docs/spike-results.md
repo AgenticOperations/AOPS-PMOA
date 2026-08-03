@@ -64,7 +64,7 @@ Fill in as each runs. Do not mark a row answered without evidence.
 | **S5** `[K-4]` | Arc testnet USDC faucet path | ❌ **BLOCKED** | Faucet 403 — **key scope, not Arc** — see S5 below |
 | **S6** `[C3]` | ERC-20 `balanceOf` truncation vs native balance | ✅ **RESOLVED** | 1:1 ratio confirmed; **new RPC finding** below |
 | **S7** `[A5]` | Compliance / Transaction Screening API access | ⬜ not run | |
-| **S8** `[K-5]` | ERC-8183 funding mechanics + registry addresses (Phase 7) | ⬜ not run | |
+| **S8** `[K-5]` | ERC-8183 funding mechanics + registry addresses (Phase 7) | ❌ **FALLBACK** | Full lifecycle works, but the documented front-running guard does not exist on-chain — see S8 below |
 
 **Tier decision:** **T3 fully confirmed.** Permit2 is live on Arc at the canonical address, with a complete `approve -> permit -> transferFrom` cycle confirmed on-chain: the allowance decrements by exactly the drawn amount, and funds move. Phase 6 proceeds on the Permit2 architecture — no fallback to per-payment `exact` authorizations needed.
 
@@ -307,6 +307,60 @@ $0.497281 moved, matching the job's recorded `amount_usdc` exactly.
 Independently verifiable: **https://testnet.arcscan.app/tx/0x566966b754ae9dca563f9f8592bfc6ba6051713c3bbcb423f272b3ec0f3d5627**
 
 **Bug found and fixed during this proof:** the first run recorded `provider_ref` as Circle's internal transaction UUID (`e881e85d-2310-...`), not a real on-chain hash — confirmed via `getTransaction` that the real `txHash` field is a distinct value. `transferWallet()` (shared with Task 3's auto-topup) now fetches and returns the real hash. This matters for every future sweep, topup, and any other artifact this codebase claims is "verifiable on-chain."
+
+---
+
+### S8 `[K-5]` — ERC-8183 escrow funding mechanics — **FALLBACK: the front-running guard does not exist**
+
+**Verdict: the escrow lifecycle mechanically works end to end — Open → Funded → Submitted → Completed, six real transactions, all `status: success` on Arc testnet. But decisive question 2 fails on hard evidence: the deployed `fund()` function has no `expectedBudget` parameter, so the plan's assumed front-running guard (`fund(jobId, expectedBudget)` "reverts on mismatch") does not exist on this contract. Per this plan's own pre-committed fallback rule ("if any of 1–4 fails, escrow (D2) does not ship"), D2 does not ship in Phase 7.**
+
+**Setup:** two agent wallets already funded from Phase 3/6 (Circle developer-controlled wallets, test mode, Arc testnet): Agent B `0x216c05b8d3409d2fd2b82375334d4b87e789367e` acting as client+evaluator (Mode 2), Agent A `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` acting as provider. Escrow proxy `0x0747EEf0706327138c69792bF28Cd525089e4583` (confirmed deployed, 213 bytes of proxy bytecode).
+
+**Question 1 — does the wallet need to `approve` before `fund()`?** ✅ **YES, confirmed.** `fund()`'s internal `Transfer` event on Arc's native-USDC ERC-20 view (`0x3600...0000`) shows funds moving from the client to the escrow contract via `transferFrom`, which requires a prior `approve`. Real `approve(escrow, 50000)` tx: `0xb87ea8aad554fb25b863fbe4c48f5d312c312c315103796b9a7be438a8958a5b`.
+
+**Question 2 — does `fund(jobId, expectedBudget)` revert on budget mismatch?** ❌ **NO — that function does not exist.** Decoded the actual calldata of the real, successful `fund()` transaction:
+
+```
+fund tx input: 0xe25ba707 00000...0288ab 00000...0040 00000...0000
+selector 0xe25ba707 == keccak256("fund(uint256,bytes)")[:4]   <- confirmed by direct selector computation
+args: jobId=166059 (0x288ab), then an offset to an EMPTY bytes hookData (length 0)
+```
+
+There is no `uint256 expectedBudget` argument anywhere in this function's ABI — the real signature is `fund(uint256 jobId, bytes hookData)`. To prove this is exploitable, not just an ABI curiosity, we ran the exact scenario the plan worried about:
+
+1. Client approves the escrow for a safety margin above the quoted price: `approve(escrow, 50000)` (0.05 USDC) — quoted budget was 20000 (0.02 USDC).
+2. **Provider front-runs**: while the job is still `Open`, the provider calls `setBudget(jobId, 40000, 0x)` — raising the budget to 0.04 USDC, still under the client's approval ceiling. Tx `0x1caff24388f1797ef3631c88f391bdd3bf0f79148abd232289f029c1ac63af9e` (selector `0xdd4ae9d4` == `setBudget(uint256,uint256,bytes)`) — **succeeded**, confirming the plan's own note that `setBudget` is callable by provider, not just client.
+3. Client calls `fund(jobId, 0x)` believing the budget is still 20000. Tx `0x0907ac70b8b542a780b8f42630da30e5e8a00c9b510c7c7d3ba06db5d2f2e2a2` — **succeeded**, and the `Transfer` event confirms **40000 (0.04 USDC) was pulled — the front-run amount, not the originally quoted 20000.**
+
+`fund()` does not take, and therefore cannot check, an expected budget. It unconditionally escrows whatever budget is currently set at call time, gated only by the client's own ERC-20 approval ceiling. **A provider can raise the price after quoting and before funding, and the client's transaction will not revert** — it will simply pay more, silently, up to whatever margin the client happened to approve. This is the exact failure mode decisive question 2 was written to rule out.
+
+**Question 3 — can the wallet `approve` on Arc's native-USDC ERC-20 view?** ✅ **YES**, same evidence as question 1 (and consistent with S4).
+
+**Question 4 — full lifecycle walked end to end, every tx hash recorded?** ✅ **YES**, mechanically. All six real transactions, all `status: success`:
+
+| Step | Function (real, decoded selector) | Caller | Tx hash |
+|---|---|---|---|
+| Create job | `createJob(address,address,uint256,uint256,bytes)` (`0x41528812`) — provider=A, evaluator=B (=client, confirming **Mode 2**), deadline, budget=0, metadata="AgentOps S8 escrow spike" | Agent B (client) | `0xed70e00094da7fd7cae38853c2c2361cbbbe6e2ad0ba667aaa77fd90d742365c` |
+| Approve | `approve(address,uint256)` (`0x095ea7b3`) — escrow, 50000 | Agent B (client) | `0xb87ea8aad554fb25b863fbe4c48f5d312c312c315103796b9a7be438a8958a5b` |
+| setBudget (front-run) | `setBudget(uint256,uint256,bytes)` (`0xdd4ae9d4`) — jobId, 40000, `0x` | Agent A (provider) | `0x1caff24388f1797ef3631c88f391bdd3bf0f79148abd232289f029c1ac63af9e` |
+| Fund | `fund(uint256,bytes)` (`0xe25ba707`) — jobId, `0x` | Agent B (client) | `0x0907ac70b8b542a780b8f42630da30e5e8a00c9b510c7c7d3ba06db5d2f2e2a2` |
+| Submit | `submit(uint256,bytes32,bytes)` (`0x9e63798d`) — jobId, deliverable hash, `0x` | Agent A (provider) | `0x79e0bd0d2ec875fb6e8415d353c075fab6c2945d01c775b695e0e240afb5af5a` |
+| Complete | `complete(uint256,bytes32,bytes)` (`0xd75bbdf3`) — jobId, reason hash, `0x` | Agent B (evaluator) | `0x3d25ff048f6f0ff2fc6acc226a75bec3dd788dc70b8cfefffa99b60f361baa6e` |
+
+Job ID `166059`. Independently verifiable: **https://testnet.arcscan.app/address/0x0747EEf0706327138c69792bF28Cd525089e4583**
+
+**Question 5 — does `deliverable` appear only in the event log, not in `jobs()` state?** **Partially confirmed.** The deliverable hash (`0x063c548e...`) and the completion reason hash (`0x2ad4a5e2...`) both appear in the `submit`/`complete` transaction calldata and in the escrow's own emitted event logs. We could **not** independently confirm their absence from `jobs()` state, because the plan's assumed `jobs()` getter signature — `function jobs(uint256) view returns (address,address,address,uint256,uint8)` — **does not match this contract either**: calling it against both job `1` (Arc's own showcase job) and job `166059` returns internally-inconsistent, garbage-looking tuples (an invalid short address in the first slot, an absurd `uint256` in the budget slot, `state` decoding to `288`). This is the same class of finding as question 2 — **the plan's assumed ABI, sourced from Arc's tutorials, does not match the deployed bytecode.** We did not reverse-engineer the correct `jobs()` struct layout; it wasn't needed once question 2 had already failed.
+
+**Question 6 — registry addresses for D3 (ERC-8004 identity), re-verified.** Identity registry `0x8004A818BFB912233c491871b3d84c89A494BD9e` **holds code** (129 bytes, proxy-shaped) on Arc testnet — confirmed via `eth_getCode`. This is prep evidence for Phase 8 · Task 1 only; it does not depend on or get affected by S8's fallback verdict.
+
+**Applying the plan's fallback rule.** Section 3 of Phase 7's plan states: *"If any of 1–4 fails: S8 fallback. Escrow (D2) does not ship."* Question 2 fails on direct, decoded, on-chain evidence — not a flaky read, not an RPC hiccup, but the actual successful transaction calldata proving the guarded function does not exist and the unguarded one silently pays whatever the current budget is.
+
+- **D2 (ERC-8183 escrow) does not ship in Phase 7.** Phase 7 · Tasks 2–3 (escrow job records migration, escrow lifecycle client) do not proceed.
+- **Phase 7 · Task 4 (JIT Gateway bridge) is unaffected** — it does not depend on escrow and proceeds independently.
+- **Phase 8 · Task 1 (D3 ERC-8004 identity) still ships standalone** — identity registration does not depend on escrow, and question 6 above confirms the registry is live.
+- **Phase 8 · Tasks 2–3 (D4 payment-gated reputation, D5 reputation → allocation) fall with D2**, per the plan: reputation is written from the escrow completion hook, and that dependency is exactly what makes it earned rather than self-asserted. Shipping ungated reputation instead would be the overclaim the manifest explicitly warns against.
+
+**Claim discipline going forward:** never state that ERC-8183 escrow "protects the client from being overcharged after quoting" — the opposite was just demonstrated on real testnet transactions. If escrow's mechanical lifecycle is ever referenced (e.g. in a writeup of this spike), the accurate claim is: *"funds are held in a third-party contract rather than the client's wallet once funded, and cannot be withdrawn by the provider directly"* — proof-of-funding-once-funded, not price protection before funding.
 
 ---
 
