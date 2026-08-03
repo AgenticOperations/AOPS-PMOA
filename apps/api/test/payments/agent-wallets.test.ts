@@ -5,6 +5,7 @@ import {
   findAgentWallet,
   nativeBalanceMicros,
   processAgentWalletCreateJob,
+  processAgentWalletTopUpJob,
   recordProvisionedWallet,
   readSpendableMicros,
 } from '../../src/engines/payments/agent-wallets.js';
@@ -274,6 +275,107 @@ describe('agent_wallet.create job processing', () => {
     const { pool } = await setupAgentFixture(store, 'job-missing');
     await expect(
       processAgentWalletCreateJob(pool, 'cjob_does_not_exist', fakeProvider(vi.fn())),
+    ).resolves.not.toThrow();
+  });
+});
+
+function fakeTransferProvider(transferWallet: CircleTreasuryProvider['transferWallet']): CircleTreasuryProvider {
+  return {
+    bridgeWalletTopUp: vi.fn(),
+    createWallet: vi.fn(),
+    createWalletSet: vi.fn(),
+    getGatewayBalance: vi.fn(),
+    getWalletBalances: vi.fn(),
+    health: vi.fn(),
+    initiateGatewayDeposit: vi.fn(),
+    requestTestnetFunds: vi.fn(),
+    settleExactX402: vi.fn(),
+    settleGatewayX402: vi.fn(),
+    transferWallet,
+  };
+}
+
+describe('agent_wallet.topup job processing', () => {
+  let store: PostgresTestStore;
+
+  beforeAll(async () => {
+    store = await startPostgres();
+  }, 90_000);
+
+  afterAll(async () => {
+    if (store !== undefined) await store.stop();
+  });
+
+  it('transfers from the treasury wallet to the agent wallet and marks the job complete', async () => {
+    const { orgId, agentId, walletSetId, pool } = await setupAgentFixture(store, 'topup-ok');
+    await pool.query(
+      `INSERT INTO circle_chain_wallets (
+         id, org_id, wallet_set_id, mode, chain, circle_blockchain, circle_wallet_id, address
+       ) VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', 'circle_treasury_topup_ok', '0xtreasury00000000000000000000000000000001')`,
+      [`cwallet_topup_ok`, orgId, walletSetId],
+    );
+    await recordProvisionedWallet(pool, {
+      orgId, agentId, mode: 'test', chain: 'arc',
+      circleWalletId: 'w_topup_ok', address: '0xagenttopup000000000000000000000000000001',
+      refId: 'ref_topup_ok', walletSetId, circleBlockchain: 'ARC-TESTNET',
+    });
+    await pool.query(
+      `INSERT INTO circle_provider_jobs (id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by)
+       VALUES ('cjob_topup_ok', $1, 'test', 'agent_wallet.topup', 'arc', 'queued', 8.00, $2::jsonb, 'usr_1')`,
+      [orgId, JSON.stringify({ agent_id: agentId })],
+    );
+
+    const transferWallet = vi.fn(() => Promise.resolve({ amountMicros: '8000000', transactionId: '0xtransfertx' }));
+    await processAgentWalletTopUpJob(pool, 'cjob_topup_ok', fakeTransferProvider(transferWallet));
+
+    expect(transferWallet).toHaveBeenCalledWith(expect.objectContaining({
+      amountMicros: 8_000_000n,
+      chain: 'arc',
+      destinationAddress: '0xagenttopup000000000000000000000000000001',
+      mode: 'test',
+      sourceAddress: '0xtreasury00000000000000000000000000000001',
+    }));
+
+    const job = await pool.query<{ status: string; provider_ref: string | null }>(
+      "SELECT status, provider_ref FROM circle_provider_jobs WHERE id = 'cjob_topup_ok'",
+    );
+    expect(job.rows[0]?.status).toBe('complete');
+    expect(job.rows[0]?.provider_ref).toBe('0xtransfertx');
+  });
+
+  it('marks the job failed, not thrown, when the transfer errors', async () => {
+    const { orgId, agentId, walletSetId, pool } = await setupAgentFixture(store, 'topup-fail');
+    await pool.query(
+      `INSERT INTO circle_chain_wallets (
+         id, org_id, wallet_set_id, mode, chain, circle_blockchain, circle_wallet_id, address
+       ) VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', 'circle_treasury_topup_fail', '0xtreasuryfail00000000000000000000000001')`,
+      [`cwallet_topup_fail`, orgId, walletSetId],
+    );
+    await recordProvisionedWallet(pool, {
+      orgId, agentId, mode: 'test', chain: 'arc',
+      circleWalletId: 'w_topup_fail', address: '0xagenttopupfail0000000000000000000000001',
+      refId: 'ref_topup_fail', walletSetId, circleBlockchain: 'ARC-TESTNET',
+    });
+    await pool.query(
+      `INSERT INTO circle_provider_jobs (id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by)
+       VALUES ('cjob_topup_fail', $1, 'test', 'agent_wallet.topup', 'arc', 'queued', 8.00, $2::jsonb, 'usr_1')`,
+      [orgId, JSON.stringify({ agent_id: agentId })],
+    );
+
+    const transferWallet = vi.fn(() => Promise.reject(new Error('circle_transfer_transaction_failed')));
+    await expect(processAgentWalletTopUpJob(pool, 'cjob_topup_fail', fakeTransferProvider(transferWallet))).resolves.not.toThrow();
+
+    const job = await pool.query<{ status: string; error_code: string | null }>(
+      "SELECT status, error_code FROM circle_provider_jobs WHERE id = 'cjob_topup_fail'",
+    );
+    expect(job.rows[0]?.status).toBe('failed');
+    expect(job.rows[0]?.error_code).toBe('circle_transfer_transaction_failed');
+  });
+
+  it('is a no-op for a job id that does not exist', async () => {
+    const { pool } = await setupAgentFixture(store, 'topup-missing');
+    await expect(
+      processAgentWalletTopUpJob(pool, 'cjob_topup_does_not_exist', fakeTransferProvider(vi.fn())),
     ).resolves.not.toThrow();
   });
 });

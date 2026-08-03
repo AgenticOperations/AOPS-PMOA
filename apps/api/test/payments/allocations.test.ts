@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
-import { setAllocation } from '../../src/engines/payments/allocations.js';
+import { evaluateTopUps, setAllocation } from '../../src/engines/payments/allocations.js';
+import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 function fakeProviderWithGatewayBalance(availableByChain: Record<string, string>): CircleTreasuryProvider {
@@ -134,5 +135,143 @@ describe('solvency invariant', () => {
     await expect(setAllocation(pool, provider, {
       orgId, agentId, mode: 'test', chain: 'arc', allocatedUsdc: '45.00', createdBy: 'usr_1',
     })).resolves.toBeDefined();
+  });
+});
+
+describe('auto top-up', () => {
+  let store: PostgresTestStore;
+
+  beforeAll(async () => {
+    store = await startPostgres();
+  }, 90_000);
+
+  afterAll(async () => {
+    if (store !== undefined) await store.stop();
+  });
+
+  async function setupAllocatedAgent(
+    suffix: string,
+    input: {
+      readonly depositsUsdc: string;
+      readonly allocatedUsdc: string;
+      readonly lowWaterMarkUsdc: string;
+      readonly ceilingUsdc: string;
+      readonly gasReserveUsdc: string;
+      readonly walletBalanceMicros: bigint;
+    },
+  ) {
+    const { orgId, agentId, pool, provider } = await setupTreasuryFixture(store, suffix, { arc: input.depositsUsdc });
+    await setAllocation(pool, provider, {
+      orgId, agentId, mode: 'test', chain: 'arc',
+      allocatedUsdc: input.allocatedUsdc,
+      ceilingUsdc: input.ceilingUsdc,
+      gasReserveUsdc: input.gasReserveUsdc,
+      lowWaterMarkUsdc: input.lowWaterMarkUsdc,
+      createdBy: 'usr_1',
+    });
+    const walletSet = await pool.query<{ id: string }>(
+      "SELECT id FROM circle_wallet_sets WHERE org_id = $1 AND mode = 'test'", [orgId],
+    );
+    await recordProvisionedWallet(pool, {
+      orgId, agentId, mode: 'test', chain: 'arc',
+      circleWalletId: `circle_wallet_agent_${suffix}`,
+      address: `0xagent${suffix}00000000000000000000000000000`.slice(0, 42),
+      refId: `ref_${suffix}`,
+      walletSetId: walletSet.rows[0]!.id,
+      circleBlockchain: 'ARC-TESTNET',
+    });
+    const nativeBalanceMicros = vi.fn(() => Promise.resolve(input.walletBalanceMicros));
+    return { orgId, agentId, pool, provider, nativeBalanceMicros };
+  }
+
+  it('enqueues a top-up when spendable balance falls below the low-water mark', async () => {
+    const { orgId, pool, nativeBalanceMicros } = await setupAllocatedAgent('topup_low', {
+      depositsUsdc: '50.00', allocatedUsdc: '10.00', lowWaterMarkUsdc: '2.00',
+      ceilingUsdc: '10.00', gasReserveUsdc: '0.50',
+      // $2.00 raw - $0.50 gas = $1.50 spendable, below the $2.00 mark.
+      walletBalanceMicros: 2_000_000n,
+    });
+
+    await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+
+    const jobs = await pool.query<{ amount_usdc: string }>(
+      "SELECT amount_usdc FROM circle_provider_jobs WHERE job_type = 'agent_wallet.topup' AND org_id = $1",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(1);
+    // Tops up to the ceiling: $10.00 ceiling - $2.00 raw balance = $8.00.
+    expect(jobs.rows[0]?.amount_usdc).toBe('8.000000');
+  });
+
+  it('does not top up when spendable is at or above the low-water mark', async () => {
+    const { orgId, pool, nativeBalanceMicros } = await setupAllocatedAgent('topup_ok', {
+      depositsUsdc: '50.00', allocatedUsdc: '10.00', lowWaterMarkUsdc: '2.00',
+      ceilingUsdc: '10.00', gasReserveUsdc: '0.50',
+      // $2.50 raw - $0.50 gas = $2.00 spendable, exactly at the mark.
+      walletBalanceMicros: 2_500_000n,
+    });
+
+    await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+
+    const jobs = await pool.query(
+      "SELECT 1 FROM circle_provider_jobs WHERE job_type = 'agent_wallet.topup' AND org_id = $1",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(0);
+  });
+
+  it('triggers on spendable, not raw, balance', async () => {
+    const { orgId, pool, nativeBalanceMicros } = await setupAllocatedAgent('topup_spendable', {
+      depositsUsdc: '50.00', allocatedUsdc: '10.00', lowWaterMarkUsdc: '2.00',
+      ceilingUsdc: '10.00', gasReserveUsdc: '0.50',
+      // Raw $2.40 -> spendable $1.90 -- must trigger even though raw > mark.
+      walletBalanceMicros: 2_400_000n,
+    });
+
+    await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+
+    const jobs = await pool.query(
+      "SELECT 1 FROM circle_provider_jobs WHERE job_type = 'agent_wallet.topup' AND org_id = $1",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(1);
+  });
+
+  it('does not enqueue a second top-up while one is already pending', async () => {
+    const { orgId, pool, nativeBalanceMicros } = await setupAllocatedAgent('topup_dedupe', {
+      depositsUsdc: '50.00', allocatedUsdc: '10.00', lowWaterMarkUsdc: '2.00',
+      ceilingUsdc: '10.00', gasReserveUsdc: '0.50',
+      walletBalanceMicros: 2_000_000n,
+    });
+
+    await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+    await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+
+    const jobs = await pool.query(
+      "SELECT 1 FROM circle_provider_jobs WHERE job_type = 'agent_wallet.topup' AND org_id = $1",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(1);
+  });
+
+  it('refuses a top-up that would break fleet solvency', async () => {
+    // Deposits are only $10 total, but this agent's own allocation already
+    // claims all of it -- topping up to the $50 ceiling would require
+    // funding that was never deposited.
+    const { orgId, pool, nativeBalanceMicros } = await setupAllocatedAgent('topup_solvency', {
+      depositsUsdc: '10.00', allocatedUsdc: '10.00', lowWaterMarkUsdc: '2.00',
+      ceilingUsdc: '50.00', gasReserveUsdc: '0.50',
+      walletBalanceMicros: 1_000_000n,
+    });
+
+    await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+
+    const jobs = await pool.query<{ amount_usdc: string }>(
+      "SELECT amount_usdc FROM circle_provider_jobs WHERE job_type = 'agent_wallet.topup' AND org_id = $1",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(1);
+    // Clamped to what's actually deposited, not the full ceiling gap.
+    expect(jobs.rows[0]?.amount_usdc).toBe('9.000000');
   });
 });

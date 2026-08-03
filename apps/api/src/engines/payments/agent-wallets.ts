@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { prefixedId } from '../identity/ids.js';
+import { parseUsdcMicros } from './allocations.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
@@ -290,6 +291,90 @@ export async function processAgentWalletCreateJob(
               updated_at = now()
         WHERE id = $1`,
       [jobId, error instanceof Error ? error.message : 'agent_wallet_create_failed'],
+    );
+  }
+}
+
+type AgentWalletTopUpJobRow = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly mode: PaymentMode;
+  readonly chain: PaymentChain | null;
+  readonly amount_usdc: string | null;
+  readonly metadata: unknown;
+};
+
+/**
+ * Processes one queued 'agent_wallet.topup' job: transfers amount_usdc
+ * from the org's treasury wallet to the target agent's wallet on the same
+ * chain, via the provider's transferWallet. evaluateTopUps (allocations.ts)
+ * is responsible for computing the amount and re-checking solvency before
+ * enqueueing this job -- this function trusts the stored amount and just
+ * executes the transfer.
+ */
+export async function processAgentWalletTopUpJob(
+  db: Db,
+  jobId: string,
+  provider: CircleTreasuryProvider,
+): Promise<void> {
+  const jobResult = await db.query<AgentWalletTopUpJobRow>(
+    `SELECT id, org_id, mode, chain, amount_usdc, metadata
+       FROM circle_provider_jobs
+      WHERE id = $1 AND job_type = 'agent_wallet.topup'
+      LIMIT 1`,
+    [jobId],
+  );
+  const job = jobResult.rows[0];
+  if (job === undefined) return;
+
+  const agentId = jobAgentId(job.metadata);
+  if (agentId === null || job.chain === null || job.amount_usdc === null) {
+    await db.query(
+      `UPDATE circle_provider_jobs
+          SET status = 'failed', error_code = 'agent_wallet_job_metadata_invalid', updated_at = now()
+        WHERE id = $1`,
+      [jobId],
+    );
+    return;
+  }
+
+  try {
+    const treasuryWallet = await db.query<{ address: string }>(
+      `SELECT address FROM circle_chain_wallets
+        WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+        LIMIT 1`,
+      [job.org_id, job.mode, job.chain],
+    );
+    const treasuryRow = treasuryWallet.rows[0];
+    if (treasuryRow === undefined) throw new Error('circle_wallet_missing');
+
+    const agentWallet = await findAgentWallet(db, agentId, job.mode, job.chain);
+    if (agentWallet === null) throw new Error('agent_wallet_not_found');
+
+    const amountMicros = parseUsdcMicros(job.amount_usdc);
+    const transfer = await provider.transferWallet({
+      amountMicros,
+      chain: job.chain,
+      destinationAddress: agentWallet.address,
+      mode: job.mode,
+      refId: `agentops-topup-${jobId}`,
+      sourceAddress: treasuryRow.address,
+    });
+
+    await db.query(
+      `UPDATE circle_provider_jobs
+          SET status = 'complete', provider_ref = $2, updated_at = now()
+        WHERE id = $1`,
+      [jobId, transfer.transactionId],
+    );
+  } catch (error) {
+    await db.query(
+      `UPDATE circle_provider_jobs
+          SET status = 'failed',
+              error_code = $2,
+              updated_at = now()
+        WHERE id = $1`,
+      [jobId, error instanceof Error ? error.message : 'agent_wallet_topup_failed'],
     );
   }
 }

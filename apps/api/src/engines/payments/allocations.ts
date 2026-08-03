@@ -5,19 +5,27 @@ import type { CircleTreasuryProvider } from './circle-provider.js';
 import { withPostgresCircleOrgLock } from './circle-org-lock.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
-// Duplicated from store.ts rather than imported: store.ts will import from
-// this module in Task 4 (to wire allocations into the budget path), and
-// store.ts -> allocations.ts -> store.ts would be this codebase's first
-// circular module dependency. This is a small, pure, self-contained
-// function with no other dependencies -- keep it byte-identical with
-// store.ts's parseUsdcMicros if either ever changes.
-function parseUsdcMicros(value: string | number): bigint {
+// Duplicated from store.ts (not imported) and exported for agent-wallets.ts
+// to reuse: store.ts will import from this module in Task 4 (to wire
+// allocations into the budget path), and store.ts -> allocations.ts ->
+// store.ts would be this codebase's first circular module dependency.
+// agent-wallets.ts <-> allocations.ts has no such cycle either direction,
+// so it imports this rather than holding a third copy. Small, pure,
+// self-contained -- keep it byte-identical with store.ts's
+// parseUsdcMicros if either ever changes.
+export function parseUsdcMicros(value: string | number): bigint {
   const raw = typeof value === 'number' ? value.toString() : value.trim();
   const match = /^(\d+)(?:\.(\d{1,6})?)?$/.exec(raw);
   if (match === null) throw badRequest('invalid_usdc_amount', 'USDC amount must be a positive decimal with up to 6 places.');
   const whole = BigInt(match[1] ?? '0') * 1_000_000n;
   const decimals = (match[2] ?? '').padEnd(6, '0');
   return whole + BigInt(decimals.length === 0 ? '0' : decimals);
+}
+
+function formatUsdc(micros: bigint): string {
+  const whole = micros / 1_000_000n;
+  const decimal = (micros % 1_000_000n).toString().padStart(6, '0');
+  return `${whole.toString()}.${decimal}`;
 }
 
 export type AgentAllocationRow = {
@@ -166,5 +174,113 @@ export async function setAllocation(
     const row = result.rows[0];
     if (row === undefined) throw new Error('agent_allocation_insert_failed');
     return row;
+  }));
+}
+
+type NativeBalanceReader = (address: string, chain: PaymentChain) => Promise<bigint>;
+
+export type EvaluateTopUpsInput = {
+  readonly mode: PaymentMode;
+  readonly nativeBalanceMicros: NativeBalanceReader;
+};
+
+type AllocationWithWalletRow = AgentAllocationRow & {
+  readonly wallet_address: string;
+};
+
+/**
+ * Scans every active allocation for `mode`, and for any whose agent
+ * wallet's SPENDABLE balance (raw − gas reserve, never raw alone -- see
+ * agent-wallets.ts's readSpendableMicros) has fallen below its low-water
+ * mark, enqueues an `agent_wallet.topup` job to fund it back toward its
+ * ceiling.
+ *
+ * The top-up amount is clamped twice:
+ *   1. Never above `ceiling_usdc − current raw balance` -- topping up
+ *      further would exceed the ceiling this allocation itself declares.
+ *   2. Never above real treasury solvency headroom for that org+chain --
+ *      an allocation's ceiling is an intent, not a guarantee there's real
+ *      money behind it. Auto-topup must never manufacture funds a
+ *      deposit never backed.
+ *
+ * Idempotent: an org+agent+chain with an already-queued or submitted
+ * agent_wallet.topup job is skipped, so repeated evaluation passes (the
+ * worker's poll loop) don't pile up duplicate transfers for the same
+ * shortfall.
+ */
+export async function evaluateTopUps(pool: pg.Pool, input: EvaluateTopUpsInput): Promise<void> {
+  const allocations = await pool.query<AllocationWithWalletRow>(
+    `SELECT a.*, w.address AS wallet_address
+       FROM agent_allocations a
+       JOIN agent_chain_wallets w
+         ON w.agent_id = a.agent_id AND w.mode = a.mode AND w.chain = a.chain AND w.status = 'active'
+      WHERE a.mode = $1 AND a.status = 'active'`,
+    [input.mode],
+  );
+
+  for (const allocation of allocations.rows) {
+    await evaluateSingleTopUp(pool, input.nativeBalanceMicros, allocation);
+  }
+}
+
+async function evaluateSingleTopUp(
+  pool: pg.Pool,
+  nativeBalanceMicros: NativeBalanceReader,
+  allocation: AllocationWithWalletRow,
+): Promise<void> {
+  const rawBalance = await nativeBalanceMicros(allocation.wallet_address, allocation.chain);
+  const gasReserve = parseUsdcMicros(allocation.gas_reserve_usdc);
+  const spendable = rawBalance > gasReserve ? rawBalance - gasReserve : 0n;
+  const lowWaterMark = parseUsdcMicros(allocation.low_water_mark_usdc);
+  if (spendable >= lowWaterMark) return;
+
+  const ceiling = parseUsdcMicros(allocation.ceiling_usdc);
+  const ceilingGap = ceiling > rawBalance ? ceiling - rawBalance : 0n;
+  if (ceilingGap <= 0n) return;
+
+  await withPostgresCircleOrgLock(pool, allocation.org_id, () => withTransaction(pool, async (client) => {
+    const pending = await client.query(
+      `SELECT 1 FROM circle_provider_jobs
+        WHERE org_id = $1 AND mode = $2 AND chain = $3 AND job_type = 'agent_wallet.topup'
+          AND status IN ('queued', 'submitted') AND metadata->>'agent_id' = $4
+        LIMIT 1`,
+      [allocation.org_id, allocation.mode, allocation.chain, allocation.agent_id],
+    );
+    if ((pending.rowCount ?? 0) > 0) return;
+
+    const others = await client.query<{ total: string }>(
+      `SELECT COALESCE(SUM(allocated_usdc), 0) AS total
+         FROM agent_allocations
+        WHERE org_id = $1 AND mode = $2 AND chain = $3
+          AND status = 'active' AND agent_id <> $4`,
+      [allocation.org_id, allocation.mode, allocation.chain, allocation.agent_id],
+    );
+    const committed = parseUsdcMicros(others.rows[0]?.total ?? '0');
+
+    // Solvency headroom for this specific agent's slice: real deposits
+    // minus what every OTHER active agent already claims. A top-up must
+    // never push this agent's on-chain balance past what its own
+    // allocation is entitled to, even if the wider treasury holds more.
+    const allocated = parseUsdcMicros(allocation.allocated_usdc);
+    const entitlement = allocated > committed ? allocated - committed : 0n;
+    const solvencyHeadroom = entitlement > rawBalance ? entitlement - rawBalance : 0n;
+
+    const topUpMicros = ceilingGap < solvencyHeadroom ? ceilingGap : solvencyHeadroom;
+    if (topUpMicros <= 0n) return;
+
+    await client.query(
+      `INSERT INTO circle_provider_jobs
+         (id, org_id, mode, job_type, chain, status, amount_usdc, metadata, created_by)
+       VALUES ($1, $2, $3, 'agent_wallet.topup', $4, 'queued', $5::numeric, $6::jsonb, $7)`,
+      [
+        prefixedId('cjob'),
+        allocation.org_id,
+        allocation.mode,
+        allocation.chain,
+        formatUsdc(topUpMicros),
+        JSON.stringify({ agent_id: allocation.agent_id }),
+        'agent-wallet-topup-evaluator',
+      ],
+    );
   }));
 }

@@ -5,7 +5,8 @@ import { readApiEnv } from './config/env.js';
 import { createCircleAgentCliExecutor } from './engines/payments/circle-agent-cli.js';
 import { createCircleConnectionService } from './engines/payments/circle-connection-service.js';
 import { classifyCircleWorkerJob, startCircleLiquidityWorker } from './engines/payments/circle-liquidity-worker.js';
-import { processAgentWalletCreateJob } from './engines/payments/agent-wallets.js';
+import { nativeBalanceMicros, processAgentWalletCreateJob, processAgentWalletTopUpJob } from './engines/payments/agent-wallets.js';
+import { evaluateTopUps } from './engines/payments/allocations.js';
 import { createOrgScopedCircleTreasuryProvider } from './engines/payments/circle-org-provider.js';
 import { createPostgresCircleConnectionRepository } from './engines/payments/circle-session-store.js';
 import {
@@ -79,7 +80,7 @@ try {
                 )
               )
             )
-             OR (job_type = 'agent_wallet.create' AND status = 'queued')
+             OR (job_type IN ('agent_wallet.create', 'agent_wallet.topup') AND status = 'queued')
           ORDER BY created_at ASC
           LIMIT 10`,
         [submittedRetryMs],
@@ -105,12 +106,16 @@ try {
       const row = current.rows[0];
       if (row === undefined) return;
       const provider = createOrgScopedCircleTreasuryProvider(connectionService, job.orgId);
-      // agent_wallet.create is a separate job family from the
+      // agent_wallet.create/.topup are a separate job family from the
       // liquidity/reconciliation ones classifyCircleWorkerJob models --
       // handled directly rather than stretching that function's
-      // two-action enum to cover an unrelated job type.
+      // two-action enum to cover unrelated job types.
       if (row.job_type === 'agent_wallet.create') {
         await processAgentWalletCreateJob(pool, job.id, provider);
+        return;
+      }
+      if (row.job_type === 'agent_wallet.topup') {
+        await processAgentWalletTopUpJob(pool, job.id, provider);
         return;
       }
       const action = classifyCircleWorkerJob({ jobType: row.job_type, status: row.status });
@@ -121,7 +126,17 @@ try {
         await reconcileCircleProviderJobs(pool, operator, job.orgId, provider);
       }
     }),
-    purgeExpiredResults: () => purgeExpiredX402Results(pool),
+    purgeExpiredResults: async () => {
+      const purged = await purgeExpiredX402Results(pool);
+      // Runs every tick regardless of the job list, same as the purge
+      // above -- there's no existing job to key off of for detecting a
+      // low-balance agent wallet, it has to be scanned for.
+      // mode: 'test' matches this worker's existing testnet-only scope
+      // (assertTestInput's circle_worker_testnet_only guard) -- live mode
+      // isn't wired up anywhere in this worker yet.
+      await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+      return purged;
+    },
   }, pollMs);
 } catch (error) {
   app.log.error(error);
