@@ -9,7 +9,7 @@ const baseStatement = {
 } satisfies Omit<PolicyStatement, 'decision'>;
 
 describe('Section 2 policy decision engine', () => {
-  it('allows requests when no active policy statement matches', () => {
+  it('denies requests when no active policy statement matches', () => {
     const result = evaluatePolicyDecision({
       request: {
         actor: { type: 'user', id: 'usr_owner', role: 'owner' },
@@ -21,12 +21,103 @@ describe('Section 2 policy decision engine', () => {
     });
 
     expect(result).toEqual({
-      decision: 'allow',
+      decision: 'deny',
       enforceability: 'enforceable',
-      reasonCode: 'no_matching_policy',
-      explanation: 'No active policy blocked this request.',
+      reasonCode: 'no_matching_policy_denied',
+      explanation: 'No policy authorizes this request.',
       matched: [],
     });
+  });
+
+  it('allows unmatched requests when the org default is permissive', () => {
+    const result = evaluatePolicyDecision({
+      request: {
+        actor: { type: 'user', id: 'usr_owner', role: 'owner' },
+        action: 'management.connection.issue',
+        target: { type: 'agent', id: 'agt_1' },
+        context: {},
+      },
+      policies: [],
+      defaultEffect: 'allow',
+    });
+
+    expect(result.decision).toBe('allow');
+    expect(result.reasonCode).toBe('no_matching_policy');
+    expect(result.matched).toEqual([]);
+  });
+
+  // TRAP GUARD: the fail-closed fix must branch on matched.length === 0, NOT
+  // reseed the reduce. decisionRank is a max-severity fold, so a 'deny' seed
+  // would beat every matching allow and deny the entire system.
+  it('still allows when a matching statement says allow', () => {
+    const result = evaluatePolicyDecision({
+      request: {
+        actor: { type: 'user', id: 'usr_owner', role: 'owner' },
+        action: 'management.connection.issue',
+        target: { type: 'agent', id: 'agt_1' },
+        context: {},
+      },
+      policies: [
+        {
+          policyId: 'pol_allow',
+          version: 1,
+          name: 'Allow issue',
+          statements: [{ ...baseStatement, id: 'stmt_allow', decision: 'allow' }],
+        },
+      ],
+    });
+
+    expect(result.decision).toBe('allow');
+    expect(result.reasonCode).toBe('no_matching_policy');
+    expect(result.matched).toHaveLength(1);
+  });
+
+  // TRAP GUARD: the max-rank fold must remain intact.
+  it('prefers deny over allow when both match', () => {
+    const result = evaluatePolicyDecision({
+      request: {
+        actor: { type: 'user', id: 'usr_owner', role: 'owner' },
+        action: 'management.connection.issue',
+        target: { type: 'agent', id: 'agt_1' },
+        context: {},
+      },
+      policies: [
+        {
+          policyId: 'pol_mixed',
+          version: 1,
+          name: 'Mixed',
+          statements: [
+            { ...baseStatement, id: 'stmt_allow', decision: 'allow' },
+            { ...baseStatement, id: 'stmt_deny', decision: 'deny' },
+          ],
+        },
+      ],
+    });
+
+    expect(result.decision).toBe('deny');
+  });
+
+  // A permissive org default must not weaken authored rules.
+  it('keeps a matching deny even when the org default is permissive', () => {
+    const result = evaluatePolicyDecision({
+      request: {
+        actor: { type: 'user', id: 'usr_owner', role: 'owner' },
+        action: 'management.connection.issue',
+        target: { type: 'agent', id: 'agt_1' },
+        context: {},
+      },
+      policies: [
+        {
+          policyId: 'pol_deny',
+          version: 1,
+          name: 'Deny issue',
+          statements: [{ ...baseStatement, id: 'stmt_deny', decision: 'deny' }],
+        },
+      ],
+      defaultEffect: 'allow',
+    });
+
+    expect(result.decision).toBe('deny');
   });
 
   it('uses the most restrictive matching decision across effective policies', () => {

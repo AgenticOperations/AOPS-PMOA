@@ -4,6 +4,7 @@ export type {
   PolicyDecisionRequest,
   PolicyDecisionResult,
   PolicyDecisionValue,
+  PolicyDefaultEffect,
   PolicyStatement,
 } from './types.js';
 
@@ -12,6 +13,7 @@ import type {
   PolicyDecisionRequest,
   PolicyDecisionResult,
   PolicyDecisionValue,
+  PolicyDefaultEffect,
   PolicyStatement,
   PolicyStatementConditions,
 } from './types.js';
@@ -36,6 +38,9 @@ const explanation: Record<PolicyDecisionValue, string> = {
   approval_required: 'A policy requires approval before this request can continue.',
   deny: 'A policy denied this request.',
 };
+
+const NO_MATCH_DENY_REASON = 'no_matching_policy_denied';
+const NO_MATCH_DENY_EXPLANATION = 'No policy authorizes this request.';
 
 function objectAt(value: unknown, key: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -141,6 +146,7 @@ function matchesStatement(statement: PolicyStatement, request: PolicyDecisionReq
 export function evaluatePolicyDecision(input: {
   readonly request: PolicyDecisionRequest;
   readonly policies: readonly EffectivePolicy[];
+  readonly defaultEffect?: PolicyDefaultEffect;
 }): PolicyDecisionResult {
   const matched = input.policies.flatMap((policy) =>
     policy.statements
@@ -153,6 +159,22 @@ export function evaluatePolicyDecision(input: {
         decision: statement.decision,
       })),
   );
+
+  // Fail closed: with no authored rule, the request is not authorized.
+  //
+  // This MUST stay a separate branch. Do not express it by seeding the
+  // reduce below with 'deny' -- that fold takes the highest decisionRank,
+  // so a 'deny' seed would beat every matching allow and deny everything.
+  if (matched.length === 0) {
+    const permissive = input.defaultEffect === 'allow';
+    return {
+      decision: permissive ? 'allow' : 'deny',
+      enforceability: 'enforceable',
+      reasonCode: permissive ? reasonCode.allow : NO_MATCH_DENY_REASON,
+      explanation: permissive ? explanation.allow : NO_MATCH_DENY_EXPLANATION,
+      matched: [],
+    };
+  }
 
   const decision = matched.reduce<PolicyDecisionValue>(
     (current, match) => (decisionRank[match.decision] > decisionRank[current] ? match.decision : current),

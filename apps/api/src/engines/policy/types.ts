@@ -1,6 +1,12 @@
 import type { OperatorContext } from '../identity/types.js';
 
 export type PolicyDecisionValue = 'allow' | 'deny' | 'approval_required' | 'observe';
+
+/**
+ * What an org does with an action that no authored policy statement matches.
+ * Defaults to 'deny' (fail closed); 'allow' is an explicit, auditable opt-in.
+ */
+export type PolicyDefaultEffect = 'deny' | 'allow';
 export type PolicyEnforceability = 'enforceable';
 export type PolicyCategory = 'management' | 'operational' | 'capability';
 export type PolicyDraftSource = 'preset' | 'blank' | 'request' | 'structured';
