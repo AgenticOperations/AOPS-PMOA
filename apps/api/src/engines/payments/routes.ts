@@ -46,6 +46,7 @@ import {
   verifyPaymentRails,
   verifyPaymentRail,
 } from './store.js';
+import { revokeAgent } from './agent-revocation.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
 import {
@@ -187,6 +188,10 @@ const historyQuerySchema = z.object({
 
 const resolveUnknownAttemptSchema = z.object({
   outcome: z.enum(['failed', 'settled']),
+});
+
+const revokeAgentSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
 });
 
 function extractBearerToken(request: FastifyRequest, sessionCookieName = 'agentops_session'): string | null {
@@ -729,6 +734,18 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
         parseBody(paymentAccessSchema, request),
       ),
     };
+  });
+
+  app.post('/v1/orgs/:orgId/agents/:agentId/revoke', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly agentId: string };
+    // 'admin' rather than 'operator' -- this halts an agent's runtime auth
+    // and sweeps its wallets, a higher bar than day-to-day payment access
+    // changes, matching the bar Phase 1's org-level freeze already sets.
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const body = parseBody(revokeAgentSchema, request);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    await revokeAgent(deps.pool, operator, params.orgId, params.agentId, mode, body.reason);
+    return { revoked: true };
   });
 
   app.post('/v1/runtime/payments/x402', async (request) => {

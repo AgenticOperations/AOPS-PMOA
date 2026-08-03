@@ -6,6 +6,7 @@ import { createCircleAgentCliExecutor } from './engines/payments/circle-agent-cl
 import { createCircleConnectionService } from './engines/payments/circle-connection-service.js';
 import { classifyCircleWorkerJob, startCircleLiquidityWorker } from './engines/payments/circle-liquidity-worker.js';
 import { nativeBalanceMicros, processAgentWalletCreateJob, processAgentWalletTopUpJob } from './engines/payments/agent-wallets.js';
+import { processAgentWalletSweepJob } from './engines/payments/agent-revocation.js';
 import { evaluateTopUps } from './engines/payments/allocations.js';
 import { createOrgScopedCircleTreasuryProvider } from './engines/payments/circle-org-provider.js';
 import { createPostgresCircleConnectionRepository } from './engines/payments/circle-session-store.js';
@@ -80,7 +81,7 @@ try {
                 )
               )
             )
-             OR (job_type IN ('agent_wallet.create', 'agent_wallet.topup') AND status = 'queued')
+             OR (job_type IN ('agent_wallet.create', 'agent_wallet.topup', 'agent_wallet.sweep') AND status = 'queued')
           ORDER BY created_at ASC
           LIMIT 10`,
         [submittedRetryMs],
@@ -116,6 +117,17 @@ try {
       }
       if (row.job_type === 'agent_wallet.topup') {
         await processAgentWalletTopUpJob(pool, job.id, provider);
+        return;
+      }
+      if (row.job_type === 'agent_wallet.sweep') {
+        // 0.05 USDC gas reserve: the estimateTransferFee spike for this
+        // exact transfer shape (Arc's precompile USDC address) showed
+        // ~101k gas at a ~0.005 USDC network fee -- 10x headroom for
+        // testnet gas-price variance without leaving meaningful dust.
+        await processAgentWalletSweepJob(pool, job.id, provider, {
+          nativeBalanceMicros,
+          gasNeededMicros: 50_000n,
+        });
         return;
       }
       const action = classifyCircleWorkerJob({ jobType: row.job_type, status: row.status });

@@ -1187,9 +1187,16 @@ export function createDeveloperControlledCircleTreasuryProvider(
       const transactionId = transfer.data?.id;
       if (transactionId === undefined || transactionId.length === 0) throw new Error('circle_transfer_transaction_missing');
       await waitForCircleTransaction(client, transactionId, 'circle_transfer');
+      // waitForCircleTransaction only confirms state, not the real
+      // on-chain hash -- transactionId is Circle's internal id, which is
+      // NOT the value an explorer link needs. Confirmed the distinction
+      // live: getTransaction's txHash differs from the id used to look it
+      // up. A demo claiming "verifiable on-chain" needs the real hash.
+      const confirmed = await client.getTransaction({ id: transactionId });
+      const txHash = confirmed.data?.transaction?.txHash;
       return {
         amountMicros: amountMicros.toString(),
-        transactionId,
+        transactionId: txHash ?? transactionId,
       };
     },
     requestTestnetFunds: async ({ address, chain, mode }) => {
