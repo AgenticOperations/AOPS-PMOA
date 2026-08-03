@@ -69,6 +69,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0024_pin_eoa_account_type');
     expect(firstRun).toContain('0025_agent_chain_wallets');
     expect(firstRun).toContain('0026_agent_allocations');
+    expect(firstRun).toContain('0027_payto_allowlist');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -102,6 +103,7 @@ describe('PMOA database migrations', () => {
       '0024_pin_eoa_account_type',
       '0025_agent_chain_wallets',
       '0026_agent_allocations',
+      '0027_payto_allowlist',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(

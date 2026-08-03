@@ -269,6 +269,13 @@ describe('durable x402 paid HTTP flow', () => {
     // Fail-closed (E1): a fresh org denies everything until a policy
     // matches. Buyer provisioning is orthogonal to what this suite tests.
     await store.pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+    // Phase 5's payTo allowlist check (E8) requires the merchant
+    // destination to be pre-verified before any payment can be signed.
+    await store.pool.query(
+      `INSERT INTO payment_destination_allowlist (id, org_id, chain, address, label, source, created_by)
+       VALUES ($1, $2, 'base', '0x0000000000000000000000000000000000000001', 'Test merchant', 'marketplace', 'usr_owner')`,
+      [`payto_${orgId}`, orgId],
+    );
 
     const agent = await api.inject({
       method: 'POST',
@@ -442,6 +449,13 @@ describe('durable x402 paid HTTP flow', () => {
     // Fail-closed (E1): a fresh org denies everything until a policy
     // matches. Agent provisioning is orthogonal to what this test exercises.
     await store.pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+    // Phase 5's payTo allowlist check (E8) requires the merchant
+    // destination to be pre-verified before any payment can be signed.
+    await store.pool.query(
+      `INSERT INTO payment_destination_allowlist (id, org_id, chain, address, label, source, created_by)
+       VALUES ($1, $2, 'base', '0x0000000000000000000000000000000000000001', 'Test merchant', 'marketplace', 'usr_owner')`,
+      [`payto_${orgId}`, orgId],
+    );
 
     const agent = await api.inject({
       method: 'POST',

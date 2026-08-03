@@ -4972,6 +4972,22 @@ async function preparePaidHttpPayment(
       );
     }
 
+    // payTo comes from the SERVER's 402 response -- a spoofed or
+    // compromised provider can name its own address, and after signing,
+    // amount and destination are cryptographically immutable, so the
+    // theft is irreversible. Validate before anything else runs (policy,
+    // reservation, signing). Case-insensitive: EVM address checksum
+    // casing varies between providers.
+    const allowedDestination = await client.query(
+      `SELECT 1 FROM payment_destination_allowlist
+        WHERE org_id = $1 AND chain = $2 AND lower(address) = lower($3) AND status = 'active'
+        LIMIT 1`,
+      [auth.org_id, quote.chain, quote.recipient],
+    );
+    if ((allowedDestination.rowCount ?? 0) === 0) {
+      throw conflict('payment_destination_not_allowed', 'Payment destination is not on the org\'s verified allowlist.');
+    }
+
     // Source resolution and the quote hash must be known BEFORE policy
     // runs, because the approval context policy stores (and that a later
     // resume compares against) binds quote_hash/request_hash into it --

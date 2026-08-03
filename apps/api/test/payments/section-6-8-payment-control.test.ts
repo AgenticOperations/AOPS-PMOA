@@ -146,6 +146,14 @@ async function createOrgAgentAndConnection(app: FastifyInstance, pool: PostgresT
   expect(connectionResponse.statusCode, connectionResponse.body).toBe(201);
   const connection = connectionResponse.json<ConnectionCreateResponse>();
 
+  // Phase 5's payTo allowlist check (E8) requires the merchant destination
+  // to be pre-verified before any payment can be signed.
+  await pool.query(
+    `INSERT INTO payment_destination_allowlist (id, org_id, chain, address, label, source, created_by)
+     VALUES ($1, $2, 'base', '0x0000000000000000000000000000000000000001', 'Test merchant', 'marketplace', 'usr_payments_owner')`,
+    [`payto_${orgId}`, orgId],
+  );
+
   return { agentId, orgId, secret: connection.secret };
 }
 

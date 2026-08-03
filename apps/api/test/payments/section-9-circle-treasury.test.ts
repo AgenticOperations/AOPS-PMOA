@@ -429,6 +429,22 @@ async function createOrg(app: FastifyInstance, pool: PostgresTestStore['pool']):
   // Agent/connection provisioning is orthogonal to what this suite tests.
   await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
 
+  // Phase 5's payTo allowlist check (E8) requires the merchant destination
+  // to be pre-verified before any payment can be signed. This suite's
+  // fixtures use two payTo addresses across five chains -- allowlist both
+  // on every chain rather than tracking which test uses which combination.
+  let payToSeedId = 0;
+  for (const chain of ['base', 'arbitrum', 'polygon', 'optimism', 'avalanche'] as const) {
+    for (const address of ['0x1111111111111111111111111111111111111111', '0x000000000000000000000000000000000000dEaD']) {
+      payToSeedId += 1;
+      await pool.query(
+        `INSERT INTO payment_destination_allowlist (id, org_id, chain, address, label, source, created_by)
+         VALUES ($1, $2, $3, $4, 'Test merchant', 'marketplace', 'usr_circle_owner')`,
+        [`payto_${orgId}_${payToSeedId}`, orgId, chain, address],
+      );
+    }
+  }
+
   return orgId;
 }
 
