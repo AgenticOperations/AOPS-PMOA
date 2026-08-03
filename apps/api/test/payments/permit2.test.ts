@@ -176,6 +176,17 @@ describe('Permit2 delegation', () => {
   });
 });
 
+function stubPermit2Nonce(nonce: bigint): void {
+  vi.stubEnv('ARC_RPC_URL', 'https://rpc.testnet.arc.network');
+  vi.spyOn(global, 'fetch').mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    // amount (uint160), expiration (uint48), nonce (uint48), each padded
+    // to its own 32-byte word -- matches Permit2's real allowance() ABI.
+    result: `0x${'0'.repeat(64)}${'0'.repeat(64)}${nonce.toString(16).padStart(64, '0')}`,
+  }))));
+}
+
 describe('recordSignedDelegation', () => {
   let store: PostgresTestStore;
 
@@ -185,9 +196,12 @@ describe('recordSignedDelegation', () => {
 
   afterAll(async () => {
     if (store !== undefined) await store.stop();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('persists the signature and marks the delegation active', async () => {
+    stubPermit2Nonce(0n);
     const orgId = 'org_permit2_sign';
     const teamId = 'team_permit2_sign';
     const payerAgentId = 'agt_permit2_sign_payer';
@@ -204,14 +218,15 @@ describe('recordSignedDelegation', () => {
     );
     await recordProvisionedWallet(store.pool, {
       orgId, agentId: payerAgentId, mode: 'test', chain: 'arc',
-      circleWalletId: 'w_permit2_sign', address: '0xpayersignaddress00000000000000000000001',
+      circleWalletId: 'w_permit2_sign', address: '0xaaaa111111111111111111111111111111111a01',
       refId: 'ref_permit2_sign', walletSetId, circleBlockchain: 'ARC-TESTNET',
     });
 
-    const delegation = await recordSignedDelegation(store.pool, fakeProvider(), {
+    const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xpermittx' }));
+    const delegation = await recordSignedDelegation(store.pool, fakeProvider({ executePermit2Transaction }), {
       orgId,
       payerAgentId,
-      payeeAddress: '0xpayeesignaddress00000000000000000000001',
+      payeeAddress: '0xbbbb222222222222222222222222222222222b02',
       mode: 'test',
       chain: 'arc',
       ceilingUsdc: '5.00',
@@ -226,5 +241,13 @@ describe('recordSignedDelegation', () => {
       'SELECT status, signature FROM agent_delegations WHERE id = $1', [delegation.id],
     );
     expect(row.rows[0]).toEqual({ status: 'active', signature: '0xsig' });
+
+    // The signature alone does nothing on-chain -- permit() must actually
+    // submit it, or drawDown's transferFrom would fail against a real
+    // zero allowance forever. Confirms this call really happens, not just
+    // that a signature was obtained and stored.
+    expect(executePermit2Transaction).toHaveBeenCalledTimes(1);
+    const callArgs: unknown[] = executePermit2Transaction.mock.calls[0] ?? [];
+    expect((callArgs[0] as { abiFunctionSignature?: string }).abiFunctionSignature).toContain('permit');
   });
 });

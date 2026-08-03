@@ -15,7 +15,7 @@ const WEI_PER_MICRO = 1_000_000_000_000n;
 // Read at call time, not module-load time -- process.env can be populated
 // after this module is imported (env-file loading order, tests stubbing
 // the var), and a frozen-at-import constant would silently never see it.
-function chainRpcUrl(chain: PaymentChain): string | undefined {
+export function chainRpcUrl(chain: PaymentChain): string | undefined {
   if (chain === 'arc') return process.env.ARC_RPC_URL;
   return undefined;
 }

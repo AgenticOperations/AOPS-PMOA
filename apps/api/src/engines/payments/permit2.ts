@@ -1,12 +1,73 @@
+import { encodeFunctionData, parseAbi } from 'viem';
 import type pg from 'pg';
 import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
+import { chainRpcUrl } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 // Canonical Permit2 address, identical across every EVM chain (CREATE2
 // deployment) -- verified live on Arc in spike S4 (docs/spike-results.md).
 export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+
+const permit2AllowanceAbi = parseAbi([
+  'function allowance(address owner, address token, address spender) view returns (uint160 amount, uint48 expiration, uint48 nonce)',
+]);
+
+const NONCE_READ_MAX_ATTEMPTS = 6;
+const NONCE_READ_RETRY_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Reads Permit2's CURRENT on-chain nonce for owner/token/spender. Permit2
+ * requires strictly increasing nonces per owner/token/spender -- a stale
+ * nonce (e.g. always 0) makes permit() silently revert on any delegation
+ * after the first one for that triple. Never assume nonce 0; always read
+ * the real value. Retry-with-backoff matches nativeBalanceMicros's
+ * pattern (Arc's public RPC found failing ~56% of calls, spike S6) --
+ * a failed read must throw, never be coerced to a guessed nonce.
+ */
+export async function readPermit2Nonce(
+  ownerAddress: string,
+  tokenAddress: string,
+  spenderAddress: string,
+  chain: PaymentChain,
+): Promise<bigint> {
+  const rpcUrl = chainRpcUrl(chain);
+  if (rpcUrl === undefined || rpcUrl.length === 0) {
+    throw new Error(`permit2_nonce_rpc_not_configured:${chain}`);
+  }
+  const data = encodeFunctionData({
+    abi: permit2AllowanceAbi,
+    functionName: 'allowance',
+    args: [ownerAddress as `0x${string}`, tokenAddress as `0x${string}`, spenderAddress as `0x${string}`],
+  });
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= NONCE_READ_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: PERMIT2_ADDRESS, data }, 'latest'] }),
+      });
+      const body = await response.json() as { readonly result?: string; readonly error?: { readonly message?: string } };
+      if (body.error !== undefined) throw new Error(body.error.message ?? 'eth_call_rpc_error');
+      if (body.result === undefined) throw new Error('eth_call_empty_response');
+      const hex = body.result.slice(2);
+      // amount (uint160), expiration (uint48), nonce (uint48) -- each
+      // right-padded into its own 32-byte word by the ABI encoder.
+      return BigInt(`0x${hex.slice(128, 192)}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt < NONCE_READ_MAX_ATTEMPTS) await sleep(NONCE_READ_RETRY_DELAY_MS);
+    }
+  }
+  throw new Error(`permit2_nonce_unavailable:${lastError instanceof Error ? lastError.message : 'unknown'}`);
+}
 
 async function withTransaction<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
@@ -175,7 +236,14 @@ export async function recordSignedDelegation(
     const tokenAddress = input.tokenAddress ?? DEFAULT_PERMIT2_TOKEN_ADDRESS;
     const ceilingMicros = parseUsdcMicros(input.ceilingUsdc);
     const expirationSeconds = Math.floor(input.expiresAt.getTime() / 1000);
-    const nonce = 0n; // First delegation for this payer/payee/mode/chain pair; see the UNIQUE constraint note below.
+    // Permit2 requires a strictly increasing nonce per owner/token/spender
+    // -- MUST read the real current value, never assume 0. A hardcoded 0
+    // makes every delegation after the first for the same triple silently
+    // revert on-chain (confirmed live: a stale nonce produced an opaque
+    // "API parameter invalid" from Circle rather than a clear revert
+    // reason, so this bug would have been very hard to diagnose from the
+    // error message alone).
+    const nonce = await readPermit2Nonce(payerRow.address, tokenAddress, input.payeeAddress, input.chain);
 
     const { typedData } = buildPermitSingle({
       chainId: ARC_CHAIN_ID,
@@ -191,6 +259,34 @@ export async function recordSignedDelegation(
       mode: input.mode,
       ownerAddress: payerRow.address,
       typedData,
+    });
+
+    // The signature alone does nothing -- Permit2 only recognizes it once
+    // permit() has actually submitted it on-chain, recording the
+    // allowance in Permit2's own storage. Without this step, drawDown's
+    // transferFrom would fail against a real zero allowance forever.
+    // Submitted by the PAYER (the signer) rather than the payee: Permit2
+    // recovers the owner from the signature regardless of who calls
+    // permit(), and the payer already has a wallet in every case (needed
+    // to sign), while the payee might not (payeeAgentId is optional --
+    // Task 3 covers off-fleet payees too).
+    await provider.executePermit2Transaction({
+      mode: input.mode,
+      chain: input.chain,
+      senderAddress: payerRow.address,
+      abiFunctionSignature: 'permit(address,((address,uint160,uint48,uint48),address,uint256),bytes)',
+      abiParameters: [
+        payerRow.address,
+        [[tokenAddress, ceilingMicros.toString(), expirationSeconds.toString(), nonce.toString()], input.payeeAddress, expirationSeconds.toString()],
+        signed.signature,
+      ],
+      // Kept short deliberately: confirmed live that a long refId
+      // (~100 chars, e.g. embedding both orgId and a full address) makes
+      // Circle reject the whole call with an opaque "API parameter
+      // invalid" error that gives no hint refId is the cause. A random
+      // UUID suffix is enough to distinguish calls without the fixed
+      // orgId/address text driving the length up.
+      refId: `agentops-permit-${crypto.randomUUID()}`,
     });
 
     const inserted = await client.query<AgentDelegationRow>(
@@ -283,7 +379,8 @@ export async function drawDown(
       senderAddress: delegation.payee_address,
       abiFunctionSignature: 'transferFrom(address,address,uint160,address)',
       abiParameters: [payerRow.address, delegation.payee_address, amountMicros.toString(), delegation.token_address],
-      refId: `agentops-delegation-drawdown-${drawdownId}`,
+      // Kept short -- see recordSignedDelegation's note on refId length.
+      refId: `agentops-draw-${crypto.randomUUID()}`,
     });
 
     await client.query(
@@ -342,7 +439,8 @@ export async function revokeDelegation(
       senderAddress: payerRow.address,
       abiFunctionSignature: 'lockdown((address,address)[])',
       abiParameters: [[[delegation.token_address, delegation.payee_address]]],
-      refId: `agentops-delegation-revoke-${input.delegationId}`,
+      // Kept short -- see recordSignedDelegation's note on refId length.
+      refId: `agentops-revoke-${crypto.randomUUID()}`,
     });
 
     await client.query(
