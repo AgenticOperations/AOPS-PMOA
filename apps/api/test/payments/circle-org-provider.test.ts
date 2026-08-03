@@ -34,6 +34,15 @@ describe('Organization-scoped Circle provider', () => {
 
   it('uses the developer-controlled provider when CIRCLE_TREASURY_PROVIDER is set', async () => {
     vi.stubEnv('CIRCLE_TREASURY_PROVIDER', 'developer_controlled');
+    // gatewayBalance reads the public Gateway API directly (no Circle
+    // wallet auth needed for a balance read) -- stub it so this routing
+    // test stays offline and deterministic rather than hitting the real
+    // testnet endpoint.
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      balances: [{ balance: '0', domain: 26, withdrawable: '0', withdrawing: '0' }],
+      token: 'USDC',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    vi.stubGlobal('fetch', fetchMock);
 
     const service = {} as CircleConnectionService;
     const provider = createOrgScopedCircleTreasuryProvider(service, 'org_1');
@@ -46,13 +55,16 @@ describe('Organization-scoped Circle provider', () => {
       toChain: 'base',
     });
 
-    // The dev-controlled provider stubs this; the Agent Wallet path does
-    // not need a connected executor at all to reach it, since
-    // createDeveloperControlledCircleTreasuryProvider() authenticates with
-    // the entity secret rather than a per-org OAuth connection.
+    // The dev-controlled provider now runs the real Gateway bridge (Phase
+    // 7 · Task 4); with a zero on-chain Gateway balance for this dummy
+    // address, it correctly refuses with the deposit error rather than
+    // ever reaching Circle's signing API -- proof this test reached the
+    // dev-controlled path at all, since the Agent Wallet path (below)
+    // would instead need `service.withConnectedExecutor` and throw.
     expect(result.success).toBe(false);
-    expect(result.errorReason).toBe('developer_controlled_bridge_topup_not_supported');
+    expect(result.errorReason).toBe('gateway_wallet_not_deposited');
 
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
 
