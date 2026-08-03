@@ -5,6 +5,7 @@ import { readApiEnv } from './config/env.js';
 import { createCircleAgentCliExecutor } from './engines/payments/circle-agent-cli.js';
 import { createCircleConnectionService } from './engines/payments/circle-connection-service.js';
 import { classifyCircleWorkerJob, startCircleLiquidityWorker } from './engines/payments/circle-liquidity-worker.js';
+import { processAgentWalletCreateJob } from './engines/payments/agent-wallets.js';
 import { createOrgScopedCircleTreasuryProvider } from './engines/payments/circle-org-provider.js';
 import { createPostgresCircleConnectionRepository } from './engines/payments/circle-session-store.js';
 import {
@@ -78,6 +79,7 @@ try {
                 )
               )
             )
+             OR (job_type = 'agent_wallet.create' AND status = 'queued')
           ORDER BY created_at ASC
           LIMIT 10`,
         [submittedRetryMs],
@@ -102,9 +104,17 @@ try {
       );
       const row = current.rows[0];
       if (row === undefined) return;
+      const provider = createOrgScopedCircleTreasuryProvider(connectionService, job.orgId);
+      // agent_wallet.create is a separate job family from the
+      // liquidity/reconciliation ones classifyCircleWorkerJob models --
+      // handled directly rather than stretching that function's
+      // two-action enum to cover an unrelated job type.
+      if (row.job_type === 'agent_wallet.create') {
+        await processAgentWalletCreateJob(pool, job.id, provider);
+        return;
+      }
       const action = classifyCircleWorkerJob({ jobType: row.job_type, status: row.status });
       const operator = { actorId: 'circle-liquidity-worker', orgId: job.orgId, role: 'operator' as const };
-      const provider = createOrgScopedCircleTreasuryProvider(connectionService, job.orgId);
       if (action === 'retry_liquidity') {
         await retryLiquidityJob(pool, operator, job.orgId, job.id, provider);
       } else if (action === 'reconcile_provider') {

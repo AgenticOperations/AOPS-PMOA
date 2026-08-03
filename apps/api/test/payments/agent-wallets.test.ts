@@ -1,12 +1,29 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
 import {
   enqueueAgentWalletProvisioning,
   findAgentWallet,
+  processAgentWalletCreateJob,
   recordProvisionedWallet,
   readSpendableMicros,
-  type AgentChainWalletRow,
 } from '../../src/engines/payments/agent-wallets.js';
+import { setAgentPaymentAccess } from '../../src/engines/payments/store.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
+
+function fakeProvider(createWallet: CircleTreasuryProvider['createWallet']): CircleTreasuryProvider {
+  return {
+    bridgeWalletTopUp: vi.fn(),
+    createWallet,
+    createWalletSet: vi.fn(),
+    getGatewayBalance: vi.fn(),
+    getWalletBalances: vi.fn(),
+    health: vi.fn(),
+    initiateGatewayDeposit: vi.fn(),
+    requestTestnetFunds: vi.fn(),
+    settleExactX402: vi.fn(),
+    settleGatewayX402: vi.fn(),
+  };
+}
 
 async function setupAgentFixture(store: PostgresTestStore, suffix: string) {
   const orgId = `org_agentw_${suffix}`;
@@ -128,7 +145,7 @@ describe('agent wallet provisioning', () => {
       walletSetId, circleBlockchain: 'ARC-TESTNET',
     });
 
-    const rows = await pool.query(
+    const rows = await pool.query<{ circle_wallet_id: string }>(
       'SELECT circle_wallet_id FROM agent_chain_wallets WHERE agent_id = $1 AND chain = $2',
       [agentId, 'arc'],
     );
@@ -156,12 +173,214 @@ describe('agent wallet provisioning', () => {
   });
 });
 
+describe('agent_wallet.create job processing', () => {
+  let store: PostgresTestStore;
+
+  beforeAll(async () => {
+    store = await startPostgres();
+  }, 90_000);
+
+  afterAll(async () => {
+    if (store !== undefined) await store.stop();
+  });
+
+  it('creates an independent wallet for an agent\'s first chain', async () => {
+    const { orgId, agentId, pool } = await setupAgentFixture(store, 'job-first');
+    await enqueueAgentWalletProvisioning(pool, {
+      orgId, agentId, mode: 'test', chains: ['arc'], createdBy: 'usr_1',
+    });
+    const job = await pool.query<{ id: string }>(
+      "SELECT id FROM circle_provider_jobs WHERE org_id = $1 AND job_type = 'agent_wallet.create'",
+      [orgId],
+    );
+
+    const createWallet = vi.fn(() => Promise.resolve({ address: '0xfirst000000000000000000000000000000001', circleWalletId: 'w_first' }));
+    await processAgentWalletCreateJob(pool, job.rows[0]!.id, fakeProvider(createWallet));
+
+    // No prior wallet exists, so this must NOT ask the provider to derive.
+    expect(createWallet).toHaveBeenCalledWith(expect.objectContaining({ chain: 'arc' }));
+    const callArgs: unknown[] = createWallet.mock.calls[0] ?? [];
+    expect((callArgs[0] as { deriveFromWalletId?: string }).deriveFromWalletId).toBeUndefined();
+
+    const wallet = await findAgentWallet(pool, agentId, 'test', 'arc');
+    expect(wallet?.address).toBe('0xfirst000000000000000000000000000000001');
+    expect(wallet?.status).toBe('active');
+
+    const jobStatus = await pool.query<{ status: string }>(
+      'SELECT status FROM circle_provider_jobs WHERE id = $1', [job.rows[0]!.id],
+    );
+    expect(jobStatus.rows[0]?.status).toBe('complete');
+  });
+
+  it('derives the second chain from the first wallet, sharing one address', async () => {
+    const { orgId, agentId, walletSetId, pool } = await setupAgentFixture(store, 'job-derive');
+
+    // First chain, provisioned directly (bypassing the job path -- this
+    // test is specifically about the SECOND chain's derive behavior).
+    await recordProvisionedWallet(pool, {
+      orgId, agentId, mode: 'test', chain: 'arc',
+      circleWalletId: 'w_primary', address: '0xshared00000000000000000000000000000001', refId: 'ref_primary',
+      walletSetId, circleBlockchain: 'ARC-TESTNET',
+    });
+
+    await enqueueAgentWalletProvisioning(pool, {
+      orgId, agentId, mode: 'test', chains: ['base'], createdBy: 'usr_1',
+    });
+    const job = await pool.query<{ id: string }>(
+      "SELECT id FROM circle_provider_jobs WHERE org_id = $1 AND job_type = 'agent_wallet.create' AND chain = 'base'",
+      [orgId],
+    );
+
+    const createWallet = vi.fn(() => Promise.resolve({ address: '0xshared00000000000000000000000000000001', circleWalletId: 'w_derived' }));
+    await processAgentWalletCreateJob(pool, job.rows[0]!.id, fakeProvider(createWallet));
+
+    // Must derive FROM the existing wallet's circle_wallet_id.
+    expect(createWallet).toHaveBeenCalledWith(expect.objectContaining({ deriveFromWalletId: 'w_primary', chain: 'base' }));
+
+    const baseWallet = await findAgentWallet(pool, agentId, 'test', 'base');
+    expect(baseWallet?.address).toBe('0xshared00000000000000000000000000000001');
+
+    const arcWallet = await findAgentWallet(pool, agentId, 'test', 'arc');
+    expect(arcWallet?.address).toBe(baseWallet?.address);
+  });
+
+  it('marks the job failed, not thrown, when the provider errors', async () => {
+    const { orgId, agentId, pool } = await setupAgentFixture(store, 'job-fail');
+    await enqueueAgentWalletProvisioning(pool, {
+      orgId, agentId, mode: 'test', chains: ['arc'], createdBy: 'usr_1',
+    });
+    const job = await pool.query<{ id: string }>(
+      "SELECT id FROM circle_provider_jobs WHERE org_id = $1 AND job_type = 'agent_wallet.create'",
+      [orgId],
+    );
+
+    const createWallet = vi.fn(() => Promise.reject(new Error('circle_wallet_missing_id_or_address')));
+    await expect(processAgentWalletCreateJob(pool, job.rows[0]!.id, fakeProvider(createWallet))).resolves.not.toThrow();
+
+    const jobStatus = await pool.query<{ status: string; error_code: string | null }>(
+      'SELECT status, error_code FROM circle_provider_jobs WHERE id = $1', [job.rows[0]!.id],
+    );
+    expect(jobStatus.rows[0]?.status).toBe('failed');
+    expect(jobStatus.rows[0]?.error_code).toBe('circle_wallet_missing_id_or_address');
+
+    // Nothing partial gets recorded for a failed job.
+    const wallet = await findAgentWallet(pool, agentId, 'test', 'arc');
+    expect(wallet).toBeNull();
+  });
+
+  it('is a no-op for a job id that does not exist', async () => {
+    const { pool } = await setupAgentFixture(store, 'job-missing');
+    await expect(
+      processAgentWalletCreateJob(pool, 'cjob_does_not_exist', fakeProvider(vi.fn())),
+    ).resolves.not.toThrow();
+  });
+});
+
+describe('dedicated_wallet_required triggers provisioning', () => {
+  let store: PostgresTestStore;
+  const operator = { actorId: 'usr_test_operator', role: 'operator' as const };
+
+  beforeAll(async () => {
+    store = await startPostgres();
+  }, 90_000);
+
+  afterAll(async () => {
+    if (store !== undefined) await store.stop();
+  });
+
+  it('enqueues provisioning jobs when dedicated_wallet_required is set true', async () => {
+    const { orgId, agentId, pool } = await setupAgentFixture(store, 'trigger-enable');
+
+    await setAgentPaymentAccess(pool, operator, orgId, agentId, {
+      status: 'active',
+      allowed_rails: ['exact_arc', 'exact_base'],
+      budget_usdc: '10.00',
+      dedicated_wallet_required: true,
+      per_request_cap_usdc: '5.00',
+    });
+
+    const jobs = await pool.query<{ chain: string }>(
+      `SELECT chain FROM circle_provider_jobs
+        WHERE org_id = $1 AND job_type = 'agent_wallet.create' ORDER BY chain`,
+      [orgId],
+    );
+    expect(jobs.rows.map((r) => r.chain)).toEqual(['arc', 'base']);
+  });
+
+  it('does not enqueue anything when dedicated_wallet_required is false', async () => {
+    const { orgId, agentId, pool } = await setupAgentFixture(store, 'trigger-disable');
+
+    await setAgentPaymentAccess(pool, operator, orgId, agentId, {
+      status: 'active',
+      allowed_rails: ['exact_arc'],
+      budget_usdc: '10.00',
+      dedicated_wallet_required: false,
+      per_request_cap_usdc: '5.00',
+    });
+
+    const jobs = await pool.query(
+      "SELECT 1 FROM circle_provider_jobs WHERE org_id = $1 AND job_type = 'agent_wallet.create'",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(0);
+  });
+
+  it('does not re-enqueue a chain the agent already has an active wallet on', async () => {
+    const { orgId, agentId, walletSetId, pool } = await setupAgentFixture(store, 'trigger-existing');
+
+    await recordProvisionedWallet(pool, {
+      orgId, agentId, mode: 'test', chain: 'arc',
+      circleWalletId: 'w_already', address: '0x9990000000000000000000000000000000abcd', refId: 'ref_already',
+      walletSetId, circleBlockchain: 'ARC-TESTNET',
+    });
+
+    await setAgentPaymentAccess(pool, operator, orgId, agentId, {
+      status: 'active',
+      allowed_rails: ['exact_arc', 'exact_base'],
+      budget_usdc: '10.00',
+      dedicated_wallet_required: true,
+      per_request_cap_usdc: '5.00',
+    });
+
+    // Only the missing chain (base) gets a job; arc already has an active wallet.
+    const jobs = await pool.query<{ chain: string }>(
+      `SELECT chain FROM circle_provider_jobs
+        WHERE org_id = $1 AND job_type = 'agent_wallet.create' ORDER BY chain`,
+      [orgId],
+    );
+    expect(jobs.rows.map((r) => r.chain)).toEqual(['base']);
+  });
+
+  it('does not enqueue a second time when called again with the same rails', async () => {
+    const { orgId, agentId, pool } = await setupAgentFixture(store, 'trigger-idempotent');
+
+    for (let i = 0; i < 2; i += 1) {
+      await setAgentPaymentAccess(pool, operator, orgId, agentId, {
+        status: 'active',
+        allowed_rails: ['exact_arc'],
+        budget_usdc: '10.00',
+        dedicated_wallet_required: true,
+        per_request_cap_usdc: '5.00',
+      });
+    }
+
+    // A queued job from the first call already covers arc, so calling
+    // setAgentPaymentAccess again (an operator adjusting budget, say)
+    // must not pile up duplicate provisioning jobs.
+    const jobs = await pool.query(
+      "SELECT 1 FROM circle_provider_jobs WHERE org_id = $1 AND job_type = 'agent_wallet.create'",
+      [orgId],
+    );
+    expect(jobs.rowCount).toBe(1);
+  });
+});
+
 describe('Arc gas headroom', () => {
   it('reports zero spendable rather than negative when balance is below the reserve', async () => {
     const spendable = await readSpendableMicros(
-      { address: '0xabc', chain: 'arc' } as AgentChainWalletRow,
+      { address: '0xabc', chain: 'arc' },
       500_000n,                                   // $0.50 reserve
-      { nativeBalanceMicros: async () => 200_000n }, // $0.20 held
+      { nativeBalanceMicros: () => Promise.resolve(200_000n) }, // $0.20 held
     );
     expect(spendable).toBe(0n);   // must clamp, never go negative
   });
@@ -170,18 +389,18 @@ describe('Arc gas headroom', () => {
     // Arc's ERC-20 view truncates: balanceOf can read 0 while native is
     // non-zero. Gas decisions must use the native read.
     const spendable = await readSpendableMicros(
-      { address: '0xabc', chain: 'arc' } as AgentChainWalletRow,
+      { address: '0xabc', chain: 'arc' },
       0n,
-      { nativeBalanceMicros: async () => 1n },   // sub-cent, non-zero
+      { nativeBalanceMicros: () => Promise.resolve(1n) },   // sub-cent, non-zero
     );
     expect(spendable).toBe(1n);
   });
 
   it('is exactly zero when balance equals the reserve', async () => {
     const spendable = await readSpendableMicros(
-      { address: '0xabc', chain: 'arc' } as AgentChainWalletRow,
+      { address: '0xabc', chain: 'arc' },
       500_000n,
-      { nativeBalanceMicros: async () => 500_000n },
+      { nativeBalanceMicros: () => Promise.resolve(500_000n) },
     );
     expect(spendable).toBe(0n);
   });

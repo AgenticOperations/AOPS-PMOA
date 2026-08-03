@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { BatchEvmScheme } from '@circle-fin/x402-batching/client';
 import type * as CircleWalletsSdkTypes from '@circle-fin/developer-controlled-wallets';
-import type { Blockchain, ContractExecutionBlockchain, TestnetBlockchain } from '@circle-fin/developer-controlled-wallets';
+import type { Blockchain, ContractExecutionBlockchain, EvmBlockchain, TestnetBlockchain } from '@circle-fin/developer-controlled-wallets';
 import { ExactEvmScheme } from '@x402/evm/exact/client';
 import { decodePaymentResponseHeader, encodePaymentSignatureHeader } from '@x402/core/http';
 import type { Network, PaymentPayload, PaymentRequirements } from '@x402/core/types';
@@ -66,6 +66,16 @@ export type CreateWalletInput = {
   readonly mode: ProviderMode;
   readonly orgId: string;
   readonly walletSetId: string;
+  // When set, derive this wallet onto `chain` from an existing wallet
+  // rather than creating an independent one -- Circle's "unified EVM
+  // addressing": deriveWallet(existingWalletId, newBlockchain) yields the
+  // SAME ADDRESS on the new chain. Verified against Circle's docs and the
+  // installed SDK (v10.8.0 exposes deriveWallet); NOT the createWallets
+  // refId/refIds mechanism Circle's docs also describe, which the
+  // installed SDK's CreateWalletsInput type does not expose at all.
+  // Optional so callers/providers that don't support multi-chain wallets
+  // (the Agent Wallet CLI path) can ignore it without breaking.
+  readonly deriveFromWalletId?: string | undefined;
 };
 
 export type CreatedWallet = {
@@ -1041,9 +1051,29 @@ export function createDeveloperControlledCircleTreasuryProvider(
       }
       return { circleWalletSetId: walletSetId };
     },
-    createWallet: async ({ circleBlockchain, mode, walletSetId }) => {
+    createWallet: async ({ circleBlockchain, deriveFromWalletId, mode, walletSetId }) => {
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
+
+      if (deriveFromWalletId !== undefined) {
+        // Same address on a new chain, derived from an existing wallet --
+        // this is what makes an agent's Arc and Base wallets share one
+        // address (K-13). deriveWallet only accepts EvmBlockchain, which
+        // includes 'ARC-TESTNET' and 'BASE-SEPOLIA'.
+        const response = await client.deriveWallet({
+          id: deriveFromWalletId,
+          blockchain: circleBlockchain as EvmBlockchain,
+        });
+        const wallet = response.data?.wallet;
+        if (wallet === undefined || wallet.id.length === 0 || wallet.address.length === 0) {
+          throw new Error('circle_wallet_derive_missing_id_or_address');
+        }
+        return {
+          address: wallet.address,
+          circleWalletId: wallet.id,
+        };
+      }
+
       const response = await client.createWallets({
         accountType: 'EOA',
         blockchains: [circleBlockchain as Blockchain],

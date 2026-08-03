@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import type { Redis } from 'ioredis';
 import type { PaymentPayload } from '@x402/core/types';
+import { enqueueAgentWalletProvisioning } from './agent-wallets.js';
 import { readCachedBalances, writeCachedBalances } from './balances-cache.js';
 import { gatewayDepositSatisfied, resolveGatewayDepositorAddress } from './circle-liquidity-worker.js';
 import { sha256Hex } from '../evidence/canonical-json.js';
@@ -1389,6 +1390,43 @@ export async function setAgentPaymentAccess(
       agent_id: agentId,
       source: 'agent_payment_access_enabled',
     });
+  }
+
+  // B1: dedicated_wallet_required existed as a stored-but-unenforced flag
+  // (0009:57) before this. This is what gives it meaning -- enqueuing
+  // provisioning is a slow external call, so it happens behind the worker
+  // boundary (agent_wallet.create jobs), never inline in this request.
+  // Chains come from allowed_rails rather than a fixed list, so an agent
+  // scoped to Arc-only doesn't also get an unused Base wallet.
+  if (input.dedicated_wallet_required) {
+    const mode = (await getOrgPaymentMode(pool, orgId)).mode;
+    const requestedChains = [...new Set(allowedRails.map(chainFromRail))];
+    const existingWallets = await pool.query<{ chain: PaymentChain }>(
+      `SELECT chain FROM agent_chain_wallets
+        WHERE agent_id = $1 AND mode = $2 AND status IN ('provisioning', 'active')`,
+      [agentId, mode],
+    );
+    // A previous call to this function may already have enqueued a job for
+    // this (agent, chain) that the worker hasn't processed into a wallet
+    // row yet -- must also check pending jobs, or every subsequent call
+    // (e.g. an operator adjusting the budget) re-enqueues duplicates.
+    const pendingJobs = await pool.query<{ chain: PaymentChain }>(
+      `SELECT chain FROM circle_provider_jobs
+        WHERE org_id = $1 AND mode = $2 AND job_type = 'agent_wallet.create'
+          AND status IN ('queued', 'submitted')
+          AND metadata->>'agent_id' = $3`,
+      [orgId, mode, agentId],
+    );
+    const alreadyHandled = new Set([
+      ...existingWallets.rows.map((r) => r.chain),
+      ...pendingJobs.rows.map((r) => r.chain),
+    ]);
+    const chainsToProvision = requestedChains.filter((chain) => !alreadyHandled.has(chain));
+    if (chainsToProvision.length > 0) {
+      await enqueueAgentWalletProvisioning(pool, {
+        orgId, agentId, mode, chains: chainsToProvision, createdBy: operator.actorId,
+      });
+    }
   }
 
   return accountFromRow(row);
