@@ -30,7 +30,7 @@ type AgentActivityFeedResponse = {
   }>;
 };
 
-async function createRuntimeCredential(app: FastifyInstance) {
+async function createRuntimeCredential(app: FastifyInstance, pool: PostgresTestStore['pool']) {
   const orgResponse = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
@@ -41,6 +41,10 @@ async function createRuntimeCredential(app: FastifyInstance) {
   });
   expect(orgResponse.statusCode, orgResponse.body).toBe(201);
   const orgId = orgResponse.json<OrgResponse>().org.id;
+
+  // Fail-closed (E1): a fresh org denies everything until a policy matches.
+  // Agent/connection provisioning is orthogonal to what this suite tests.
+  await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
 
   const agentResponse = await app.inject({
     method: 'POST',
@@ -93,7 +97,7 @@ describe('runtime activity endpoint for the standalone MCP service', () => {
   });
 
   it('records MCP-originated activity through runtime credential auth', async () => {
-    const { agentId, secret } = await createRuntimeCredential(app);
+    const { agentId, secret } = await createRuntimeCredential(app, store.pool);
 
     const response = await app.inject({
       method: 'POST',
@@ -118,7 +122,7 @@ describe('runtime activity endpoint for the standalone MCP service', () => {
   });
 
   it('exposes a live per-agent activity feed with runtime and MCP events', async () => {
-    const { agentId, orgId, secret } = await createRuntimeCredential(app);
+    const { agentId, orgId, secret } = await createRuntimeCredential(app, store.pool);
 
     const onboard = await app.inject({
       method: 'POST',

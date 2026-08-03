@@ -63,7 +63,7 @@ type ApprovalMutationResponse = {
   };
 };
 
-async function createOrgAgentAndConnection(app: FastifyInstance) {
+async function createOrgAgentAndConnection(app: FastifyInstance, pool: PostgresTestStore['pool']) {
   const orgResponse = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
@@ -74,6 +74,12 @@ async function createOrgAgentAndConnection(app: FastifyInstance) {
   });
   expect(orgResponse.statusCode, orgResponse.body).toBe(201);
   const orgId = orgResponse.json<OrgResponse>().org.id;
+
+  // Fail-closed (E1): a fresh org denies everything until a policy
+  // matches. Agent/connection provisioning is orthogonal to what this
+  // suite tests, so make the org permissive rather than authoring an
+  // allow rule per test.
+  await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
 
   const agentResponse = await app.inject({
     method: 'POST',
@@ -176,7 +182,7 @@ describe('Section 2-4 runtime control surface', () => {
   });
 
   it('onboards an agent and denies a natural-language runtime check through direct API', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
     await createPolicy(app, {
       orgId,
       agentId,
@@ -255,7 +261,7 @@ describe('Section 2-4 runtime control surface', () => {
   });
 
   it('creates, approves, and consumes a one-time approval for the same runtime context', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
     await createPolicy(app, {
       orgId,
       agentId,
@@ -319,7 +325,7 @@ describe('Section 2-4 runtime control surface', () => {
   });
 
   it('derives the resource domain from its URL instead of trusting a spoofed domain field', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
     await createPolicy(app, {
       orgId,
       agentId,
@@ -360,7 +366,7 @@ describe('Section 2-4 runtime control surface', () => {
   });
 
   it('rejects operator-only management actions on the agent runtime surface', async () => {
-    const { secret } = await createOrgAgentAndConnection(app);
+    const { secret } = await createOrgAgentAndConnection(app, store.pool);
 
     const response = await app.inject({
       method: 'POST',
@@ -381,7 +387,7 @@ describe('Section 2-4 runtime control surface', () => {
   });
 
   it('does not expose MCP as a backend-owned API route', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
     await createPolicy(app, {
       orgId,
       agentId,

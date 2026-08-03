@@ -409,7 +409,7 @@ function fakeCircleProvider(): CircleTreasuryProvider {
   };
 }
 
-async function createOrg(app: FastifyInstance): Promise<string> {
+async function createOrg(app: FastifyInstance, pool: PostgresTestStore['pool']): Promise<string> {
   const response = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
@@ -419,7 +419,13 @@ async function createOrg(app: FastifyInstance): Promise<string> {
     },
   });
   expect(response.statusCode, response.body).toBe(201);
-  return response.json<OrgResponse>().org.id;
+  const orgId = response.json<OrgResponse>().org.id;
+
+  // Fail-closed (E1): a fresh org denies everything until a policy matches.
+  // Agent/connection provisioning is orthogonal to what this suite tests.
+  await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+
+  return orgId;
 }
 
 async function createActivatedPaymentDenyPolicy(app: FastifyInstance, orgId: string, agentId: string) {
@@ -596,7 +602,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('keeps Circle credentials server-side and reports provider health without org API-key input', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const health = await app.inject({
       method: 'GET',
@@ -612,7 +618,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('marks non-Base Gateway x402 settlement as unverified while exact rails stay enabled', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const capabilities = await app.inject({
       method: 'GET',
@@ -636,7 +642,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('verifies a non-Base Gateway rail only after a successful provider proof job', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -688,7 +694,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('prepares Gateway liquidity before proving an empty non-Base Gateway rail', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -726,7 +732,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('prepares exact-wallet liquidity before proving an empty non-Base exact rail', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -765,7 +771,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('keeps an exact proof submitted while the exact wallet top-up waits for balance visibility', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -796,7 +802,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('keeps a Gateway proof submitted while the Gateway deposit waits for confirmations', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -847,7 +853,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('reconciles open liquidity jobs when current balances prove the destination bucket is funded', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -898,7 +904,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('keeps a Gateway rail unverified when the provider proof fails', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -947,7 +953,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('runs proof jobs for every supported unverified rail in one batch', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const setup = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/circle/treasury`,
@@ -1147,7 +1153,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('deploys one org-maintained Circle wallet set and top-five EVM chain wallets in test mode', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const mode = await app.inject({
       method: 'PUT',
@@ -1221,7 +1227,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('rejects attempts to enable live payment mode while the product is testnet only', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const response = await app.inject({
       method: 'PUT',
@@ -1236,7 +1242,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('returns live Circle wallet and Gateway balances for deployed chain wallets', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const treasury = await app.inject({
       method: 'POST',
@@ -1262,7 +1268,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('refreshes existing Circle Agent Wallet addresses and payment sources on sync', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const first = await app.inject({
       method: 'POST',
@@ -1292,7 +1298,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('submits a Circle Gateway deposit job using the active org chain wallet', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const treasury = await app.inject({
       method: 'POST',
@@ -1334,7 +1340,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('rejects Gateway deposit requests below Circle minimum', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const treasury = await app.inject({
       method: 'POST',
@@ -1360,7 +1366,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('requests Circle testnet funds for selected deployed chain wallets', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const treasury = await app.inject({
       method: 'POST',
@@ -1406,7 +1412,7 @@ describe('Section 9 Circle treasury foundation', () => {
       providerMode: 'test',
       success: false,
     };
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -1484,7 +1490,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('does not prepare liquidity when policy denies the x402 payment request', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -1559,7 +1565,7 @@ describe('Section 9 Circle treasury foundation', () => {
 
   it('prepares Gateway liquidity before settlement when the target chain Gateway bucket is empty', async () => {
     await markGatewayRailVerified(store, 'arbitrum');
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -1677,7 +1683,7 @@ describe('Section 9 Circle treasury foundation', () => {
   it('blocks non-Base Gateway x402 settlement after liquidity is ready until the rail is verified', async () => {
     gatewayUsdcByChain.arbitrum = '0.50';
     gatewayBalanceFailureChains.add('arbitrum');
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -1745,7 +1751,7 @@ describe('Section 9 Circle treasury foundation', () => {
 
   it('does not duplicate a bridge when retry sees the destination wallet already funded', async () => {
     await markGatewayRailVerified(store, 'arbitrum');
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -1831,7 +1837,7 @@ describe('Section 9 Circle treasury foundation', () => {
 
   it('does not rebalance or deposit when retry sees the target Gateway bucket already funded', async () => {
     await markGatewayRailVerified(store, 'arbitrum');
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -1918,7 +1924,7 @@ describe('Section 9 Circle treasury foundation', () => {
 
   it('does not mark Gateway liquidity complete until the target Gateway balance is visible', async () => {
     await markGatewayRailVerified(store, 'arbitrum');
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2022,7 +2028,7 @@ describe('Section 9 Circle treasury foundation', () => {
   it('queues Gateway liquidity preparation when Circle Gateway balance lookup is transiently unavailable', async () => {
     await markGatewayRailVerified(store, 'arbitrum');
     gatewayBalanceFailureChains = new Set(['arbitrum']);
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2121,7 +2127,7 @@ describe('Section 9 Circle treasury foundation', () => {
         },
       }),
     };
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2223,7 +2229,7 @@ describe('Section 9 Circle treasury foundation', () => {
       }),
       success: true,
     };
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2329,7 +2335,7 @@ describe('Section 9 Circle treasury foundation', () => {
   });
 
   it('prepares exact-wallet liquidity before settlement when the target chain wallet is empty', async () => {
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2446,7 +2452,7 @@ describe('Section 9 Circle treasury foundation', () => {
   it('moves only an exact-wallet deficit and reuses the open preparation job for the same quote', async () => {
     walletUsdcByChain.arbitrum = '20.00';
     walletUsdcByChain.base = '30.00';
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2546,7 +2552,7 @@ describe('Section 9 Circle treasury foundation', () => {
     await markGatewayRailVerified(store, 'arbitrum');
     gatewayUsdcByChain.arbitrum = '0.20';
     walletUsdcByChain.arbitrum = '0.20';
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
     const agentResponse = await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/agents`,
@@ -2635,7 +2641,7 @@ describe('Section 9 Circle treasury foundation', () => {
       success: true,
       transaction: '0xarbitrumexact',
     };
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',
@@ -2753,7 +2759,7 @@ describe('Section 9 Circle treasury foundation', () => {
     process.env.CIRCLE_PROVIDER_JOB_TIMEOUT_MS = '5';
     bridgeTopUpNeverSettles = true;
     try {
-      const orgId = await createOrg(app);
+      const orgId = await createOrg(app, store.pool);
 
       const treasury = await app.inject({
         method: 'POST',
@@ -2799,7 +2805,7 @@ describe('Section 9 Circle treasury foundation', () => {
     process.env.CIRCLE_PROVIDER_JOB_TIMEOUT_MS = '5';
     bridgeTopUpNeverSettles = true;
     try {
-      const orgId = await createOrg(app);
+      const orgId = await createOrg(app, store.pool);
 
       const treasury = await app.inject({
         method: 'POST',
@@ -2863,7 +2869,7 @@ describe('Section 9 Circle treasury foundation', () => {
     process.env.CIRCLE_PROVIDER_JOB_TIMEOUT_MS = '5';
     gatewayDepositNeverSettles = true;
     try {
-      const orgId = await createOrg(app);
+      const orgId = await createOrg(app, store.pool);
 
       const treasury = await app.inject({
         method: 'POST',
@@ -2917,7 +2923,7 @@ describe('Section 9 Circle treasury foundation', () => {
 
   it('summarizes treasury liquidity, pending prep jobs, payment access, and last payment for the console', async () => {
     await markGatewayRailVerified(store, 'arbitrum');
-    const orgId = await createOrg(app);
+    const orgId = await createOrg(app, store.pool);
 
     const agentResponse = await app.inject({
       method: 'POST',

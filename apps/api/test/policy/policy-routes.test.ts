@@ -143,7 +143,10 @@ type PolicySimulationResponse = {
   };
 };
 
-async function createOrgAndAgent(app: FastifyInstance): Promise<{ orgId: string; agentId: string }> {
+async function createOrgAndAgent(
+  app: FastifyInstance,
+  pool: PostgresTestStore['pool'],
+): Promise<{ orgId: string; agentId: string }> {
   const orgResponse = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
@@ -154,6 +157,13 @@ async function createOrgAndAgent(app: FastifyInstance): Promise<{ orgId: string;
   });
   expect(orgResponse.statusCode, orgResponse.body).toBe(201);
   const orgId = orgResponse.json<OrgResponse>().org.id;
+
+  // Fail-closed (E1) means `management.agent.create` is denied unless a
+  // rule matches. Agent provisioning is orthogonal to what this suite
+  // tests, so make the fresh org permissive rather than authoring an
+  // allow rule per test -- exactly what the plan's default-effect escape
+  // hatch exists for.
+  await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
 
   const agentResponse = await app.inject({
     method: 'POST',
@@ -253,7 +263,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('creates, validates, activates, binds, and checks a structured policy', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({
@@ -330,7 +340,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('serves canonical policy action metadata from the backend catalog', async () => {
-    const { orgId } = await createOrgAndAgent(ownerApp);
+    const { orgId } = await createOrgAndAgent(ownerApp, store.pool);
 
     const response = await ownerApp.inject({
       method: 'GET',
@@ -362,7 +372,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('dry-runs draft policy simulations without recording enforcement decisions', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const draftResponse = await ownerApp.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/policy-drafts`,
@@ -454,7 +464,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('returns active binding details for the policy library and agent effective policies', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({
@@ -521,7 +531,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('uses active policy bindings to block Section 1 credential issue actions', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({
@@ -548,7 +558,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('rejects runtime policies that mix condition groups from another action surface', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
 
     const draftResponse = await ownerApp.inject({
       method: 'POST',
@@ -588,7 +598,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('rejects policy bindings to target ids that do not exist in the workspace', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({
@@ -608,7 +618,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('rejects credential bindings for policies that only evaluate against agent targets', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const libraryResponse = await ownerApp.inject({
@@ -653,7 +663,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('edits and discards mutable policy drafts without activating them', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
 
     const draftResponse = await ownerApp.inject({
       method: 'POST',
@@ -737,7 +747,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('removes bindings and archives policies so they no longer affect decisions', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({
@@ -824,7 +834,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('activates revision drafts atomically and migrates existing bindings to the new version', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({
@@ -954,7 +964,7 @@ describe('Section 2 policy routes', () => {
   });
 
   it('restores archived policies only through a validated restore revision draft', async () => {
-    const { orgId, agentId } = await createOrgAndAgent(ownerApp);
+    const { orgId, agentId } = await createOrgAndAgent(ownerApp, store.pool);
     const policy = await createActivatedPolicy(ownerApp, orgId, agentId);
 
     const bindingResponse = await ownerApp.inject({

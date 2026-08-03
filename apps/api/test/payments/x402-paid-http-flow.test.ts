@@ -260,6 +260,11 @@ describe('durable x402 paid HTTP flow', () => {
     });
     expect(org.statusCode, org.body).toBe(201);
     const orgId = org.json<{ org: { id: string } }>().org.id;
+
+    // Fail-closed (E1): a fresh org denies everything until a policy
+    // matches. Buyer provisioning is orthogonal to what this suite tests.
+    await store.pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+
     const agent = await api.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/agents`,
@@ -342,12 +347,19 @@ describe('durable x402 paid HTTP flow', () => {
       url: '/v1/orgs',
       payload: { name: 'Paid HTTP Org', owner: { email: 'owner@example.test', name: 'Owner' } },
     });
+    expect(org.statusCode, org.body).toBe(201);
     const orgId = org.json<{ org: { id: string } }>().org.id;
+
+    // Fail-closed (E1): a fresh org denies everything until a policy
+    // matches. Agent provisioning is orthogonal to what this test exercises.
+    await store.pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+
     const agent = await api.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/agents`,
       payload: { name: 'Buyer' },
     });
+    expect(agent.statusCode, agent.body).toBe(201);
     const agentId = agent.json<{ agent: { id: string } }>().agent.id;
     const connection = await api.inject({
       method: 'POST',
@@ -378,12 +390,19 @@ describe('durable x402 paid HTTP flow', () => {
       url: '/v1/orgs',
       payload: { name: 'Durable Flow Org', owner: { email: 'durable@example.test', name: 'Owner' } },
     });
+    expect(org.statusCode, org.body).toBe(201);
     const orgId = org.json<{ org: { id: string } }>().org.id;
+
+    // Fail-closed (E1): a fresh org denies everything until a policy
+    // matches. Agent provisioning is orthogonal to what this test exercises.
+    await store.pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+
     const agent = await api.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/agents`,
       payload: { name: 'Durable buyer' },
     });
+    expect(agent.statusCode, agent.body).toBe(201);
     const agentId = agent.json<{ agent: { id: string } }>().agent.id;
     const connection = await api.inject({
       method: 'POST',

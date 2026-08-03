@@ -18,6 +18,7 @@ import type {
   PolicyConditionGroup,
   PolicyDecisionRequest,
   PolicyDecisionResult,
+  PolicyDefaultEffect,
   PolicyDecisionRecord,
   PolicyDraftRecord,
   PolicyRestoreBindingInput,
@@ -314,6 +315,14 @@ function actionsById(actions: readonly PolicyActionRecord[]): ReadonlyMap<string
 
 function actionConditionGroups(actions: readonly PolicyActionRecord[]): ReadonlyMap<string, readonly PolicyConditionGroup[]> {
   return new Map(actions.map((action) => [action.action_id, action.condition_groups]));
+}
+
+async function orgDefaultPolicyEffect(db: Db, orgId: string): Promise<PolicyDefaultEffect> {
+  const result = await db.query<{ readonly default_policy_effect: PolicyDefaultEffect }>(
+    'SELECT default_policy_effect FROM orgs WHERE id = $1',
+    [orgId],
+  );
+  return result.rows[0]?.default_policy_effect ?? 'deny';
 }
 
 async function policyActionCatalog(db: Db): Promise<PolicyActionRecord[]> {
@@ -1445,6 +1454,7 @@ export async function simulatePolicyDraft(
           statements: statementsFromJson(draft.statements),
         },
       ],
+      defaultEffect: await orgDefaultPolicyEffect(client, orgId),
     });
     const simulationId = prefixedId('psim');
     const inserted = await client.query<PolicySimulationRow>(
@@ -1709,6 +1719,7 @@ export async function checkPolicyDecision(
     const result = evaluatePolicyDecision({
       request,
       policies: await effectivePoliciesForRequest(client, orgId, request),
+      defaultEffect: await orgDefaultPolicyEffect(client, orgId),
     });
     const decisionId = prefixedId('pdec');
     const relations = decisionRelations(request);

@@ -111,7 +111,7 @@ type AllowedActionsResponse = {
   }>;
 };
 
-async function createOrgAgentAndConnection(app: FastifyInstance) {
+async function createOrgAgentAndConnection(app: FastifyInstance, pool: PostgresTestStore['pool']) {
   const orgResponse = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
@@ -122,6 +122,12 @@ async function createOrgAgentAndConnection(app: FastifyInstance) {
   });
   expect(orgResponse.statusCode, orgResponse.body).toBe(201);
   const orgId = orgResponse.json<OrgResponse>().org.id;
+
+  // Fail-closed (E1): a fresh org denies everything until a policy
+  // matches. Agent/connection provisioning is orthogonal to what this
+  // suite tests, so make the org permissive rather than authoring an
+  // allow rule per test.
+  await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
 
   const agentResponse = await app.inject({
     method: 'POST',
@@ -228,7 +234,7 @@ describe('Section 5 operational controls', () => {
   });
 
   it('imports tools, checks policy, and exposes denied operational actions', async () => {
-    const { orgId, agentId, connectionId } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, connectionId } = await createOrgAgentAndConnection(app, store.pool);
 
     const importResponse = await app.inject({
       method: 'POST',
@@ -332,7 +338,7 @@ describe('Section 5 operational controls', () => {
   });
 
   it('creates approvals from runtime operation checks and records operational activity', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
 
     await createPolicy(app, {
       orgId,
@@ -388,7 +394,7 @@ describe('Section 5 operational controls', () => {
   });
 
   it('rate-limits repeated operation checks per connection and action', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
 
     const rateLimitResponse = await app.inject({
       method: 'POST',
@@ -446,7 +452,7 @@ describe('Section 5 operational controls', () => {
   });
 
   it('updates and archives imported tools from the catalog', async () => {
-    const { orgId } = await createOrgAgentAndConnection(app);
+    const { orgId } = await createOrgAgentAndConnection(app, store.pool);
 
     const importResponse = await app.inject({
       method: 'POST',
@@ -502,7 +508,7 @@ describe('Section 5 operational controls', () => {
   });
 
   it('lists, updates, disables, and reports utilization for rate limits', async () => {
-    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, secret } = await createOrgAgentAndConnection(app, store.pool);
 
     const createResponse = await app.inject({
       method: 'POST',
@@ -588,7 +594,7 @@ describe('Section 5 operational controls', () => {
   });
 
   it('lists observed MCP sessions for operations telemetry', async () => {
-    const { orgId, agentId, connectionId } = await createOrgAgentAndConnection(app);
+    const { orgId, agentId, connectionId } = await createOrgAgentAndConnection(app, store.pool);
     await store.pool.query(
       `INSERT INTO mcp_sessions (id, org_id, agent_id, connection_id, protocol, last_seen_at)
        VALUES ($1, $2, $3, $4, $5, now())`,

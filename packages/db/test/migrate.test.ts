@@ -64,6 +64,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0019_x402_action_execution_copy');
     expect(firstRun).toContain('0020_liquidity_job_idempotency');
     expect(firstRun).toContain('0021_runtime_payment_attempts');
+    expect(firstRun).toContain('0022_fail_closed_policy_and_freeze');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -92,6 +93,7 @@ describe('PMOA database migrations', () => {
       '0019_x402_action_execution_copy',
       '0020_liquidity_job_idempotency',
       '0021_runtime_payment_attempts',
+      '0022_fail_closed_policy_and_freeze',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(

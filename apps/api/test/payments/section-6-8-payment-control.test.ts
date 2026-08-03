@@ -112,7 +112,7 @@ type AgentPaymentResponse = {
   }>;
 };
 
-async function createOrgAgentAndConnection(app: FastifyInstance) {
+async function createOrgAgentAndConnection(app: FastifyInstance, pool: PostgresTestStore['pool']) {
   const orgResponse = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
@@ -123,6 +123,12 @@ async function createOrgAgentAndConnection(app: FastifyInstance) {
   });
   expect(orgResponse.statusCode, orgResponse.body).toBe(201);
   const orgId = orgResponse.json<OrgResponse>().org.id;
+
+  // Fail-closed (E1): a fresh org denies everything until a policy
+  // matches. Agent/connection provisioning is orthogonal to what this
+  // suite tests, so make the org permissive rather than authoring an
+  // allow rule per test.
+  await pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
 
   const agentResponse = await app.inject({
     method: 'POST',
@@ -253,7 +259,7 @@ describe('Sections 6-8 payment control plane', () => {
   });
 
   it('rejects non-Circle payment sources at the public testnet API boundary', async () => {
-    const { orgId } = await createOrgAgentAndConnection(app);
+    const { orgId } = await createOrgAgentAndConnection(app, store.pool);
 
     for (const provider of ['simulation', 'manual']) {
       const response = await app.inject({
@@ -275,7 +281,7 @@ describe('Sections 6-8 payment control plane', () => {
   });
 
   it('keeps payment access off by default and only pays Gateway-compatible x402 from an active Base source', async () => {
-    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app);
+    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app, store.pool);
 
     const denied = await app.inject({
       method: 'POST',
@@ -431,7 +437,7 @@ describe('Sections 6-8 payment control plane', () => {
   });
 
   it('enforces payment policies before submitting x402 payments', async () => {
-    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app);
+    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app, store.pool);
     await createActivatedPaymentApprovalPolicy(app, orgId, agentId);
 
     const treasury = await app.inject({
@@ -526,7 +532,7 @@ describe('Sections 6-8 payment control plane', () => {
   });
 
   it('enforces the agent payment-account approval threshold without a separate policy', async () => {
-    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app);
+    const { agentId, orgId, secret } = await createOrgAgentAndConnection(app, store.pool);
     await app.inject({
       method: 'POST',
       url: `/v1/orgs/${orgId}/payments/treasury`,
