@@ -47,6 +47,7 @@ import {
   verifyPaymentRail,
 } from './store.js';
 import { revokeAgent } from './agent-revocation.js';
+import { setAllocation } from './allocations.js';
 import { payIntraFleet } from './intra-fleet.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
@@ -126,6 +127,14 @@ const paymentAccessSchema = z.object({
   dedicated_wallet_required: z.boolean(),
   per_request_cap_usdc: moneySchema,
   approval_threshold_usdc: moneySchema.nullable().optional(),
+});
+
+const agentAllocationSchema = z.object({
+  chain: chainSchema,
+  allocated_usdc: moneySchema,
+  gas_reserve_usdc: moneySchema.optional(),
+  low_water_mark_usdc: moneySchema.optional(),
+  ceiling_usdc: moneySchema.optional(),
 });
 
 const providerModeSchema = z.object({
@@ -743,6 +752,31 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
         parseBody(paymentAccessSchema, request),
       ),
     };
+  });
+
+  // Creates/updates the agent's spending allocation for a chain -- the
+  // input evaluateTopUps (allocations.ts, run by the circle-worker's poll
+  // loop) needs to automatically top the agent's own wallet up from the
+  // org treasury as it spends. setAllocation itself re-checks real
+  // treasury solvency (Circle's Gateway balance API) before writing, so
+  // this can't over-allocate beyond real deposits.
+  app.post('/v1/orgs/:orgId/agents/:agentId/allocation', async (request, reply) => {
+    const params = request.params as { readonly orgId: string; readonly agentId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const body = parseBody(agentAllocationSchema, request);
+    const allocation = await setAllocation(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId,
+      agentId: params.agentId,
+      mode,
+      chain: body.chain,
+      allocatedUsdc: body.allocated_usdc,
+      gasReserveUsdc: body.gas_reserve_usdc,
+      lowWaterMarkUsdc: body.low_water_mark_usdc,
+      ceilingUsdc: body.ceiling_usdc,
+      createdBy: operator.actorId,
+    });
+    return reply.code(201).send({ allocation });
   });
 
   app.post('/v1/orgs/:orgId/agents/:agentId/revoke', async (request) => {
