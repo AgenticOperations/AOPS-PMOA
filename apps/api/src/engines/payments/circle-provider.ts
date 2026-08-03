@@ -603,6 +603,13 @@ function contractConfig(mode: ProviderMode, chain: CirclePaymentChain): ChainCon
   return CHAIN_CONTRACTS[mode][chain];
 }
 
+// Exported for permit2.ts (Phase 6): Permit2 delegations need the USDC
+// token address per chain, the same config every settlement path already
+// uses -- not a second source of truth.
+export function usdcTokenAddress(mode: ProviderMode, chain: CirclePaymentChain): string {
+  return contractConfig(mode, chain).usdc;
+}
+
 function formatMicros(micros: bigint): string {
   const sign = micros < 0n ? '-' : '';
   const absolute = micros < 0n ? -micros : micros;
