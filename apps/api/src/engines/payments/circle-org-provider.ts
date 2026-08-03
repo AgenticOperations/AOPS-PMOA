@@ -1,6 +1,7 @@
 import type { CircleConnectionService } from './circle-connection-service.js';
 import {
   createCircleAgentWalletTreasuryProvider,
+  createDeveloperControlledCircleTreasuryProvider,
   type CircleTreasuryProvider,
 } from './circle-provider.js';
 
@@ -8,10 +9,19 @@ export function createOrgScopedCircleTreasuryProvider(
   connectionService: CircleConnectionService,
   orgId: string,
 ): CircleTreasuryProvider {
+  // Mirrors the branch already used by createCircleTreasuryProvider()
+  // (circle-provider.ts:1446-1449), so the worker and API process agree on
+  // which provider is active. The developer-controlled provider needs no
+  // connected executor -- it authenticates with the entity secret, which is
+  // precisely why it removes OTP from the loop.
+  const developerControlled = process.env.CIRCLE_TREASURY_PROVIDER === 'developer_controlled';
+
   const invoke = <T>(operation: (provider: CircleTreasuryProvider) => Promise<T>): Promise<T> => (
-    connectionService.withConnectedExecutor({ orgId }, async (executor) => (
-      operation(createCircleAgentWalletTreasuryProvider({ executor }))
-    ))
+    developerControlled
+      ? operation(createDeveloperControlledCircleTreasuryProvider())
+      : connectionService.withConnectedExecutor({ orgId }, async (executor) => (
+          operation(createCircleAgentWalletTreasuryProvider({ executor }))
+        ))
   );
   const assertOrg = (inputOrgId: string): void => {
     if (inputOrgId !== orgId) throw new Error('circle_connection_org_mismatch');

@@ -31,4 +31,51 @@ describe('Organization-scoped Circle provider', () => {
     expect(provider.health('test').configured).toBe(true);
     expect(provider.health('live')).toMatchObject({ configured: false, missing: ['testnet_only'] });
   });
+
+  it('uses the developer-controlled provider when CIRCLE_TREASURY_PROVIDER is set', async () => {
+    vi.stubEnv('CIRCLE_TREASURY_PROVIDER', 'developer_controlled');
+
+    const service = {} as CircleConnectionService;
+    const provider = createOrgScopedCircleTreasuryProvider(service, 'org_1');
+    const result = await provider.bridgeWalletTopUp({
+      amount: '1.00',
+      fromAddress: '0x0000000000000000000000000000000000000001',
+      fromChain: 'arc',
+      mode: 'test',
+      toAddress: '0x0000000000000000000000000000000000000002',
+      toChain: 'base',
+    });
+
+    // The dev-controlled provider stubs this; the Agent Wallet path does
+    // not need a connected executor at all to reach it, since
+    // createDeveloperControlledCircleTreasuryProvider() authenticates with
+    // the entity secret rather than a per-org OAuth connection.
+    expect(result.success).toBe(false);
+    expect(result.errorReason).toBe('developer_controlled_bridge_topup_not_supported');
+
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to the agent wallet provider when the flag is unset', async () => {
+    const executor = {} as CircleAgentCliExecutor;
+    const withConnectedExecutor = vi.fn((
+      _input: { readonly orgId: string },
+      operation: (scopedExecutor: CircleAgentCliExecutor) => Promise<unknown>,
+    ) => operation(executor));
+    const service = { withConnectedExecutor } as unknown as CircleConnectionService;
+    const provider = createOrgScopedCircleTreasuryProvider(service, 'org_1');
+
+    // The Agent Wallet path routes through the connected executor -- proof
+    // it isn't silently using the developer-controlled stub.
+    await provider.bridgeWalletTopUp({
+      amount: '1.00',
+      fromAddress: '0x0000000000000000000000000000000000000001',
+      fromChain: 'arc',
+      mode: 'test',
+      toAddress: '0x0000000000000000000000000000000000000002',
+      toChain: 'base',
+    }).catch(() => undefined);
+
+    expect(withConnectedExecutor).toHaveBeenCalledWith({ orgId: 'org_1' }, expect.any(Function));
+  });
 });
