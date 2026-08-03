@@ -67,6 +67,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0022_fail_closed_policy_and_freeze');
     expect(firstRun).toContain('0023_arc_chain_support');
     expect(firstRun).toContain('0024_pin_eoa_account_type');
+    expect(firstRun).toContain('0025_agent_chain_wallets');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -98,6 +99,7 @@ describe('PMOA database migrations', () => {
       '0022_fail_closed_policy_and_freeze',
       '0023_arc_chain_support',
       '0024_pin_eoa_account_type',
+      '0025_agent_chain_wallets',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(
@@ -496,5 +498,60 @@ describe('PMOA database migrations', () => {
       "SELECT account_type FROM circle_chain_wallets WHERE id = 'cwallet_sca_survivor_test'",
     );
     expect(scaRow.rows[0]?.account_type).toBe('sca');
+
+    // Migration 0025: agent_chain_wallets table and the widened
+    // circle_provider_jobs job_type CHECK. The CHECK has been widened five
+    // times before this migration (0011, 0013, 0014, 0015, 0016) -- assert
+    // every pre-existing value plus the three new agent_wallet.* ones are
+    // all still admitted in one query, so a future migration that narrows
+    // this list again is caught here.
+    await pool.query(
+      `INSERT INTO teams (id, org_id, name) VALUES ('team_eoa_default', 'org_eoa_default', 'Default Team')`,
+    );
+    await pool.query(
+      `INSERT INTO agents (id, org_id, team_id, name)
+       VALUES ('agt_eoa_default', 'org_eoa_default', 'team_eoa_default', 'EOA Default Agent')`,
+    );
+    // Reuses ws_eoa_default_test (created above) -- circle_wallet_sets is
+    // UNIQUE (org_id, mode), so org_eoa_default can only have one test-mode
+    // wallet set.
+    await pool.query(
+      `INSERT INTO agent_chain_wallets (
+         id, org_id, agent_id, wallet_set_id, mode, chain, circle_blockchain, circle_wallet_id, address, ref_id
+       ) VALUES (
+         'acw_migrate_test', 'org_eoa_default', 'agt_eoa_default', 'ws_eoa_default_test', 'test', 'arc', 'ARC-TESTNET',
+         'circle_wallet_agent_test', '0x3333333333333333333333333333333333333333', 'ref_migrate_test'
+       )`,
+    );
+    const agentWalletRow = await pool.query<{ account_type: string; status: string }>(
+      "SELECT account_type, status FROM agent_chain_wallets WHERE id = 'acw_migrate_test'",
+    );
+    expect(agentWalletRow.rows[0]).toEqual({ account_type: 'eoa', status: 'provisioning' });
+
+    await expect(pool.query(
+      `INSERT INTO agent_chain_wallets (
+         id, org_id, agent_id, wallet_set_id, mode, chain, circle_blockchain, circle_wallet_id, address, account_type, ref_id
+       ) VALUES (
+         'acw_sca_rejected_test', 'org_eoa_default', 'agt_eoa_default', 'ws_eoa_default_test', 'test', 'base', 'BASE-SEPOLIA',
+         'circle_wallet_sca_rejected', '0x4444444444444444444444444444444444444444', 'sca', 'ref_sca_rejected'
+       )`,
+    )).rejects.toThrow();
+
+    for (const jobType of [
+      'wallet_set.create', 'wallet.create', 'wallet.faucet', 'wallet.rebalance',
+      'liquidity.prepare', 'rail.verify', 'gateway.deposit', 'gateway.transfer',
+      'wallet.balance_sync', 'webhook.reconcile',
+      'agent_wallet.create', 'agent_wallet.topup', 'agent_wallet.sweep',
+    ]) {
+      await pool.query(
+        `INSERT INTO circle_provider_jobs (id, org_id, mode, job_type, status, created_by)
+         VALUES ($1, 'org_eoa_default', 'test', $2, 'queued', 'usr_migrate_test')`,
+        [`cjob_${jobType.replace(/\./g, '_')}`, jobType],
+      );
+    }
+    const jobCount = await pool.query(
+      "SELECT count(*) FROM circle_provider_jobs WHERE org_id = 'org_eoa_default'",
+    );
+    expect(Number(jobCount.rows[0].count)).toBe(13);
   });
 });
