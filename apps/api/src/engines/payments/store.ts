@@ -4670,16 +4670,28 @@ export async function ensureCircleTreasury(
 }
 
 async function activePaymentAccount(db: Db, auth: ConnectionAuthResult): Promise<AgentPaymentAccountRow> {
-  const result = await db.query<AgentPaymentAccountRow>(
-    `SELECT *
-       FROM agent_payment_accounts
-      WHERE org_id = $1
-        AND agent_id = $2
-      FOR UPDATE`,
+  const result = await db.query<AgentPaymentAccountRow & { readonly org_frozen: boolean; readonly agent_status: string }>(
+    `SELECT apa.*, o.frozen AS org_frozen, a.status AS agent_status
+       FROM agent_payment_accounts apa
+       JOIN orgs o ON o.id = apa.org_id
+       JOIN agents a ON a.id = apa.agent_id
+      WHERE apa.org_id = $1
+        AND apa.agent_id = $2
+      FOR UPDATE OF apa`,
     [auth.org_id, auth.agent_id],
   );
   const row = result.rows[0];
-  if (row === undefined || row.status !== 'active' || !row.payment_access) {
+  if (row === undefined) {
+    throw new IdentityError('payment_access_disabled', 403, 'Payment access is disabled for this agent.');
+  }
+  // Emergency stop runs before every other check in this function.
+  if (row.org_frozen) {
+    throw new IdentityError('org_frozen', 403, 'This workspace is frozen. No actions can proceed.');
+  }
+  if (row.agent_status === 'paused' || row.agent_status === 'suspended') {
+    throw new IdentityError('agent_frozen', 403, 'This agent is frozen. No actions can proceed.');
+  }
+  if (row.status !== 'active' || !row.payment_access) {
     throw new IdentityError('payment_access_disabled', 403, 'Payment access is disabled for this agent.');
   }
   return row;
