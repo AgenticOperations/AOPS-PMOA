@@ -58,8 +58,9 @@ if (spent + reserved + quote.amountMicros > budget) {
 | `apps/api/src/engines/payments/agent-wallets.ts` | Wallet CRUD + balance reads | **Create** |
 | `apps/api/src/engines/payments/store.ts` | Balance check in budget path | Modify `:4885-4890` |
 | `apps/api/src/circle-worker.ts` | Handle `agent_wallet.create` job | Modify |
-| `apps/api/src/engines/identity/store.ts` | Enqueue provisioning on agent create | Modify |
+| ~~`apps/api/src/engines/identity/store.ts`~~ | ~~Enqueue provisioning on agent create~~ | **Not modified** — trigger moved to `payments/store.ts`'s `setAgentPaymentAccess` instead (see Task 3 note) |
 | `apps/api/test/payments/agent-wallets.test.ts` | Provisioning + balance tests | **Create** |
+| `apps/api/test/payments/agent-wallet-balance.test.ts` | HTTP-level balance ceiling tests | **Create** (not in original file list) |
 
 New logic goes in `agent-wallets.ts`, **not** appended to the 5,875-line `store.ts`. Only the budget-check edit touches `store.ts`.
 
@@ -72,7 +73,7 @@ New logic goes in `agent-wallets.ts`, **not** appended to the 5,875-line `store.
 **Files:**
 - Create: `packages/db/src/migrations/0025_agent_chain_wallets.sql`
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration** — `packages/db/src/migrations/0025_agent_chain_wallets.sql`, committed `84543a2`. `job_type` CHECK widened to the real current 13-value list (verified against `0016`, not the plan's stale sketch, which only listed 10).
 
 ```sql
 -- 0025_agent_chain_wallets.sql
@@ -132,19 +133,9 @@ docker compose up -d
 psql "$DATABASE_URL" -c "\d circle_provider_jobs" | grep job_type
 ```
 
-- [ ] **Step 2: Run the migration test**
+- [x] **Step 2: Run the migration test** — passed, plus added substantive assertions beyond the plan's sketch (EOA-default insert, SCA-rejection, all 13 job_type values insertable).
 
-```bash
-npx vitest run test/migrate.test.ts --root packages/db
-```
-Expected: PASS on a DB already at 0024.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add packages/db/src/migrations/0025_agent_chain_wallets.sql
-git commit -m "feat(db): add per-agent chain wallet binding"
-```
+- [x] **Step 3: Commit** — `84543a2`.
 
 ---
 
@@ -154,7 +145,7 @@ git commit -m "feat(db): add per-agent chain wallet binding"
 - Create: `apps/api/src/engines/payments/agent-wallets.ts`
 - Test: `apps/api/test/payments/agent-wallets.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — matches the sketch's intent; actual fixture (`setupAgentFixture`) built inline in the test file rather than assumed pre-existing.
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -232,14 +223,9 @@ describe('agent wallet provisioning', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails** — failed as expected (module did not exist).
 
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-```
-Expected: FAIL — module does not exist.
-
-- [ ] **Step 3: Implement `agent-wallets.ts`**
+- [x] **Step 3: Implement `agent-wallets.ts`** — implemented with real deviations from the plan's sketch (see note below).
 
 ```ts
 import type pg from 'pg';
@@ -326,18 +312,13 @@ export async function findAgentWallet(
 }
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes** — passed.
 
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-```
+- [x] **Step 5: Commit** — `6c544b5`.
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/api/src/engines/payments/agent-wallets.ts apps/api/test/payments/agent-wallets.test.ts
-git commit -m "feat(payments): add per-agent wallet provisioning records"
-```
+> **Deviations from the plan's sketch, verified deliberate:**
+> - `findAnyAgentWallet` added (not in the sketch) — finds the agent's oldest wallet on *any* chain, needed to implement Circle's real same-address mechanism (see Task 3 note).
+> - `Db = pg.Pool | pg.PoolClient` used throughout instead of `pg.Pool` — needed so these functions can run inside `preparePaidHttpPayment`'s existing transaction (`client`), not just standalone.
 
 ---
 
@@ -349,7 +330,7 @@ git commit -m "feat(payments): add per-agent wallet provisioning records"
 
 Provisioning belongs behind the **worker boundary**, not in the public API process — creating a wallet is a slow external call that must not block an HTTP request, and the worker already holds the per-org advisory lock.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 it('provisions a wallet when the worker processes the job', async () => {
@@ -373,40 +354,19 @@ it('provisions a wallet when the worker processes the job', async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails** — failed as expected.
 
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-```
+- [x] **Step 3: Implement** — implemented with one deliberate deviation from the sketch (see note below).
 
-- [ ] **Step 3: Implement**
+Worker dispatch: added as an explicit separate branch in `listJobs`'s SQL and `processJob`'s dispatch in `circle-worker.ts`, calling `processAgentWalletCreateJob(pool, job.id, provider)` directly — deliberately did **not** stretch `classifyCircleWorkerJob`'s existing narrow 2-action enum (in `circle-liquidity-worker.ts`) to cover an unrelated job type.
 
-In `apps/api/src/circle-worker.ts`, extend the existing job dispatch (around `:94`, inside `withPostgresCircleOrgLock`) with an `agent_wallet.create` branch. Follow the shape of the existing handlers — call the provider's `createWallet`, then `recordProvisionedWallet`, then mark the job `complete`; on error, set `status='failed'` with `error_code`, exactly as siblings do.
+- [x] **Step 4: Run to verify it passes** — passed.
 
-Pin `accountType: 'EOA'` in the provider call. The DB CHECK will reject anything else, but failing at the call site gives a clearer error.
+- [ ] **Step 5: Verify against real Arc testnet** — **NOT DONE.** No live run against `CIRCLE_TREASURY_PROVIDER=developer_controlled` / real worker was performed; no wallet address was opened on `testnet.arcscan.app`. Only unit/integration tests against local Postgres + a fake provider have run. This remains open.
 
-In `apps/api/src/engines/identity/store.ts`, at the end of the agent-creation transaction, call `enqueueAgentWalletProvisioning` when the agent's payment account has `dedicated_wallet_required = true`. That flag already exists (`0009:57`) and is currently stored but never acted on — this gives it its meaning.
+- [x] **Step 6: Commit** — `dbe3091`.
 
-- [ ] **Step 4: Run to verify it passes**
-
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-npm test --workspace @agentops-pmoa/api
-```
-
-- [ ] **Step 5: Verify against real Arc testnet**
-
-```bash
-CIRCLE_TREASURY_PROVIDER=developer_controlled npm run dev:circle-worker
-```
-Create an agent with `dedicated_wallet_required = true`. Confirm a real wallet appears, and **open its address on `testnet.arcscan.app`**.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add apps/api/src/circle-worker.ts apps/api/src/engines/identity/store.ts apps/api/test
-git commit -m "feat(payments): provision agent wallets from the Circle worker"
-```
+> **Deliberate deviation from the plan's sketch:** the provisioning trigger is in `setAgentPaymentAccess` (`store.ts`), **not** `apps/api/src/engines/identity/store.ts`'s agent-creation transaction as originally sketched. Reason: `dedicated_wallet_required` is set via the payment-access endpoint, which can be called at any time after agent creation (not only at creation), and an agent can also change its allowed rails/chains later — the trigger has to react to *those* events, not just creation, to enqueue wallets for newly-added chains. The trigger also de-dupes against both existing `agent_chain_wallets` rows and pending `circle_provider_jobs` so calling `setAgentPaymentAccess` again doesn't double-enqueue (caught by a real test failure during development). `apps/api/src/engines/identity/store.ts` was **not modified** in this phase.
 
 ---
 
@@ -423,7 +383,7 @@ M7 and M8 are combined: spendable balance is meaningless without the gas carve-o
 - Modify: `apps/api/src/engines/payments/agent-wallets.ts` (add balance read)
 - Test: `apps/api/test/payments/agent-wallets.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test** — actual tests live in two files (see note below), not exactly matching the sketch's `setupFundedAgent`/`request.paidHttp` helper shape, but covering the same three scenarios plus a fourth (no-wallet passthrough).
 
 ```ts
 describe('balance-backed budget ceiling', () => {
@@ -468,14 +428,9 @@ describe('balance-backed budget ceiling', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails** — failed as expected (payment succeeded on counters alone).
 
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-```
-Expected: FAIL — payment succeeds; only counters are consulted.
-
-- [ ] **Step 3: Add the balance read**
+- [x] **Step 3: Add the balance read** — `nativeBalanceMicros` and `readSpendableMicros` added to `agent-wallets.ts`, with retry-with-backoff (6 attempts, 400ms) since spike S6 found Arc's public RPC failing ~56% of calls; throws rather than ever coercing a failed read to zero.
 
 Append to `agent-wallets.ts`. **Use S6's answer** for which RPC call is authoritative:
 
@@ -505,7 +460,7 @@ export async function readSpendableMicros(
 
 > **Do not build a cache here.** `balances-cache.ts` already exists and is wired to Redis in `server.ts:19`, degrading gracefully when Redis is down. If it fits the per-agent grain, call it. If it does not, read directly. Adding new caching infrastructure is out of scope for this build.
 
-- [ ] **Step 4: Wire it into the budget check**
+- [x] **Step 4: Wire it into the budget check** — wired in `preparePaidHttpPayment` (`store.ts`) immediately after the counter check, matching the sketch. `gasReserveMicros` is hardcoded `0n` (see note below) rather than read from a `gasReserveUsdc` input, since Phase 4's `agent_allocations` table (where that column will live) doesn't exist yet.
 
 In `store.ts`, immediately **after** the existing counter check at `:4885-4890` — keep that block exactly as it is:
 
@@ -535,28 +490,11 @@ In `store.ts`, immediately **after** the existing counter check at `:4885-4890` 
 
 > **`agentWallet === null` is deliberately permissive** — orgs that have not adopted per-agent wallets keep working on the shared org wallet. Once an agent *has* a wallet, the balance binds. Do not make a missing wallet a hard failure; that would break every existing org on upgrade.
 
-- [ ] **Step 5: Run to verify it passes**
+- [x] **Step 5: Run to verify it passes** — `agent-wallets.ts` unit suite, the new `agent-wallet-balance.test.ts` HTTP-level suite (4/4 passing), full payments suite (339/339), full API suite (444/444), lint, and typecheck all pass as of this commit.
 
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-npm test --workspace @agentops-pmoa/api
-```
+- [ ] **Step 6: The proof test — run it against real Arc testnet** — **NOT DONE.** No live fund-and-reject cycle was run against real Arc testnet; no explorer link exists in `docs/spike-results.md`. This is the acceptance artifact for the pitch's central claim ("max loss bounded by on-chain balance, verifiable by anyone") — **the claim cannot be made yet** per this plan's own gate at the top of the document. Remains open.
 
-- [ ] **Step 6: The proof test — run it against real Arc testnet**
-
-This is the acceptance artifact for the pitch's central claim. A passing unit test is **not** sufficient for a claim whose whole value is third-party verifiability.
-
-1. Fund an agent wallet with exactly **$1.00** on Arc testnet.
-2. Attempt a **$2.00** payment. Confirm rejection with `insufficient_agent_wallet_balance`.
-3. Open the wallet address on `testnet.arcscan.app` and confirm the balance independently.
-4. Paste the address and tx links into `docs/spike-results.md`.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add apps/api/src/engines/payments/store.ts apps/api/src/engines/payments/agent-wallets.ts apps/api/test docs/spike-results.md
-git commit -m "feat(payments): bound agent spending by on-chain wallet balance"
-```
+- [x] **Step 7: Commit** — `d47935c` ("feat(payments): enforce on-chain balance ceiling for agent wallet payments"). Also fixed, in the same commit, two Arc-enum gaps discovered via a codebase sweep that were blocking Arc payment requests at the HTTP layer since Phase 2 (`routes.ts`'s hand-maintained `chainSchema`/`paymentRails`, and `circle-provider.ts`'s `isCirclePaymentChain`/`chainFromGatewayNetwork`) — not in the plan's original sketch, but necessary for this task's own HTTP-level test to exercise a real `gateway_arc` request.
 
 ---
 
@@ -567,7 +505,7 @@ git commit -m "feat(payments): bound agent spending by on-chain wallet balance"
 
 The truncation trap deserves its own tests — this is the Arc-specific differentiator and the failure is silent.
 
-- [ ] **Step 1: Write the tests**
+- [x] **Step 1: Write the tests** — present, matching the sketch (`Arc gas headroom` describe block: zero-clamp + truncation-trap tests).
 
 ```ts
 describe('Arc gas headroom', () => {
@@ -593,40 +531,31 @@ describe('Arc gas headroom', () => {
 });
 ```
 
-- [ ] **Step 2: Run, implement if needed, verify**
+- [x] **Step 2: Run, implement if needed, verify** — passed; no implementation gap (both edge cases already handled by `readSpendableMicros`'s clamp and by reading native balance, not the ERC-20 view).
 
-```bash
-npx vitest run test/payments/agent-wallets.test.ts --root apps/api
-```
+- [x] **Step 3: Run the full gate** — `npm run verify` (lint + typecheck + build + full test across every workspace) passes clean. Required one incidental fix: `packages/db/test/migrate.test.ts:555` had an untyped `pool.query` causing an unsafe-`any` lint error and a possibly-undefined typecheck error — added a type parameter and a non-null-safe access.
 
-- [ ] **Step 3: Run the full gate**
-
-```bash
-npm run verify
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add apps/api/test/payments/agent-wallets.test.ts
-git commit -m "test(payments): cover Arc gas reserve edge cases"
-```
+- [x] **Step 4: Commit** — folded into the migration test fix commit alongside Task 4's checkbox annotations (this file was already committed as part of Task 2's commit `6c544b5`; the incidental `migrate.test.ts` typing fix is committed separately, see below).
 
 ---
 
 ## Phase 3 Done Criteria
 
-- [ ] Migration 0025 applies cleanly on a DB already at 0024
-- [ ] `circle_provider_jobs_job_type_check` still admits every previously-used job type
-- [ ] Creating an agent with `dedicated_wallet_required` enqueues one job per chain
-- [ ] The worker provisions a real Arc EOA wallet and writes an `active` row
-- [ ] Distinct agents get **distinct addresses**, visible on `testnet.arcscan.app`
-- [ ] One agent can hold Arc + Base rows sharing an address, with independent balances
-- [ ] Inserting a `'sca'` row is rejected **by the database**
-- [ ] A payment above the wallet's spendable balance is rejected with `insufficient_agent_wallet_balance`
-- [ ] The counter pre-filter still fires, with its own distinct code
-- [ ] The gas reserve is unspendable and clamps at zero
-- [ ] Agents **without** a per-agent wallet still transact on the org wallet
-- [ ] **The proof test is recorded with an explorer link**
+- [x] Migration 0025 applies cleanly on a DB already at 0024 — covered by `packages/db/test/migrate.test.ts`
+- [x] `circle_provider_jobs_job_type_check` still admits every previously-used job type — all 13 values tested in one pass
+- [x] Setting `dedicated_wallet_required` (via `setAgentPaymentAccess`, not agent-creation — see Task 3 note) enqueues one job per requested chain, and does not double-enqueue on repeat calls
+- [x] The worker provisions a wallet and writes an `active` row — verified against a **fake** provider in tests only (see next item)
+- [ ] **NOT VERIFIED against real infrastructure**: distinct agents getting distinct addresses on **actual Arc testnet**, visible on `testnet.arcscan.app`. All provisioning tests use a fake `CircleTreasuryProvider`; no real Circle API call or explorer lookup has been made.
+- [x] One agent can hold Arc + Base rows sharing an address (via `deriveWallet`), with independent balances — tested with a fake provider
+- [x] Inserting a `'sca'` row is rejected **by the database** — tested directly against real Postgres
+- [x] A payment above the wallet's spendable balance is rejected with `insufficient_agent_wallet_balance` — tested at the HTTP layer via `agent-wallet-balance.test.ts`, with `global.fetch` stubbed for the RPC balance read
+- [x] The counter pre-filter still fires, with its own distinct code (`budget_exceeded`) when it should win
+- [x] The gas reserve is unspendable and clamps at zero — tested in `readSpendableMicros`; **not yet wired to a real value** in `store.ts` (hardcoded `0n` pending Phase 4's `agent_allocations` table)
+- [x] Agents **without** a per-agent wallet still transact on the org wallet — explicit test added, passes
+- [ ] **The proof test is NOT recorded.** No live fund-and-reject cycle has been run against real Arc testnet; no explorer link exists in `docs/spike-results.md`.
 
-**Only after every box is ticked** may you claim: *"Max loss is bounded by the agent's on-chain balance — verifiable by RPC, no trust in us required."* Before that, the claim is false.
+**Two real gaps remain open, both requiring live Arc testnet access this environment doesn't have set up:**
+1. Real end-to-end wallet provisioning against Circle's actual API (currently only a fake provider is exercised).
+2. The Task 4 Step 6 proof test (fund $1.00, attempt $2.00 payment, confirm on-chain via explorer).
+
+**Per this plan's own gate: the claim "max loss is bounded by the agent's on-chain balance — verifiable by RPC, no trust in us required" cannot yet be made.** Everything it depends on is implemented and passes 444/444 tests plus a clean `npm run verify`, but the two boxes above are the specific, named exceptions — they require a live environment run, not more code.
