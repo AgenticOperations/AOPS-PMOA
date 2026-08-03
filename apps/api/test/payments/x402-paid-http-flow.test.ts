@@ -7,6 +7,7 @@ import type {
   CircleGatewayX402SettlementResult,
   CircleTreasuryProvider,
 } from '../../src/engines/payments/circle-provider.js';
+import { listUnknownAttempts, resolveUnknownAttempt } from '../../src/engines/payments/store.js';
 import { createX402ResultCryptoCodec } from '../../src/engines/payments/x402-result-crypto.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
@@ -1089,5 +1090,197 @@ describe('durable x402 paid HTTP flow', () => {
     expect(expired.json()).not.toHaveProperty('response');
     expect(providerCalls).toBe(1);
     expect(discoveryCalls).toBe(1);
+  });
+
+  describe('unknown attempt resolution', () => {
+    it('strands reserved_usdc when the provider outcome is ambiguous -- reproduces the leak', async () => {
+      providerOutcome = 'unknown';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      const { agentId, orgId, secret } = await createReadyBuyer('Unknown Leak', { budget: '5', cap: '2' });
+
+      const response = await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'unknown-leak-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({ payment: { status: 'unknown' } });
+
+      const account = await store.pool.query<{ reserved_usdc: string }>(
+        'SELECT reserved_usdc FROM agent_payment_accounts WHERE org_id = $1 AND agent_id = $2',
+        [orgId, agentId],
+      );
+      // The leak, reproduced: reserved_usdc is stuck at the full amount,
+      // neither released nor spent, with no automatic path back.
+      expect(Number(account.rows[0]?.reserved_usdc)).toBeGreaterThan(0);
+
+      const reservation = await store.pool.query<{ status: string }>(
+        'SELECT status FROM payment_reservations WHERE org_id = $1 AND agent_id = $2 ORDER BY created_at DESC LIMIT 1',
+        [orgId, agentId],
+      );
+      expect(reservation.rows[0]?.status).toBe('reserved');
+    });
+
+    it('lists the stranded attempt for an operator', async () => {
+      providerOutcome = 'unknown';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      const { agentId, orgId, secret } = await createReadyBuyer('Unknown List', { budget: '5', cap: '2' });
+      await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'unknown-list-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+
+      const httpList = await api.inject({
+        method: 'GET',
+        url: `/v1/orgs/${orgId}/payments/unknown-attempts`,
+      });
+      expect(httpList.statusCode, httpList.body).toBe(200);
+      const attempts = httpList.json<{ attempts: readonly { agentId: string }[] }>().attempts;
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]?.agentId).toBe(agentId);
+
+      const direct = await listUnknownAttempts(store.pool, orgId);
+      expect(direct).toHaveLength(1);
+    });
+
+    it('releases reserved_usdc when an operator resolves an unknown attempt as failed', async () => {
+      providerOutcome = 'unknown';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      const { agentId, orgId, secret } = await createReadyBuyer('Unknown Resolve Failed', { budget: '5', cap: '2' });
+      await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'unknown-resolve-failed-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+
+      const before = await store.pool.query<{ reserved_usdc: string }>(
+        'SELECT reserved_usdc FROM agent_payment_accounts WHERE org_id = $1 AND agent_id = $2',
+        [orgId, agentId],
+      );
+      expect(Number(before.rows[0]?.reserved_usdc)).toBeGreaterThan(0);
+
+      const unknown = await listUnknownAttempts(store.pool, orgId);
+      const reservationId = unknown[0]?.reservationId;
+      expect(reservationId).toBeDefined();
+
+      const resolveResponse = await api.inject({
+        method: 'POST',
+        url: `/v1/orgs/${orgId}/payments/unknown-attempts/${reservationId}/resolve`,
+        payload: { outcome: 'failed' },
+      });
+      expect(resolveResponse.statusCode, resolveResponse.body).toBe(200);
+
+      const after = await store.pool.query<{ reserved_usdc: string }>(
+        'SELECT reserved_usdc FROM agent_payment_accounts WHERE org_id = $1 AND agent_id = $2',
+        [orgId, agentId],
+      );
+      expect(Number(after.rows[0]?.reserved_usdc)).toBe(0);
+
+      const reservation = await store.pool.query<{ status: string }>(
+        'SELECT status FROM payment_reservations WHERE id = $1', [reservationId],
+      );
+      expect(reservation.rows[0]?.status).toBe('released');
+
+      const auditEvent = await store.pool.query(
+        "SELECT 1 FROM audit_events WHERE org_id = $1 AND event_type = 'payment.unknown.resolved'",
+        [orgId],
+      );
+      expect(auditEvent.rowCount).toBe(1);
+
+      const stillListed = await listUnknownAttempts(store.pool, orgId);
+      expect(stillListed.some((a) => a.reservationId === reservationId)).toBe(false);
+    });
+
+    it('marks an unknown attempt settled without double-releasing reserved_usdc', async () => {
+      providerOutcome = 'unknown';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      const { agentId, orgId, secret } = await createReadyBuyer('Unknown Resolve Settled', { budget: '5', cap: '2' });
+      await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'unknown-resolve-settled-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+
+      const unknown = await listUnknownAttempts(store.pool, orgId);
+      const reservationId = unknown[0]?.reservationId;
+      expect(reservationId).toBeDefined();
+
+      await resolveUnknownAttempt(
+        store.pool,
+        { actorId: 'usr_operator', role: 'admin' },
+        orgId,
+        reservationId ?? '',
+        'settled',
+      );
+
+      const account = await store.pool.query<{ reserved_usdc: string; spent_usdc: string }>(
+        'SELECT reserved_usdc, spent_usdc FROM agent_payment_accounts WHERE org_id = $1 AND agent_id = $2',
+        [orgId, agentId],
+      );
+      expect(Number(account.rows[0]?.reserved_usdc)).toBe(0);
+      expect(Number(account.rows[0]?.spent_usdc)).toBeGreaterThan(0);
+
+      const reservation = await store.pool.query<{ status: string }>(
+        'SELECT status FROM payment_reservations WHERE id = $1', [reservationId],
+      );
+      expect(reservation.rows[0]?.status).toBe('settled');
+    });
+
+    it('rejects resolving a reservation that is still reserved but not an unknown attempt', async () => {
+      providerOutcome = 'settled';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      crashAfterReserved = true;
+      const { orgId, secret } = await createReadyBuyer('Unknown Resolve Wrong State', { budget: '5', cap: '2' });
+      const crashed = await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'unknown-resolve-wrong-state-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+      expect(crashed.statusCode).toBe(500);
+      crashAfterReserved = false;
+
+      // Still 'reserved' (the crash happened before settlement), but this
+      // was never an 'unknown' attempt -- resolveUnknownAttempt must
+      // distinguish this from the genuine leak state.
+      const reservation = await store.pool.query<{ id: string; status: string }>(
+        'SELECT id, status FROM payment_reservations WHERE org_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [orgId],
+      );
+      expect(reservation.rows[0]?.status).toBe('reserved');
+
+      const resolveResponse = await api.inject({
+        method: 'POST',
+        url: `/v1/orgs/${orgId}/payments/unknown-attempts/${reservation.rows[0]?.id}/resolve`,
+        payload: { outcome: 'failed' },
+      });
+      expect(resolveResponse.statusCode, resolveResponse.body).toBe(400);
+      expect(resolveResponse.json()).toMatchObject({ error: 'not_an_unknown_attempt' });
+    });
   });
 });

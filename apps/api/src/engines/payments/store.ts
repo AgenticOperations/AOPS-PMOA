@@ -5609,6 +5609,160 @@ async function finalizeTerminalPaidHttpPayment(
   });
 }
 
+export type UnknownAttemptRecord = {
+  readonly reservationId: string;
+  readonly agentId: string;
+  readonly amountUsdc: string;
+  readonly rail: PaymentRail;
+  readonly paymentEventId: string;
+  readonly errorCode: string | null;
+  readonly createdAt: string;
+};
+
+type UnknownAttemptRow = {
+  readonly reservation_id: string;
+  readonly agent_id: string;
+  readonly amount_usdc: string;
+  readonly rail: PaymentRail;
+  readonly payment_event_id: string;
+  readonly error_code: string | null;
+  readonly created_at: Date;
+};
+
+function unknownAttemptFromRow(row: UnknownAttemptRow): UnknownAttemptRecord {
+  return {
+    reservationId: row.reservation_id,
+    agentId: row.agent_id,
+    amountUsdc: row.amount_usdc,
+    rail: row.rail,
+    paymentEventId: row.payment_event_id,
+    errorCode: row.error_code,
+    createdAt: row.created_at.toISOString(),
+  };
+}
+
+/**
+ * Lists reservations still 'reserved' whose payment settled as 'unknown' --
+ * the fund-leak state finalizeTerminalPaidHttpPayment produces when the
+ * provider's outcome is ambiguous. Neither settled nor failed, these
+ * strand reserved_usdc forever with no worker and no automatic path to
+ * adjudicate: an operator must look at what actually happened (did the
+ * merchant deliver? does the provider's own record show a transaction?)
+ * and resolve it by hand.
+ */
+export async function listUnknownAttempts(
+  pool: pg.Pool,
+  orgId: string,
+  limit = 100,
+): Promise<UnknownAttemptRecord[]> {
+  const boundedLimit = Math.max(1, Math.min(limit, 250));
+  const result = await pool.query<UnknownAttemptRow>(
+    `SELECT r.id AS reservation_id, r.agent_id, r.amount_usdc, r.rail,
+            e.id AS payment_event_id, e.result->>'error_code' AS error_code, r.created_at
+       FROM payment_reservations r
+       JOIN payment_events e ON e.reservation_id = r.id
+      WHERE r.org_id = $1
+        AND r.status = 'reserved'
+        AND e.result->>'status' = 'unknown'
+      ORDER BY r.created_at DESC
+      LIMIT $2`,
+    [orgId, boundedLimit],
+  );
+  return result.rows.map(unknownAttemptFromRow);
+}
+
+export type ResolveUnknownAttemptOutcome = 'failed' | 'settled';
+
+/**
+ * Resolves an unknown-status attempt by hand. 'failed' releases the
+ * reservation and reserved_usdc, exactly like the normal failed path
+ * finalizeTerminalPaidHttpPayment already takes -- the operator has
+ * determined the payment did NOT go through. 'settled' marks the
+ * reservation settled without touching reserved_usdc, matching the
+ * settled path's bookkeeping -- the operator has determined it DID.
+ *
+ * Audit-evented deliberately: an operator moving money (or declaring it
+ * moved) by hand outside the normal automated path is exactly what the
+ * evidence trail exists for.
+ */
+export async function resolveUnknownAttempt(
+  pool: pg.Pool,
+  operator: OperatorContext,
+  orgId: string,
+  reservationId: string,
+  outcome: ResolveUnknownAttemptOutcome,
+): Promise<void> {
+  await withTransaction(pool, async (client) => {
+    const reservation = await client.query<PaymentReservationRow>(
+      `SELECT * FROM payment_reservations
+        WHERE id = $1 AND org_id = $2 AND status = 'reserved'
+        FOR UPDATE`,
+      [reservationId, orgId],
+    );
+    const row = reservation.rows[0];
+    if (row === undefined) throw notFound('Unknown attempt reservation was not found.');
+
+    const paymentEvent = await client.query<{ id: string }>(
+      `SELECT e.id FROM payment_events e
+        WHERE e.reservation_id = $1 AND e.org_id = $2 AND e.result->>'status' = 'unknown'
+        LIMIT 1`,
+      [reservationId, orgId],
+    );
+    if (paymentEvent.rows[0] === undefined) {
+      throw badRequest('not_an_unknown_attempt', 'Reservation is not in an unknown-status attempt.');
+    }
+
+    const newStatus = outcome === 'failed' ? 'released' : 'settled';
+    await client.query(
+      `UPDATE payment_reservations SET status = $3, updated_at = now()
+        WHERE id = $1 AND org_id = $2`,
+      [reservationId, orgId, newStatus],
+    );
+    if (outcome === 'failed') {
+      await client.query(
+        `UPDATE agent_payment_accounts
+            SET reserved_usdc = reserved_usdc - $3::numeric, updated_at = now()
+          WHERE org_id = $1 AND agent_id = $2`,
+        [orgId, row.agent_id, row.amount_usdc],
+      );
+    } else {
+      await client.query(
+        `UPDATE agent_payment_accounts
+            SET reserved_usdc = reserved_usdc - $3::numeric,
+                spent_usdc = spent_usdc + $3::numeric,
+                updated_at = now()
+          WHERE org_id = $1 AND agent_id = $2`,
+        [orgId, row.agent_id, row.amount_usdc],
+      );
+    }
+
+    await recordAuditEvent(client, {
+      orgId,
+      idempotencyKey: `payment.unknown.resolved:${reservationId}`,
+      eventType: 'payment.unknown.resolved',
+      actor: { type: 'user', id: operator.actorId },
+      action: 'payment.unknown.resolve',
+      outcome: 'success',
+      resource: { type: 'payment_reservation', id: reservationId },
+      classification: {
+        domain: 'payment',
+        category: 'financial',
+        severity: 'warning',
+        tags: ['section_9', 'unknown_attempt_resolution'],
+      },
+      relations: { agent: row.agent_id },
+      refs: {},
+      source: { section: 'section_9', system: 'payments' },
+      retentionClass: 'payment',
+      payload: {
+        amount_usdc: row.amount_usdc,
+        outcome,
+        rail: row.rail,
+      },
+    });
+  });
+}
+
 async function persistPaidHttpProviderEvidence(
   pool: pg.Pool,
   auth: ConnectionAuthResult,

@@ -25,7 +25,9 @@ import {
   listPaymentEvents,
   listCircleChainCapabilities,
   listCircleProviderJobs,
+  listUnknownAttempts,
   reconcileCircleProviderJobs,
+  resolveUnknownAttempt,
   listLiquidityJobs,
   listPaymentRailReadiness,
   listPaymentReservations,
@@ -181,6 +183,10 @@ const runtimeX402Schema = z.object({
 
 const historyQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
+});
+
+const resolveUnknownAttemptSchema = z.object({
+  outcome: z.enum(['failed', 'settled']),
 });
 
 function extractBearerToken(request: FastifyRequest, sessionCookieName = 'agentops_session'): string | null {
@@ -682,6 +688,21 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
     const query = historyQuerySchema.parse(request.query ?? {});
     return { reservations: await listPaymentReservations(deps.pool, params.orgId, query.limit) };
+  });
+
+  app.get('/v1/orgs/:orgId/payments/unknown-attempts', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = historyQuerySchema.parse(request.query ?? {});
+    return { attempts: await listUnknownAttempts(deps.pool, params.orgId, query.limit) };
+  });
+
+  app.post('/v1/orgs/:orgId/payments/unknown-attempts/:reservationId/resolve', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly reservationId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const body = parseBody(resolveUnknownAttemptSchema, request);
+    await resolveUnknownAttempt(deps.pool, operator, params.orgId, params.reservationId, body.outcome);
+    return { resolved: true };
   });
 
   app.get('/v1/orgs/:orgId/agents/:agentId/payments', async (request) => {
