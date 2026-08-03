@@ -17,6 +17,7 @@ const WEI_PER_MICRO = 1_000_000_000_000n;
 // the var), and a frozen-at-import constant would silently never see it.
 export function chainRpcUrl(chain: PaymentChain): string | undefined {
   if (chain === 'arc') return process.env.ARC_RPC_URL;
+  if (chain === 'base') return process.env.BASE_SEPOLIA_RPC_URL;
   return undefined;
 }
 

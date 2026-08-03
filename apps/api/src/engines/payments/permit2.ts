@@ -4,6 +4,7 @@ import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import { chainRpcUrl } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
+import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 // Canonical Permit2 address, identical across every EVM chain (CREATE2
@@ -210,8 +211,19 @@ export type RecordSignedDelegationInput = {
   readonly approvedBy: string;
 };
 
-const ARC_CHAIN_ID = 5042002;
-const DEFAULT_PERMIT2_TOKEN_ADDRESS = '0x3600000000000000000000000000000000000000'; // Arc's native-USDC precompile address (spike S4/S6).
+// EIP-712 domain chainId per PaymentChain -- Permit2's signature is only
+// valid on the chain named in the domain, so a cross-chain delegation
+// (e.g. Orchestrator -> Base SeniorReviewer) MUST sign against Base's
+// chainId, not Arc's. Verified live for Arc only (spike S4); Base uses
+// the well-known public chainId (Base Sepolia testnet).
+const PERMIT2_DOMAIN_CHAIN_ID: Record<PaymentChain, number> = {
+  arc: 5042002,
+  base: 84532,
+  arbitrum: 421614,
+  polygon: 80002,
+  optimism: 11155420,
+  avalanche: 43113,
+};
 
 /**
  * Signs a fresh PermitSingle for a payer->payee delegation and persists
@@ -233,7 +245,7 @@ export async function recordSignedDelegation(
     const payerRow = payer.rows[0];
     if (payerRow === undefined) throw new Error('agent_wallet_not_found');
 
-    const tokenAddress = input.tokenAddress ?? DEFAULT_PERMIT2_TOKEN_ADDRESS;
+    const tokenAddress = input.tokenAddress ?? usdcTokenAddress(input.mode, input.chain);
     const ceilingMicros = parseUsdcMicros(input.ceilingUsdc);
     const expirationSeconds = Math.floor(input.expiresAt.getTime() / 1000);
     // Permit2 requires a strictly increasing nonce per owner/token/spender
@@ -246,7 +258,7 @@ export async function recordSignedDelegation(
     const nonce = await readPermit2Nonce(payerRow.address, tokenAddress, input.payeeAddress, input.chain);
 
     const { typedData } = buildPermitSingle({
-      chainId: ARC_CHAIN_ID,
+      chainId: PERMIT2_DOMAIN_CHAIN_ID[input.chain],
       tokenAddress,
       spenderAddress: input.payeeAddress,
       amountMicros: ceilingMicros,
