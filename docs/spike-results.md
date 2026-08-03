@@ -57,16 +57,153 @@ Fill in as each runs. Do not mark a row answered without evidence.
 
 | Spike | Question | Status | Evidence |
 |---|---|---|---|
-| **S1** `[K-17]` | Arc chain ID: docs `5042002` vs facilitator `eip155:14601` | ⬜ not run | |
-| **S2** `[A2]` | Dev-controlled EOA wallets on `ARC-TESTNET`, end to end | ⬜ not run | |
-| **S3** `[A1]` | Can the entity secret sweep funds out to treasury? | ⬜ not run | |
-| **S4** `[K-12]` | Permit2 `approve` + `transferFrom` on Arc's native-USDC view | ⬜ not run | |
-| **S5** `[K-4]` | Arc testnet USDC faucet path | ⬜ not run | |
-| **S6** `[C3]` | ERC-20 `balanceOf` truncation vs native balance | ⬜ not run | |
+| **S1** `[K-17]` | Arc chain ID: docs `5042002` vs facilitator `eip155:14601` | ✅ **RESOLVED** | See S1 below — **manifest's premise was wrong** |
+| **S2** `[A2]` | Dev-controlled EOA wallets on `ARC-TESTNET`, end to end | ✅ **PASS** | Two EOA wallets provisioned — see S2 below |
+| **S3** `[A1]` | Can the entity secret sweep funds out to treasury? | ⬜ blocked on funding | Needs S5 |
+| **S4** `[K-12]` | Permit2 `approve` + `transferFrom` on Arc's native-USDC view | 🟡 **READ-PATH PASS** | Permit2 live, 9152 bytes; write path blocked on S5 funding |
+| **S5** `[K-4]` | Arc testnet USDC faucet path | ❌ **BLOCKED** | Faucet 403 — **key scope, not Arc** — see S5 below |
+| **S6** `[C3]` | ERC-20 `balanceOf` truncation vs native balance | ✅ **RESOLVED** | 1:1 ratio confirmed; **new RPC finding** below |
 | **S7** `[A5]` | Compliance / Transaction Screening API access | ⬜ not run | |
 | **S8** `[K-5]` | ERC-8183 funding mechanics + registry addresses (Phase 7) | ⬜ not run | |
 
-**Tier decision:** pending **S4**. Passes → **T3**. Fails → **T4**, Lane 2 falls back to per-payment `exact`, and the scoped-delegation claim comes out of the deck.
+**Tier decision:** **T3 provisionally confirmed.** Permit2 is live on Arc at the canonical address with a working `allowance()` against the native-USDC view. The read path passes. Final confirmation needs a real `approve` + `transferFrom` (S4 Step 2), which requires funded wallets from S2.
+
+---
+
+### S1 `[K-17]` — Arc chain ID — RESOLVED, and the manifest's premise was wrong
+
+**Verdict: Arc testnet is `eip155:5042002`. There was never a conflict.**
+
+The change manifest framed this as two sources disagreeing about *one* chain. They are **two different chains**, and the facilitator advertises both:
+
+```
+RPC eth_chainId  -> 0x4cef52 = 5042002
+Facilitator networks: eip155:11155111, eip155:84532, eip155:43113, eip155:421614,
+  eip155:14601, eip155:4801, eip155:1328, eip155:998, eip155:5042002,
+  eip155:11155420, eip155:80002, eip155:1301
+```
+
+Decisive evidence — the USDC addresses differ:
+
+| Network | USDC address | Is it Arc? |
+|---|---|---|
+| `eip155:5042002` | `0x3600000000000000000000000000000000000000` | **YES** — matches `ARC_USDC_ADDRESS` in `.env` and the precompile-shaped native-gas asset |
+| `eip155:14601` | `0x0ba304580ee7c9a980cf72e55f5ed2e9fd30bc51` | No — ordinary ERC-20 on some other testnet |
+
+**Phase 2 · Task 3 hardcodes `eip155:5042002`.** Both the RPC and the facilitator agree, so no split between signing and chain calls is needed.
+
+**Bonus — K-11 confirmed from the same payload:** `minValiditySeconds: 604800` (7 days), `name: "GatewayWalletBatched"`, `verifyingContract: 0x0077777d7eba4688bdef3e311b846f25870a19b9`, `scheme: exact` only. The 7-day exposure window is real; the decision to cap Lane 1 amounts stands.
+
+---
+
+### S4 `[K-12]` — Permit2 on Arc — READ PATH PASSES
+
+```
+chainId: 5042002
+Permit2 0x000000000022D473030F116dDEE9F6B43aC78BA3
+  bytecode: 9152 bytes          <- exactly the canonical size
+  DOMAIN_SEPARATOR: 0xe59c8d3fa907f1186bfa334839eb895f53f88b07e4cf5aafaef4af163d83ce93
+  allowance(owner, ARC_USDC, spender) -> (0, 0, 0)   <- correct 3-tuple, no revert
+Arc USDC 0x3600...0000
+  decimals: 6, symbol: "USDC", totalSupply: 212276223415235578
+```
+
+**Permit2 accepts Arc's native-USDC address as a token argument and returns the expected `(amount uint160, expiration uint48, nonce uint48)` tuple.** That was the specific fear in K-12 — it does not revert on the native-gas asset.
+
+**Still outstanding before Lane 2 is fully cleared:** a real `approve` → `PermitSingle` → `transferFrom`, confirming the allowance *decrements*. Needs funded wallets from S2. Do this before Phase 6 starts.
+
+> **Tooling note:** viem's `readContract` reported "RPC Request failed" for `allowance` and `symbol` while raw `eth_call` returned correct data for both. The contracts are fine — see the RPC reliability finding below.
+
+---
+
+### S6 `[C3]` — Balance truncation — RESOLVED, plus a more dangerous finding
+
+**Truncation confirmed, and it is exactly 1:1.** Sampled live accounts:
+
+| native (18dp wei) | native / 1e12 | `balanceOf` (6dp) |
+|---|---|---|
+| 46038082844867901798 | 46038082 | 46038082 |
+| 216258215585000000000000 | 216258215585 | 216258215585 |
+| 395096159078467122 | 395096 | 395096 |
+| 12804402399763984694 | 12804402 | 12804402 |
+
+`balanceOf == floor(native / 1e12)` in every case. The ERC-20 view is the native balance truncated to 6dp — same pool, as the manifest says.
+
+**Phase 3 rule: read `eth_getBalance` (native) for gas decisions.** Sub-1e12-wei dust is invisible to `balanceOf` but still real, and that dust is what keeps a wallet able to transact.
+
+#### ⚠️ NEW FINDING — Arc's public RPC is unreliable, and this affects the hot path
+
+25 identical `balanceOf` calls to a known-funded account:
+
+```
+ok    : 11
+error : 14      <- ~56% failure rate
+```
+
+My first probe silently coerced failures to `0` (`|| '0x0'`), which made two funded accounts appear to hold **zero**. The contract was never wrong — the read was.
+
+**This is a live hazard for Phase 3 · Task 4 and Phase 4 · Task 3**, both of which read balances on the payment hot path:
+
+1. **Never coerce a failed balance read to zero.** A failed read must raise, not return `0n`. Coerced-to-zero would reject valid payments and could trigger spurious top-ups toward the ceiling.
+2. **Retry with backoff**, and treat exhausted retries as an explicit `balance_unavailable` error distinct from `insufficient_agent_wallet_balance`.
+3. **This is a correctness requirement, not a performance optimisation** — it is exactly the kind of failure the plan's Redis cache would otherwise paper over. Reuse the existing `balances-cache.ts`; do not build new infrastructure.
+4. **Consider a dedicated RPC endpoint** for the demo rather than the public one.
+
+A 6-attempt retry loop with 400ms backoff read both new Arc wallets reliably, so retry is a sufficient mitigation.
+
+---
+
+### S2 `[A2]` — Dev-controlled wallets on Arc — PASS
+
+**`ARC-TESTNET` is accepted. Per-agent wallets are viable, so Phases 2 and 3 are unblocked.**
+
+```
+walletSet: 1d55d037-9b08-5b61-917a-f126b079447e   (custodyType: DEVELOPER)
+
+id      9edacecb-f69d-5dab-9622-e94779ea18e0
+address 0x00ca790a06002bb6ace2488633bfea71dc2023df
+chain   ARC-TESTNET   accountType EOA   state LIVE
+
+id      ad2d357b-0a5a-581e-a53b-9ee99032611b
+address 0x1b302d79710c21135efa9ea10d2b9171a399c467
+chain   ARC-TESTNET   accountType EOA   state LIVE
+```
+
+Confirmed properties:
+- **Circle's literal is `ARC-TESTNET`** — use this exact string in Phase 2's `circle_chain_capabilities` seed.
+- **`accountType: 'EOA'` is honoured** — satisfies K-16 at creation. Gateway needs EOA; Nanopayments is EOA-only.
+- **Distinct addresses per wallet**, both readable on-chain at zero balance.
+- **No OTP, no human, no per-wallet key** — one entity secret provisioned both. This is the concrete evidence for A3 (flip to developer-controlled).
+
+**Pre-existing account state** (useful for Phase 2/3): 11 wallets already exist across `AVAX-FUJI`, `OP-SEPOLIA`, `MATIC-AMOY`, `ARB-SEPOLIA`, `BASE-SEPOLIA` — **all `accountType: EOA`**, all `DEVELOPER` custody. `BASE-SEPOLIA` already present, which the cross-chain hop needs.
+
+**Not yet done:** fund → transfer between the two wallets. Blocked on S5.
+
+---
+
+### S5 `[K-4]` — Faucet — BLOCKED, but not by Arc
+
+```
+POST /v1/faucet/drips  { blockchain: 'ARC-TESTNET',  usdc: true } -> 403 {"code":3,"message":"Forbidden"}
+POST /v1/faucet/drips  { blockchain: 'BASE-SEPOLIA', usdc: true } -> 403 {"code":3,"message":"Forbidden"}
+```
+
+**Base Sepolia fails identically, so this is an API-key scope/permission issue — not an Arc limitation.** The same key succeeds on `/v1/w3s/*` (wallet sets, wallets, entity public key) and successfully created wallets, so the key is valid; it simply lacks faucet entitlement.
+
+**Options, in order of preference:**
+1. **Enable faucet permission** on the Circle console for this API key, or use a key that has it.
+2. **Use Arc's public testnet faucet** directly for `0x00ca790a06002bb6ace2488633bfea71dc2023df`.
+3. **Transfer from an existing funded wallet** if any of the 11 pre-existing wallets holds testnet USDC.
+
+**What this blocks until resolved:**
+
+| Blocked | Why |
+|---|---|
+| **S4 write path** — `approve` + `transferFrom`, allowance decrement | Needs a funded wallet. **This is the final T3 confirmation.** |
+| **S3** — sweep authority `[A1]` | Cannot sweep an empty wallet. Gates Phase 4 · Task 5. |
+| **S2 completion** — fund → transfer | Needs funding. |
+
+**Not blocked:** Phases 1, 2, 3, and 5 can all proceed. Phase 3's acceptance artifact (fund $1.00, attempt $2.00, observe rejection) needs funding, but the code and unit tests do not.
 
 ---
 
