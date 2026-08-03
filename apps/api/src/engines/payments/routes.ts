@@ -47,6 +47,7 @@ import {
   verifyPaymentRail,
 } from './store.js';
 import { revokeAgent } from './agent-revocation.js';
+import { payIntraFleet } from './intra-fleet.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
 import {
@@ -192,6 +193,12 @@ const resolveUnknownAttemptSchema = z.object({
 
 const revokeAgentSchema = z.object({
   reason: z.string().trim().min(1).max(500),
+});
+
+const intraFleetPaymentSchema = z.object({
+  payee_agent_id: z.string().trim().min(1).max(120),
+  chain: chainSchema,
+  url: z.string().trim().min(1).max(4096),
 });
 
 function extractBearerToken(request: FastifyRequest, sessionCookieName = 'agentops_session'): string | null {
@@ -780,5 +787,21 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       if (publicError !== null) throw publicError;
       throw error;
     }
+  });
+
+  app.post('/v1/runtime/payments/intra-fleet', async (request) => {
+    const auth = await authenticateRuntimeConnection(deps.pool, requiredRuntimeBearerToken(request));
+    const input = parseBody(intraFleetPaymentSchema, request);
+    const mode = (await getOrgPaymentMode(deps.pool, auth.org_id)).mode;
+    const result = await payIntraFleet(deps.pool, providerForOrg(auth.org_id), {
+      orgId: auth.org_id,
+      payerAgentId: auth.agent_id,
+      payeeAgentId: input.payee_agent_id,
+      mode,
+      chain: input.chain,
+      url: input.url,
+      approvedBy: auth.connection_id,
+    });
+    return { payment: result };
   });
 }
