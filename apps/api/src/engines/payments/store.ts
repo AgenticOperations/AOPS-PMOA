@@ -4971,6 +4971,77 @@ async function preparePaidHttpPayment(
         'This agent is not allowed to use the requested payment rail.',
       );
     }
+
+    // Source resolution and the quote hash must be known BEFORE policy
+    // runs, because the approval context policy stores (and that a later
+    // resume compares against) binds quote_hash/request_hash into it --
+    // resumePreparedPaidHttpPayment's approval_context_mismatch check
+    // requires them to already be present at approval-creation time.
+    const source = await activePaymentSource(client, auth.org_id, quote.rail, quote.chain);
+    if (
+      (source.provider === 'circle_gateway' || source.provider === 'circle_wallets') &&
+      (source.external_wallet_id === null || source.address === null)
+    ) {
+      throw conflict(
+        'payment_source_not_live',
+        'Circle payment source is missing its wallet address or Circle wallet id.',
+      );
+    }
+    if (quote.settlementKind === 'gateway' && source.provider !== 'circle_gateway' && source.provider !== 'simulation') {
+      throw conflict('payment_source_incompatible', 'Gateway x402 payments require a Gateway payment source.');
+    }
+    if (quote.settlementKind === 'direct_exact' && source.provider !== 'circle_wallets' && source.provider !== 'simulation') {
+      throw conflict('payment_source_incompatible', 'Exact x402 payments require a Circle Wallets payment source.');
+    }
+    if (source.provider === 'simulation' && parseUsdcMicros(source.simulated_balance_usdc) < quote.amountMicros) {
+      throw conflict('insufficient_payment_source_balance', 'Payment source does not have enough simulated balance.');
+    }
+    const providerMode = source.provider === 'simulation' ? 'simulation' : mode;
+    const quotePayload = {
+      accept: quote.accept,
+      resource: paymentInput.resource ?? {},
+      mode: providerMode,
+      x402: { amount: quote.x402Amount, network: quote.x402Network },
+    };
+    const quoteHash = sha256Hex(quotePayload);
+    const paymentInputWithBinding: RuntimeX402PaymentInput = {
+      ...paymentInput,
+      context: {
+        ...(paymentInput.context ?? {}),
+        quote_hash: quoteHash,
+        request_hash: requestHash,
+      },
+    };
+
+    // Policy is the authority and must run before any business-state check
+    // (cap, budget, balance, reservation write) below -- otherwise a denied
+    // caller can still mutate reserved_usdc, or learn budget state through
+    // the error code before ever being told policy denied.
+    const approvalThreshold = account.approval_threshold_usdc === null
+      ? null
+      : parseUsdcMicros(account.approval_threshold_usdc);
+    let approvalRequired: PaymentApprovalRequiredError | undefined;
+    let policyGate: PreparedPaidHttpPayment['policyGate'];
+    try {
+      policyGate = await enforceX402Policy(
+        pool,
+        auth,
+        paymentInputWithBinding,
+        quote,
+        resource,
+        approvalThreshold,
+      );
+    } catch (error) {
+      if (!(error instanceof PaymentApprovalRequiredError)) throw error;
+      approvalRequired = error;
+      policyGate = { approvalId: error.approvalId, decisionId: error.decisionId };
+    }
+    if (approvalRequired === undefined && source.provider !== 'simulation') {
+      const capability = await getCircleChainCapability(client, mode, quote.chain);
+      const readinessFailure = railVerificationFailure(capability, quote);
+      if (readinessFailure !== null) throw conflict(readinessFailure.code, readinessFailure.message);
+    }
+
     const cap = parseUsdcMicros(account.per_request_cap_usdc);
     if (cap > 0n && quote.amountMicros > cap) {
       throw conflict('per_request_cap_exceeded', 'Payment amount exceeds the agent per-request cap.');
@@ -5005,34 +5076,6 @@ async function preparePaidHttpPayment(
       }
     }
 
-    const source = await activePaymentSource(client, auth.org_id, quote.rail, quote.chain);
-    if (
-      (source.provider === 'circle_gateway' || source.provider === 'circle_wallets') &&
-      (source.external_wallet_id === null || source.address === null)
-    ) {
-      throw conflict(
-        'payment_source_not_live',
-        'Circle payment source is missing its wallet address or Circle wallet id.',
-      );
-    }
-    if (quote.settlementKind === 'gateway' && source.provider !== 'circle_gateway' && source.provider !== 'simulation') {
-      throw conflict('payment_source_incompatible', 'Gateway x402 payments require a Gateway payment source.');
-    }
-    if (quote.settlementKind === 'direct_exact' && source.provider !== 'circle_wallets' && source.provider !== 'simulation') {
-      throw conflict('payment_source_incompatible', 'Exact x402 payments require a Circle Wallets payment source.');
-    }
-    if (source.provider === 'simulation' && parseUsdcMicros(source.simulated_balance_usdc) < quote.amountMicros) {
-      throw conflict('insufficient_payment_source_balance', 'Payment source does not have enough simulated balance.');
-    }
-
-    const providerMode = source.provider === 'simulation' ? 'simulation' : mode;
-    const quotePayload = {
-      accept: quote.accept,
-      resource: paymentInput.resource ?? {},
-      mode: providerMode,
-      x402: { amount: quote.x402Amount, network: quote.x402Network },
-    };
-    const quoteHash = sha256Hex(quotePayload);
     const attempt = await attemptStore.createAttempt({
       orgId: auth.org_id,
       agentId: auth.agent_id,
@@ -5075,38 +5118,6 @@ async function preparePaidHttpPayment(
         WHERE org_id = $1 AND agent_id = $2`,
       [auth.org_id, auth.agent_id, quote.amount],
     );
-    const paymentInputWithBinding: RuntimeX402PaymentInput = {
-      ...paymentInput,
-      context: {
-        ...(paymentInput.context ?? {}),
-        quote_hash: quoteHash,
-        request_hash: requestHash,
-      },
-    };
-    const approvalThreshold = account.approval_threshold_usdc === null
-      ? null
-      : parseUsdcMicros(account.approval_threshold_usdc);
-    let approvalRequired: PaymentApprovalRequiredError | undefined;
-    let policyGate: PreparedPaidHttpPayment['policyGate'];
-    try {
-      policyGate = await enforceX402Policy(
-        pool,
-        auth,
-        paymentInputWithBinding,
-        quote,
-        resource,
-        approvalThreshold,
-      );
-    } catch (error) {
-      if (!(error instanceof PaymentApprovalRequiredError)) throw error;
-      approvalRequired = error;
-      policyGate = { approvalId: error.approvalId, decisionId: error.decisionId };
-    }
-    if (approvalRequired === undefined && source.provider !== 'simulation') {
-      const capability = await getCircleChainCapability(client, mode, quote.chain);
-      const readinessFailure = railVerificationFailure(capability, quote);
-      if (readinessFailure !== null) throw conflict(readinessFailure.code, readinessFailure.message);
-    }
     await client.query(
       `UPDATE runtime_payment_attempts
           SET payment_metadata = payment_metadata || $2::jsonb,

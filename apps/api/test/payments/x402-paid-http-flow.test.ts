@@ -346,6 +346,47 @@ describe('durable x402 paid HTTP flow', () => {
     })).statusCode).toBe(201);
   }
 
+  async function activateDenyPolicy(orgId: string, agentId: string): Promise<void> {
+    const draft = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts`,
+      payload: {
+        name: 'Deny paid market data',
+        description: 'Policy-ordering test: deny every x402 payment.',
+        category: 'capability',
+        source: 'structured',
+        statements: [{
+          id: 'stmt_paid_http_deny',
+          actions: ['payment.x402.authorize'],
+          audit: 'standard',
+          conditions: {
+            payment: { assets: ['USDC'], minAmount: '0.01', networks: ['base'] },
+            resource: { categories: ['market-data'] },
+          },
+          decision: 'deny',
+          target: { types: ['agent'] },
+        }],
+      },
+    });
+    expect(draft.statusCode, draft.body).toBe(201);
+    const draftId = draft.json<{ draft: { id: string } }>().draft.id;
+    expect((await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts/${draftId}/validate`,
+    })).statusCode).toBe(200);
+    const activated = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policy-drafts/${draftId}/activate`,
+    });
+    expect(activated.statusCode, activated.body).toBe(200);
+    const policy = activated.json<{ policy: { id: string; version: number } }>().policy;
+    expect((await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/policies/${policy.id}/bindings`,
+      payload: { policy_version: policy.version, target_id: agentId, target_type: 'agent' },
+    })).statusCode).toBe(201);
+  }
+
   it('accepts the canonical request input and discovers the merchant quote internally', async () => {
     const org = await api.inject({
       method: 'POST',
@@ -1281,6 +1322,81 @@ describe('durable x402 paid HTTP flow', () => {
       });
       expect(resolveResponse.statusCode, resolveResponse.body).toBe(400);
       expect(resolveResponse.json()).toMatchObject({ error: 'not_an_unknown_attempt' });
+    });
+  });
+
+  describe('policy evaluation ordering', () => {
+    it('writes no reservation and leaves reserved_usdc unchanged when policy denies', async () => {
+      providerOutcome = 'settled';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      const { agentId, orgId, secret } = await createReadyBuyer('Policy Deny Ordering', { budget: '5', cap: '2' });
+      await activateDenyPolicy(orgId, agentId);
+
+      const response = await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'policy-deny-ordering-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+      expect(response.statusCode, response.body).toBe(403);
+
+      const reservations = await store.pool.query(
+        'SELECT 1 FROM payment_reservations WHERE org_id = $1', [orgId],
+      );
+      expect(reservations.rowCount).toBe(0);
+
+      const account = await store.pool.query<{ reserved_usdc: string }>(
+        'SELECT reserved_usdc FROM agent_payment_accounts WHERE org_id = $1 AND agent_id = $2',
+        [orgId, agentId],
+      );
+      expect(Number(account.rows[0]?.reserved_usdc)).toBe(0);
+    });
+
+    it('does not leak budget state through the error code when policy denies', async () => {
+      providerOutcome = 'settled';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      // Budget is exhausted (cap 0) AND policy denies -- policy is the
+      // authority and must be evaluated first, so the caller must see the
+      // policy denial, never a budget_exceeded leak about internal state.
+      const { agentId, orgId, secret } = await createReadyBuyer('Policy Deny No Leak', { budget: '0', cap: '2' });
+      await activateDenyPolicy(orgId, agentId);
+
+      const response = await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'policy-deny-no-leak-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).not.toMatchObject({ error: 'budget_exceeded' });
+    });
+
+    it('still produces an approval, not a hard failure, when the policy requires one', async () => {
+      providerOutcome = 'settled';
+      providerCalls = 0;
+      discoveryCalls = 0;
+      const { agentId, orgId, secret } = await createReadyBuyer('Policy Approval Ordering', { budget: '5', cap: '2' });
+      await activateApprovalPolicy(orgId, agentId);
+
+      const response = await api.inject({
+        method: 'POST',
+        url: '/v1/runtime/payments/x402',
+        headers: { authorization: `Bearer ${secret}` },
+        payload: {
+          idempotency_key: 'policy-approval-ordering-key',
+          request: { url: merchantUrl, method: 'GET' as const, headers: [] },
+        },
+      });
+      expect(response.statusCode, response.body).toBe(409);
+      expect(response.json()).toMatchObject({ error: 'policy_requires_approval' });
     });
   });
 });
