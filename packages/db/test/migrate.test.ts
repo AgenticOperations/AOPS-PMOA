@@ -66,6 +66,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0021_runtime_payment_attempts');
     expect(firstRun).toContain('0022_fail_closed_policy_and_freeze');
     expect(firstRun).toContain('0023_arc_chain_support');
+    expect(firstRun).toContain('0024_pin_eoa_account_type');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -96,6 +97,7 @@ describe('PMOA database migrations', () => {
       '0021_runtime_payment_attempts',
       '0022_fail_closed_policy_and_freeze',
       '0023_arc_chain_support',
+      '0024_pin_eoa_account_type',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(
@@ -424,5 +426,75 @@ describe('PMOA database migrations', () => {
         gateway_settlement_verified: true,
       },
     ]);
+
+    const arcCapability = await pool.query<{
+      chain: string;
+      circle_blockchain: string;
+      gateway_domain: number;
+      wallet_account_type: string;
+    }>(
+      `SELECT chain, circle_blockchain, gateway_domain, wallet_account_type
+         FROM circle_chain_capabilities
+        WHERE mode = 'test' AND chain = 'arc'`,
+    );
+    expect(arcCapability.rows).toEqual([
+      {
+        chain: 'arc',
+        circle_blockchain: 'ARC-TESTNET',
+        gateway_domain: 26,
+        wallet_account_type: 'eoa',
+      },
+    ]);
+    const liveArcCapability = await pool.query(
+      "SELECT 1 FROM circle_chain_capabilities WHERE mode = 'live' AND chain = 'arc'",
+    );
+    // Constraint I.1: Arc mainnet does not exist -- no live-mode row.
+    expect(liveArcCapability.rowCount).toBe(0);
+
+    // K-16 (migration 0024): 0012 flipped these DEFAULTs to 'sca'. A new
+    // row that omits account_type must default back to 'eoa', or Gateway
+    // signing fails at payment time rather than wallet-creation time.
+    await pool.query(
+      "INSERT INTO orgs (id, display_name) VALUES ('org_eoa_default', 'EOA Default Org')",
+    );
+    await pool.query(
+      `INSERT INTO circle_wallet_sets (id, org_id, mode, circle_wallet_set_id, label, created_by)
+       VALUES ('ws_eoa_default_test', 'org_eoa_default', 'test', 'circle_ws_eoa_default', 'Default wallet set', 'usr_migrate_test')`,
+    );
+    const walletSetDefault = await pool.query<{ account_type: string }>(
+      "SELECT account_type FROM circle_wallet_sets WHERE id = 'ws_eoa_default_test'",
+    );
+    expect(walletSetDefault.rows[0]?.account_type).toBe('eoa');
+
+    await pool.query(
+      `INSERT INTO circle_chain_wallets (
+         id, org_id, wallet_set_id, mode, chain, circle_blockchain, circle_wallet_id, address
+       ) VALUES (
+         'cwallet_eoa_default_test', 'org_eoa_default', 'ws_eoa_default_test', 'test', 'arc', 'ARC-TESTNET',
+         'circle_wallet_eoa_default', '0x1111111111111111111111111111111111111111'
+       )`,
+    );
+    const chainWalletDefault = await pool.query<{ account_type: string }>(
+      "SELECT account_type FROM circle_chain_wallets WHERE id = 'cwallet_eoa_default_test'",
+    );
+    expect(chainWalletDefault.rows[0]?.account_type).toBe('eoa');
+
+    // 0024 resets only the DEFAULT, not the CHECK -- 'sca' rows (the Agent
+    // Wallet fallback path, per A3) must still be insertable explicitly.
+    // This DB was bootstrapped fresh for this test, so there is no
+    // pre-existing 0012-backfilled data to assert against directly; this
+    // proves the constraint itself wasn't accidentally re-tightened.
+    await pool.query(
+      `INSERT INTO circle_chain_wallets (
+         id, org_id, wallet_set_id, mode, chain, circle_blockchain, circle_wallet_id, address, account_type
+       ) VALUES (
+         'cwallet_sca_survivor_test', 'org_eoa_default', 'ws_eoa_default_test', 'test', 'base', 'BASE-SEPOLIA',
+         'circle_wallet_sca_survivor', '0x2222222222222222222222222222222222222222', 'sca'
+       )`,
+    );
+    const scaRow = await pool.query<{ account_type: string }>(
+      "SELECT account_type FROM circle_chain_wallets WHERE id = 'cwallet_sca_survivor_test'",
+    );
+    expect(scaRow.rows[0]?.account_type).toBe('sca');
   });
 });
