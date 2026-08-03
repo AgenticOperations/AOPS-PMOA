@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
 import {
   enqueueAgentWalletProvisioning,
   findAgentWallet,
+  nativeBalanceMicros,
   processAgentWalletCreateJob,
   recordProvisionedWallet,
   readSpendableMicros,
@@ -403,5 +404,55 @@ describe('Arc gas headroom', () => {
       { nativeBalanceMicros: () => Promise.resolve(500_000n) },
     );
     expect(spendable).toBe(0n);
+  });
+});
+
+describe('nativeBalanceMicros', () => {
+  const originalFetch = global.fetch;
+  const originalRpcUrl = process.env.ARC_RPC_URL;
+
+  beforeEach(() => {
+    process.env.ARC_RPC_URL = 'https://rpc.testnet.arc.network';
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalRpcUrl === undefined) delete process.env.ARC_RPC_URL;
+    else process.env.ARC_RPC_URL = originalRpcUrl;
+  });
+
+  it('converts native wei to USDC micros -- 1e12 ratio confirmed by spike S6', async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      json: () => Promise.resolve({ result: '0x38d7ea4c68000' }), // 1_000_000_000_000_000 wei = 1000 micros
+    })) as unknown as typeof fetch;
+
+    const micros = await nativeBalanceMicros('0xabc', 'arc');
+    expect(micros).toBe(1000n);
+  });
+
+  it('retries transient RPC failures rather than failing on the first error', async () => {
+    // Spike S6 found Arc's public RPC failing ~56% of identical calls.
+    let calls = 0;
+    global.fetch = vi.fn(() => {
+      calls += 1;
+      if (calls < 3) return Promise.reject(new Error('transient RPC failure'));
+      return Promise.resolve({ json: () => Promise.resolve({ result: '0xf4240' }) }); // 1_000_000 wei
+    }) as unknown as typeof fetch;
+
+    const micros = await nativeBalanceMicros('0xabc', 'arc');
+    expect(micros).toBe(0n); // 1_000_000 wei / 1e12 truncates to 0 micros
+    expect(calls).toBe(3);
+  });
+
+  it('throws rather than silently returning zero once retries are exhausted', async () => {
+    // A coerced-zero on a genuinely failed read would reject valid
+    // payments and could trigger a spurious top-up -- must fail loudly.
+    global.fetch = vi.fn(() => Promise.reject(new Error('rpc down')));
+
+    await expect(nativeBalanceMicros('0xabc', 'arc')).rejects.toThrow('agent_wallet_balance_unavailable');
+  });
+
+  it('throws for a chain with no configured RPC URL', async () => {
+    await expect(nativeBalanceMicros('0xabc', 'base')).rejects.toThrow('agent_wallet_balance_rpc_not_configured:base');
   });
 });

@@ -74,18 +74,20 @@ export type RegisterPaymentRoutesDeps = {
 };
 
 const modeSchema = z.enum(['test', 'live']);
-const chainSchema = z.enum(['base', 'arbitrum', 'polygon', 'optimism', 'avalanche']);
+const chainSchema = z.enum(['base', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'arc']);
 const paymentRails = [
   'gateway_base',
   'gateway_arbitrum',
   'gateway_polygon',
   'gateway_optimism',
   'gateway_avalanche',
+  'gateway_arc',
   'exact_base',
   'exact_arbitrum',
   'exact_polygon',
   'exact_optimism',
   'exact_avalanche',
+  'exact_arc',
 ] as const;
 const railSchema = z.enum(paymentRails);
 const sourceTypeSchema = z.enum(['gateway', 'direct_exact', 'dedicated_wallet']);

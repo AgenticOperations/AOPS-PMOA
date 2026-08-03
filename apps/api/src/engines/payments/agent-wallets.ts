@@ -5,6 +5,74 @@ import type { PaymentChain, PaymentMode } from './types.js';
 
 type Db = pg.Pool | pg.PoolClient;
 
+// wei (18dp native) -> USDC micros (6dp), the unit the rest of the
+// payments engine uses throughout (see parseUsdcMicros in store.ts).
+// Confirmed 1:1 empirically in spike S6 (docs/spike-results.md):
+// balanceOf() == floor(native / 1e12) on every sampled Arc account.
+const WEI_PER_MICRO = 1_000_000_000_000n;
+
+// Read at call time, not module-load time -- process.env can be populated
+// after this module is imported (env-file loading order, tests stubbing
+// the var), and a frozen-at-import constant would silently never see it.
+function chainRpcUrl(chain: PaymentChain): string | undefined {
+  if (chain === 'arc') return process.env.ARC_RPC_URL;
+  return undefined;
+}
+
+const NATIVE_BALANCE_MAX_ATTEMPTS = 6;
+const NATIVE_BALANCE_RETRY_DELAY_MS = 400;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Reads an address's NATIVE balance (not the ERC-20 view) and converts it
+ * to USDC micros. On Arc, USDC is the native gas asset, and the ERC-20
+ * view truncates -- balanceOf can read 0 while the native balance is
+ * genuinely non-zero (constraint I.8, confirmed in spike S6). Budget and
+ * gas decisions must use this, never the ERC-20 view.
+ *
+ * Retries with backoff: spike S6 found Arc's public RPC failing ~56% of
+ * identical balanceOf calls. A failed read must never be silently coerced
+ * to zero -- that would reject valid payments and could trigger spurious
+ * top-ups -- so this throws after exhausting retries rather than
+ * returning a default.
+ */
+export async function nativeBalanceMicros(address: string, chain: PaymentChain): Promise<bigint> {
+  const rpcUrl = chainRpcUrl(chain);
+  if (rpcUrl === undefined || rpcUrl.length === 0) {
+    throw new Error(`agent_wallet_balance_rpc_not_configured:${chain}`);
+  }
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= NATIVE_BALANCE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_getBalance',
+          params: [address, 'latest'],
+        }),
+      });
+      const body = await response.json() as { readonly result?: string; readonly error?: { readonly message?: string } };
+      if (body.error !== undefined) throw new Error(body.error.message ?? 'eth_getBalance_rpc_error');
+      if (body.result === undefined) throw new Error('eth_getBalance_empty_response');
+      const weiBalance = BigInt(body.result);
+      return weiBalance / WEI_PER_MICRO;
+    } catch (error) {
+      lastError = error;
+      if (attempt < NATIVE_BALANCE_MAX_ATTEMPTS) await sleep(NATIVE_BALANCE_RETRY_DELAY_MS);
+    }
+  }
+  throw new Error(
+    `agent_wallet_balance_unavailable:${lastError instanceof Error ? lastError.message : 'unknown'}`,
+  );
+}
+
 async function circleBlockchainForChain(db: Db, mode: PaymentMode, chain: PaymentChain): Promise<string> {
   const result = await db.query<{ circle_blockchain: string }>(
     'SELECT circle_blockchain FROM circle_chain_capabilities WHERE mode = $1 AND chain = $2',

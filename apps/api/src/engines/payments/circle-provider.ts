@@ -1261,7 +1261,7 @@ function parseAgentWalletId(walletId: string): {
 }
 
 function isCirclePaymentChain(value: string | undefined): value is CirclePaymentChain {
-  return value === 'base' || value === 'arbitrum' || value === 'polygon' || value === 'optimism' || value === 'avalanche';
+  return value === 'base' || value === 'arbitrum' || value === 'polygon' || value === 'optimism' || value === 'avalanche' || value === 'arc';
 }
 
 function chainFromGatewayNetwork(network: string): CirclePaymentChain {
@@ -1273,6 +1273,7 @@ function chainFromGatewayNetwork(network: string): CirclePaymentChain {
   }
   if (normalized === 'eip155:11155420' || normalized === 'eip155:10' || normalized.includes('op')) return 'optimism';
   if (normalized === 'eip155:43113' || normalized === 'eip155:43114' || normalized.includes('avax')) return 'avalanche';
+  if (normalized === 'eip155:5042002' || normalized.includes('arc')) return 'arc';
   throw new Error('unsupported_circle_agent_wallet_payment_network');
 }
 

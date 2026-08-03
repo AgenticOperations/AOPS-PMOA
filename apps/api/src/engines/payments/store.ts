@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import type { Redis } from 'ioredis';
 import type { PaymentPayload } from '@x402/core/types';
-import { enqueueAgentWalletProvisioning } from './agent-wallets.js';
+import { enqueueAgentWalletProvisioning, findAgentWallet, nativeBalanceMicros, readSpendableMicros } from './agent-wallets.js';
 import { readCachedBalances, writeCachedBalances } from './balances-cache.js';
 import { gatewayDepositSatisfied, resolveGatewayDepositorAddress } from './circle-liquidity-worker.js';
 import { sha256Hex } from '../evidence/canonical-json.js';
@@ -4980,6 +4980,29 @@ async function preparePaidHttpPayment(
     const reserved = parseUsdcMicros(account.reserved_usdc);
     if (spent + reserved + quote.amountMicros > budget) {
       throw conflict('budget_exceeded', 'Payment amount exceeds the agent budget.');
+    }
+
+    // Authoritative ceiling: the agent's own on-chain balance. The counters
+    // above are a fast pre-filter and an intent record; this is the bound
+    // that survives a total compromise of this system, because anyone can
+    // verify it by RPC without trusting us. Deliberately permissive when no
+    // per-agent wallet exists: orgs that haven't adopted per-agent wallets
+    // keep working on the shared org wallet, so a missing wallet is not a
+    // hard failure.
+    //
+    // gasReserveMicros is 0n here -- the gas_reserve_usdc column doesn't
+    // exist until Phase 4's agent_allocations table. readSpendableMicros
+    // already takes it as a parameter for that reason; wire in the real
+    // value once that table lands rather than hardcoding a guess now.
+    const agentWallet = await findAgentWallet(client, auth.agent_id, mode, quote.chain);
+    if (agentWallet !== null) {
+      const spendable = await readSpendableMicros(agentWallet, 0n, { nativeBalanceMicros });
+      if (quote.amountMicros > spendable) {
+        throw conflict(
+          'insufficient_agent_wallet_balance',
+          'Payment amount exceeds the agent wallet spendable balance.',
+        );
+      }
     }
 
     const source = await activePaymentSource(client, auth.org_id, quote.rail, quote.chain);
