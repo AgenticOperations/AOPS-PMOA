@@ -68,6 +68,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0023_arc_chain_support');
     expect(firstRun).toContain('0024_pin_eoa_account_type');
     expect(firstRun).toContain('0025_agent_chain_wallets');
+    expect(firstRun).toContain('0026_agent_allocations');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -100,6 +101,7 @@ describe('PMOA database migrations', () => {
       '0023_arc_chain_support',
       '0024_pin_eoa_account_type',
       '0025_agent_chain_wallets',
+      '0026_agent_allocations',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(
@@ -553,5 +555,52 @@ describe('PMOA database migrations', () => {
       "SELECT count(*) FROM circle_provider_jobs WHERE org_id = 'org_eoa_default'",
     );
     expect(Number(jobCount.rows[0]?.count)).toBe(13);
+
+    // Migration 0026: agent_allocations. The two invariant CHECKs
+    // (ceiling >= allocated, allocated >= low_water_mark) are the last line
+    // of defense if application code ever writes a row directly -- assert
+    // both reject a violating row.
+    await pool.query(
+      `INSERT INTO agent_allocations (
+         id, org_id, agent_id, mode, chain, allocated_usdc, gas_reserve_usdc,
+         low_water_mark_usdc, ceiling_usdc, created_by
+       ) VALUES (
+         'aalloc_migrate_test', 'org_eoa_default', 'agt_eoa_default', 'test', 'arc',
+         5.00, 0.50, 1.00, 10.00, 'usr_migrate_test'
+       )`,
+    );
+    const allocationRow = await pool.query<{ status: string }>(
+      "SELECT status FROM agent_allocations WHERE id = 'aalloc_migrate_test'",
+    );
+    expect(allocationRow.rows[0]?.status).toBe('active');
+
+    await expect(pool.query(
+      `INSERT INTO agent_allocations (
+         id, org_id, agent_id, mode, chain, allocated_usdc, ceiling_usdc, created_by
+       ) VALUES (
+         'aalloc_ceiling_violation_test', 'org_eoa_default', 'agt_eoa_default', 'test', 'base',
+         20.00, 10.00, 'usr_migrate_test'
+       )`,
+    )).rejects.toThrow();
+
+    await expect(pool.query(
+      `INSERT INTO agent_allocations (
+         id, org_id, agent_id, mode, chain, allocated_usdc, low_water_mark_usdc, ceiling_usdc, created_by
+       ) VALUES (
+         'aalloc_low_water_violation_test', 'org_eoa_default', 'agt_eoa_default', 'test', 'polygon',
+         1.00, 5.00, 10.00, 'usr_migrate_test'
+       )`,
+    )).rejects.toThrow();
+
+    // UNIQUE (agent_id, mode, chain) -- a second allocation for the same
+    // agent/mode/chain must be rejected, not silently create a duplicate row.
+    await expect(pool.query(
+      `INSERT INTO agent_allocations (
+         id, org_id, agent_id, mode, chain, allocated_usdc, ceiling_usdc, created_by
+       ) VALUES (
+         'aalloc_duplicate_test', 'org_eoa_default', 'agt_eoa_default', 'test', 'arc',
+         1.00, 10.00, 'usr_migrate_test'
+       )`,
+    )).rejects.toThrow();
   });
 });
