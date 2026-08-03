@@ -117,17 +117,43 @@ export type CircleTransferResult = {
   readonly transactionId: string;
 };
 
+export type CirclePermit2SignInput = {
+  readonly mode: ProviderMode;
+  readonly ownerAddress: string;
+  readonly chain: CirclePaymentChain;
+  readonly typedData: Record<string, unknown>;
+};
+
+export type CirclePermit2SignResult = {
+  readonly signature: string;
+};
+
+export type CirclePermit2ExecuteInput = {
+  readonly mode: ProviderMode;
+  readonly chain: CirclePaymentChain;
+  readonly senderAddress: string;
+  readonly abiFunctionSignature: string;
+  readonly abiParameters: readonly unknown[];
+  readonly refId: string;
+};
+
+export type CirclePermit2ExecuteResult = {
+  readonly txHash: string;
+};
+
 export type CircleTreasuryProvider = {
   readonly bridgeWalletTopUp: (input: CircleBridgeTopUpInput) => Promise<CircleBridgeTopUpResult>;
   readonly health: (mode: ProviderMode) => CircleProviderHealth;
   readonly createWalletSet: (input: CreateWalletSetInput) => Promise<CreatedWalletSet>;
   readonly createWallet: (input: CreateWalletInput) => Promise<CreatedWallet>;
+  readonly executePermit2Transaction: (input: CirclePermit2ExecuteInput) => Promise<CirclePermit2ExecuteResult>;
   readonly getGatewayBalance: (input: CircleGatewayBalanceInput) => Promise<CircleGatewayBalanceResult>;
   readonly getWalletBalances: (input: CircleWalletBalanceInput) => Promise<CircleWalletBalanceResult>;
   readonly initiateGatewayDeposit: (input: CircleGatewayDepositInput) => Promise<CircleGatewayDepositResult>;
   readonly requestTestnetFunds: (input: CircleTestnetFundingInput) => Promise<CircleTestnetFundingResult>;
   readonly settleExactX402: (input: CircleExactX402SettlementInput) => Promise<CircleExactX402SettlementResult>;
   readonly settleGatewayX402: (input: CircleGatewayX402SettlementInput) => Promise<CircleGatewayX402SettlementResult>;
+  readonly signPermit2Delegation: (input: CirclePermit2SignInput) => Promise<CirclePermit2SignResult>;
   readonly transferWallet: (input: CircleTransferInput) => Promise<CircleTransferResult>;
 };
 
@@ -388,6 +414,10 @@ type ChainContractConfig = {
   readonly gatewayWallet: string;
   readonly usdc: string;
 };
+
+// Canonical Permit2 address, identical across every chain (CREATE2
+// deployment) -- verified live on Arc in spike S4 (docs/spike-results.md).
+const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
 const TESTNET_GATEWAY_WALLET = '0x0077777d7EBA4688BDeF3E311b846F25870A19B9';
 const MAINNET_GATEWAY_WALLET = '0x77777777Dcc4d5A8B6E418Fd04D8997ef11000eE';
@@ -1199,6 +1229,39 @@ export function createDeveloperControlledCircleTreasuryProvider(
         transactionId: txHash ?? transactionId,
       };
     },
+    signPermit2Delegation: async ({ chain, mode, ownerAddress, typedData }) => {
+      const env = readEnv(mode);
+      const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
+      const response = await client.signTypedData({
+        walletAddress: ownerAddress,
+        blockchain: CONTRACT_EXECUTION_BLOCKCHAINS[mode][chain],
+        data: JSON.stringify(typedData),
+      });
+      const signature = response.data?.signature;
+      if (signature === undefined || signature.length === 0) throw new Error('circle_permit2_signature_missing');
+      return { signature };
+    },
+    executePermit2Transaction: async ({ abiFunctionSignature, abiParameters, chain, mode, refId, senderAddress }) => {
+      const env = readEnv(mode);
+      const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
+      const submitted = await client.createContractExecutionTransaction({
+        abiFunctionSignature,
+        abiParameters: abiParameters as unknown[],
+        blockchain: CONTRACT_EXECUTION_BLOCKCHAINS[mode][chain],
+        contractAddress: PERMIT2_ADDRESS,
+        fee: circleFee(),
+        idempotencyKey: crypto.randomUUID(),
+        refId,
+        walletAddress: senderAddress,
+      });
+      const transactionId = submitted.data?.id;
+      if (transactionId === undefined || transactionId.length === 0) throw new Error('circle_permit2_transaction_missing');
+      await waitForCircleTransaction(client, transactionId, 'circle_permit2');
+      const confirmed = await client.getTransaction({ id: transactionId });
+      const txHash = confirmed.data?.transaction?.txHash;
+      if (txHash === undefined || txHash.length === 0) throw new Error('circle_permit2_tx_hash_missing');
+      return { txHash };
+    },
     requestTestnetFunds: async ({ address, chain, mode }) => {
       if (mode !== 'test') throw new Error('circle_testnet_faucet_unavailable_in_live_mode');
       const env = readEnv(mode);
@@ -1445,6 +1508,8 @@ export function createCircleAgentWalletTreasuryProvider(options: {
       };
     },
     transferWallet: () => Promise.reject(new Error('circle_agent_wallet_cli_transfer_not_supported')),
+    signPermit2Delegation: () => Promise.reject(new Error('circle_agent_wallet_cli_permit2_not_supported')),
+    executePermit2Transaction: () => Promise.reject(new Error('circle_agent_wallet_cli_permit2_not_supported')),
     settleExactX402: async (input) => {
       const { mode, requirements, walletAddress } = input;
       const chain = chainFromGatewayNetwork(requirements.network);

@@ -43,6 +43,8 @@ const operationSchema = z.enum([
   'settleExactX402',
   'settleGatewayX402',
   'transferWallet',
+  'signPermit2Delegation',
+  'executePermit2Transaction',
 ]);
 const providerRequestSchema = z.object({
   input: z.record(z.string(), z.unknown()),
@@ -171,6 +173,10 @@ async function executeProviderOperation(
         ...rawInput,
         amountMicros: BigInt(String(rawInput.amountMicros)),
       } as Parameters<CircleTreasuryProvider['transferWallet']>[0]);
+    case 'signPermit2Delegation':
+      return provider.signPermit2Delegation(rawInput as Parameters<CircleTreasuryProvider['signPermit2Delegation']>[0]);
+    case 'executePermit2Transaction':
+      return provider.executePermit2Transaction(rawInput as Parameters<CircleTreasuryProvider['executePermit2Transaction']>[0]);
   }
 }
 

@@ -52,6 +52,8 @@ describe('payTo binding', () => {
     requestTestnetFunds: vi.fn(),
     settleExactX402: () => Promise.resolve(settlementResult()),
     settleGatewayX402: () => Promise.resolve(settlementResult()),
+    signPermit2Delegation: vi.fn(),
+    executePermit2Transaction: vi.fn(),
     transferWallet: vi.fn(),
   };
 

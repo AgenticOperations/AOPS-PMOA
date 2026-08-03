@@ -274,6 +274,8 @@ function unavailableCircleProvider(): CircleTreasuryProvider {
     settleExactX402: unavailable,
     settleGatewayX402: unavailable,
     transferWallet: unavailable,
+    signPermit2Delegation: unavailable,
+    executePermit2Transaction: unavailable,
   };
 }
 

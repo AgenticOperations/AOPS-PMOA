@@ -19,6 +19,8 @@ function fakeProvider(
     requestTestnetFunds: vi.fn(),
     settleExactX402: vi.fn(),
     settleGatewayX402: vi.fn(),
+    signPermit2Delegation: vi.fn(),
+    executePermit2Transaction: vi.fn(),
     transferWallet: vi.fn(),
     ...overrides,
   };

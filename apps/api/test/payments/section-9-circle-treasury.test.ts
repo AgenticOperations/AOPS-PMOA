@@ -406,6 +406,8 @@ function fakeCircleProvider(): CircleTreasuryProvider {
       gatewaySettleCalls += 1;
       return Promise.resolve(gatewaySettlement);
     },
+    signPermit2Delegation: vi.fn(),
+    executePermit2Transaction: vi.fn(),
     transferWallet: ({ amountMicros }) => Promise.resolve({
       amountMicros: amountMicros.toString(),
       transactionId: 'circle_tx_transfer_test',

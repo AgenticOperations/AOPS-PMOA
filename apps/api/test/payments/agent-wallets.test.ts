@@ -24,6 +24,8 @@ function fakeProvider(createWallet: CircleTreasuryProvider['createWallet']): Cir
     requestTestnetFunds: vi.fn(),
     settleExactX402: vi.fn(),
     settleGatewayX402: vi.fn(),
+    signPermit2Delegation: vi.fn(),
+    executePermit2Transaction: vi.fn(),
     transferWallet: vi.fn(),
   };
 }
@@ -291,6 +293,8 @@ function fakeTransferProvider(transferWallet: CircleTreasuryProvider['transferWa
     requestTestnetFunds: vi.fn(),
     settleExactX402: vi.fn(),
     settleGatewayX402: vi.fn(),
+    signPermit2Delegation: vi.fn(),
+    executePermit2Transaction: vi.fn(),
     transferWallet,
   };
 }
