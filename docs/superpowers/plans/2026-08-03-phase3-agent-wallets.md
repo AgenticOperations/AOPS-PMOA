@@ -12,7 +12,7 @@
 
 **Gate:** requires Phase 2 complete, plus Phase 0 spikes **S2** (wallets on Arc) and **S6** (balance truncation).
 
-**This phase carries the pitch's most important claim.** "Max loss is bounded by the agent's on-chain balance, verifiable by anyone via RPC" is **false until Task 4 ships**. Do not say it before then.
+**This phase carries the pitch's most important claim.** "Max loss is bounded by the agent's on-chain balance, verifiable by anyone via RPC" was **false until Task 4 shipped**. Task 4 has shipped and its proof test has been run against real infrastructure — **the claim is now true.** See the Done Criteria at the bottom of this document and `docs/spike-results.md` for the evidence.
 
 ---
 
