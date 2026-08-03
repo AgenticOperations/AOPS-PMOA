@@ -59,7 +59,7 @@ Fill in as each runs. Do not mark a row answered without evidence.
 |---|---|---|---|
 | **S1** `[K-17]` | Arc chain ID: docs `5042002` vs facilitator `eip155:14601` | ✅ **RESOLVED** | See S1 below — **manifest's premise was wrong** |
 | **S2** `[A2]` | Dev-controlled EOA wallets on `ARC-TESTNET`, end to end | ✅ **PASS** | Two EOA wallets provisioned — see S2 below |
-| **S3** `[A1]` | Can the entity secret sweep funds out to treasury? | ⬜ blocked on funding | Needs S5 |
+| **S3** `[A1]` | Can the entity secret sweep funds out to treasury? | ✅ **PASS** | Real sweep executed, tx `0x0cb4fe4...d252a3` — see S3 below |
 | **S4** `[K-12]` | Permit2 `approve` + `transferFrom` on Arc's native-USDC view | 🟡 **READ-PATH PASS** | Permit2 live, 9152 bytes; write path blocked on S5 funding |
 | **S5** `[K-4]` | Arc testnet USDC faucet path | ❌ **BLOCKED** | Faucet 403 — **key scope, not Arc** — see S5 below |
 | **S6** `[C3]` | ERC-20 `balanceOf` truncation vs native balance | ✅ **RESOLVED** | 1:1 ratio confirmed; **new RPC finding** below |
@@ -177,7 +177,32 @@ Confirmed properties:
 
 **Pre-existing account state** (useful for Phase 2/3): 11 wallets already exist across `AVAX-FUJI`, `OP-SEPOLIA`, `MATIC-AMOY`, `ARB-SEPOLIA`, `BASE-SEPOLIA` — **all `accountType: EOA`**, all `DEVELOPER` custody. `BASE-SEPOLIA` already present, which the cross-chain hop needs.
 
-**Not yet done:** fund → transfer between the two wallets. Blocked on S5.
+**Not yet done at the time:** fund → transfer between the two wallets. Blocked on S5. Resolved later in Phase 4 -- see S3 below.
+
+---
+
+### S3 `[A1]` — Sweep authority — PASS
+
+Run after S5 was worked around (see S5 below) and one of S2's wallets was manually funded with 20 USDC on Arc testnet. Question: can the entity secret authorize a transfer OUT of an agent-controlled wallet with no separate signer -- the exact mechanism Phase 4 Task 5's sweep-on-revoke needs.
+
+```
+client.createTransaction({
+  amount: ['1.00'],
+  destinationAddress: '0x216c05b8d3409d2fd2b82375334d4b87e789367e',
+  tokenAddress: '0x3600000000000000000000000000000000000000',  // Arc's USDC precompile address
+  blockchain: 'ARC-TESTNET',
+  walletAddress: '0xecf29492264424ae73fc1434a30a66d2f6a9b48f',   // agent A's wallet -- the source
+  fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
+})
+-> { id: '58362f35-ee83-59d2-9503-d719ffaca6d2', state: 'INITIATED' }
+-> polled to state: 'COMPLETE', txHash: '0x0cb4fe447ad1e00bd5ef78faf4ef9cce6fe5d222e264044182eaef5d50d252a3'
+```
+
+**Balances confirmed on-chain before/after via raw `eth_getBalance`:** agent A went from $20.00 to $19.00 (the $1.00 sent, minus its own gas -- Arc's native-gas model, same as every other Arc finding in this doc); agent B received exactly $1.00.
+
+**Answer: yes.** The entity secret alone -- no OTP, no separate signer, no per-wallet key -- can move funds out of any wallet it controls. This is the same mechanism `transferWallet()` (built for Task 3's auto-topup) already implements, so Task 5's sweep needs no new provider method, only a new call site.
+
+Independently verifiable: `https://testnet.arcscan.app/tx/0x0cb4fe447ad1e00bd5ef78faf4ef9cce6fe5d222e264044182eaef5d50d252a3`
 
 ---
 
@@ -195,13 +220,13 @@ POST /v1/faucet/drips  { blockchain: 'BASE-SEPOLIA', usdc: true } -> 403 {"code"
 2. **Use Arc's public testnet faucet** directly for `0x00ca790a06002bb6ace2488633bfea71dc2023df`.
 3. **Transfer from an existing funded wallet** if any of the 11 pre-existing wallets holds testnet USDC.
 
-**What this blocks until resolved:**
+**What this blocked, and current status now that funding was worked around:**
 
-| Blocked | Why |
-|---|---|
-| **S4 write path** — `approve` + `transferFrom`, allowance decrement | Needs a funded wallet. **This is the final T3 confirmation.** |
-| **S3** — sweep authority `[A1]` | Cannot sweep an empty wallet. Gates Phase 4 · Task 5. |
-| **S2 completion** — fund → transfer | Needs funding. |
+| Blocked | Why | Status |
+|---|---|---|
+| **S4 write path** — `approve` + `transferFrom`, allowance decrement | Needs a funded wallet. **This is the final T3 confirmation.** | still open |
+| **S3** — sweep authority `[A1]` | Cannot sweep an empty wallet. Gates Phase 4 · Task 5. | ✅ resolved — see S3 above |
+| **S2 completion** — fund → transfer | Needs funding. | ✅ resolved — see S3 above (the sweep tx *is* the fund→transfer) |
 
 **Not blocked:** Phases 1, 2, 3, and 5 can all proceed. Phase 3's acceptance artifact (fund $1.00, attempt $2.00, observe rejection) needs funding, but the code and unit tests do not.
 
