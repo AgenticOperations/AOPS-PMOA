@@ -267,6 +267,41 @@ The rejection was driven by `nativeBalanceMicros` reading the wallet's live bala
 
 ---
 
+### Phase 4 · Task 5 proof test — real revoke, real sweep, real tx hash
+
+Run against the same real infrastructure as Phase 3's proof: real Circle developer-controlled-wallets API (test mode), real Postgres, real Arc testnet RPC. Reused `0xecf2...9b48f` (re-funded to $0.55 via a small internal transfer for this run, after spike S3 had already swept $1.00 out of it).
+
+A real org/agent were created, bound to that wallet via `recordProvisionedWallet`, and revoked through the actual `revokeAgent()` code path — not a mock, the same function the HTTP route calls:
+
+```
+agents.status: active -> suspended
+agent_chain_wallets: agent_wallet.sweep job enqueued for chain 'arc'
+```
+
+`processAgentWalletSweepJob` was then run against the real provider:
+
+```
+sweep job result: { status: 'complete',
+  provider_ref: '0x566966b754ae9dca563f9f8592bfc6ba6051713c3bbcb423f272b3ec0f3d5627',
+  amount_usdc: '0.497281' }
+agent wallet row after sweep: { status: 'swept', swept_at: '2026-08-03T14:15:01.693Z' }
+```
+
+**Balances confirmed on-chain before/after via raw `eth_getBalance`:**
+
+| | Before | After |
+|---|---|---|
+| Agent wallet | $0.55 | $0.05 (dust — gas reserve left behind, by design) |
+| Treasury wallet | $18.95 | $19.44 |
+
+$0.497281 moved, matching the job's recorded `amount_usdc` exactly.
+
+Independently verifiable: **https://testnet.arcscan.app/tx/0x566966b754ae9dca563f9f8592bfc6ba6051713c3bbcb423f272b3ec0f3d5627**
+
+**Bug found and fixed during this proof:** the first run recorded `provider_ref` as Circle's internal transaction UUID (`e881e85d-2310-...`), not a real on-chain hash — confirmed via `getTransaction` that the real `txHash` field is a distinct value. `transferWallet()` (shared with Task 3's auto-topup) now fetches and returns the real hash. This matters for every future sweep, topup, and any other artifact this codebase claims is "verifiable on-chain."
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
@@ -275,6 +310,6 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 |---|---|---|
 | Phase 3 · Task 4 — provable max-loss | Funded $20.00, attempted $25.00 → `409 insufficient_agent_wallet_balance`; attempted $5.00 → `200` settled. See "Phase 3 · Task 4 proof test" above. | ✅ |
 | Phase 3 · Task 3 — distinct agent wallets | Two real addresses via Circle SDK: `0xecf2...9b48f` (Agent A) vs `0x216c...9367e` (Agent B) — see above | ✅ |
-| Phase 4 · Task 5 — sweep-revocation | Balance drains to treasury, tx hash | ⬜ |
+| Phase 4 · Task 5 — sweep-revocation | Balance drains to treasury, tx hash | ✅ tx `0x566966b...f3d5627` — see "Phase 4 · Task 5 proof test" above |
 | Phase 6 · Task 2 — Permit2 drawdown | Allowance decrementing across 3 payments, then `lockdown()` | ⬜ |
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
