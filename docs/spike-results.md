@@ -124,6 +124,32 @@ Arc USDC 0x3600...0000
 
 ---
 
+### Phase 6 · Task 2 proof test — permit2.ts's real functions, not an ad-hoc script
+
+Run after `permit2.ts` was implemented and its mocked-provider test suite (9/9) passed. This step specifically re-verified the module's own `recordSignedDelegation` / `drawDown` / `revokeDelegation` functions against real Circle API + real Arc testnet — not the raw spike script above, which only proved the underlying mechanism.
+
+**Two real bugs found and fixed by this run, neither catchable by a mocked-provider test:**
+
+1. `recordSignedDelegation` signed a `PermitSingle` and persisted the signature, but never actually submitted `permit()` on-chain. A signature Permit2 has never seen does nothing — `drawDown`'s `transferFrom` would fail against a real zero allowance forever. Fixed: `recordSignedDelegation` now also submits `permit()`, by the payer.
+2. The delegation nonce was hardcoded to `0`. Permit2 requires a strictly increasing nonce per owner/token/spender — a stale nonce makes `permit()` silently revert, surfacing as an opaque `"API parameter invalid"` from Circle with no indication the nonce was the cause. Fixed: added `readPermit2Nonce`, reading Permit2's real `allowance()` live (same retry-with-backoff discipline as `nativeBalanceMicros`, since Arc's RPC failure rate is the same ~56% found in S6).
+
+**A third, unrelated bug found while debugging the above:** a long `refId` (~100 characters, embedding both an org ID and a full address) makes Circle reject the entire `createContractExecutionTransaction` call with the same opaque `"API parameter invalid"` error — this initially masked the real nonce bug, since both produced an identical error message. Confirmed by isolating the variable: identical payload, only `refId` length changed, from failing (~100 chars) to succeeding (~19 chars). Fixed by shortening every Permit2 `refId` to a short prefix + UUID.
+
+**Full proof, after both fixes:**
+
+```
+recordSignedDelegation: real EIP-712 sign + real permit() submission -> delegation status 'active'
+drawDown:  transferFrom(payer, payee, 10000, ARC_USDC)
+           tx 0x823255030af94a46b64e6635914b022e86cca9ed4c685794757e7bc6dae86f25
+           drawn_usdc recorded: 0.010000
+revokeDelegation: lockdown() -> delegation status 'revoked'
+allowance() read after lockdown: (amount: 0n, ...) -- confirmed zeroed on-chain, not just locally
+```
+
+Independently verifiable: **https://testnet.arcscan.app/tx/0x823255030af94a46b64e6635914b022e86cca9ed4c685794757e7bc6dae86f25**
+
+---
+
 ### S6 `[C3]` — Balance truncation — RESOLVED, plus a more dangerous finding
 
 **Truncation confirmed, and it is exactly 1:1.** Sampled live accounts:
@@ -319,5 +345,5 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 | Phase 3 · Task 4 — provable max-loss | Funded $20.00, attempted $25.00 → `409 insufficient_agent_wallet_balance`; attempted $5.00 → `200` settled. See "Phase 3 · Task 4 proof test" above. | ✅ |
 | Phase 3 · Task 3 — distinct agent wallets | Two real addresses via Circle SDK: `0xecf2...9b48f` (Agent A) vs `0x216c...9367e` (Agent B) — see above | ✅ |
 | Phase 4 · Task 5 — sweep-revocation | Balance drains to treasury, tx hash | ✅ tx `0x566966b...f3d5627` — see "Phase 4 · Task 5 proof test" above |
-| Phase 6 · Task 2 — Permit2 drawdown | Allowance decrementing across 3 payments, then `lockdown()` | ⬜ |
+| Phase 6 · Task 2 — Permit2 drawdown | Real drawdown + `lockdown()` via `permit2.ts`'s actual functions, tx `0x8232550...dae86f25`, allowance confirmed `0n` after lockdown. See "Phase 6 · Task 2 proof test" above. | ✅ |
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
