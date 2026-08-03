@@ -406,6 +406,10 @@ function fakeCircleProvider(): CircleTreasuryProvider {
       gatewaySettleCalls += 1;
       return Promise.resolve(gatewaySettlement);
     },
+    transferWallet: ({ amountMicros }) => Promise.resolve({
+      amountMicros: amountMicros.toString(),
+      transactionId: 'circle_tx_transfer_test',
+    }),
   };
 }
 

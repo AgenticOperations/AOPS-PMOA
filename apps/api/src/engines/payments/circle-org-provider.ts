@@ -49,5 +49,6 @@ export function createOrgScopedCircleTreasuryProvider(
     requestTestnetFunds: (input) => invoke((provider) => provider.requestTestnetFunds(input)),
     settleExactX402: (input) => invoke((provider) => provider.settleExactX402(input)),
     settleGatewayX402: (input) => invoke((provider) => provider.settleGatewayX402(input)),
+    transferWallet: (input) => invoke((provider) => provider.transferWallet(input)),
   };
 }

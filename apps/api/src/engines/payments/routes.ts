@@ -262,6 +262,7 @@ function unavailableCircleProvider(): CircleTreasuryProvider {
     requestTestnetFunds: unavailable,
     settleExactX402: unavailable,
     settleGatewayX402: unavailable,
+    transferWallet: unavailable,
   };
 }
 

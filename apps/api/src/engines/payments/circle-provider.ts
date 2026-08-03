@@ -103,6 +103,20 @@ export type CircleBridgeTopUpResult = {
   readonly transaction?: string | undefined;
 };
 
+export type CircleTransferInput = {
+  readonly amountMicros: bigint;
+  readonly chain: CirclePaymentChain;
+  readonly destinationAddress: string;
+  readonly mode: ProviderMode;
+  readonly refId: string;
+  readonly sourceAddress: string;
+};
+
+export type CircleTransferResult = {
+  readonly amountMicros: string;
+  readonly transactionId: string;
+};
+
 export type CircleTreasuryProvider = {
   readonly bridgeWalletTopUp: (input: CircleBridgeTopUpInput) => Promise<CircleBridgeTopUpResult>;
   readonly health: (mode: ProviderMode) => CircleProviderHealth;
@@ -114,6 +128,7 @@ export type CircleTreasuryProvider = {
   readonly requestTestnetFunds: (input: CircleTestnetFundingInput) => Promise<CircleTestnetFundingResult>;
   readonly settleExactX402: (input: CircleExactX402SettlementInput) => Promise<CircleExactX402SettlementResult>;
   readonly settleGatewayX402: (input: CircleGatewayX402SettlementInput) => Promise<CircleGatewayX402SettlementResult>;
+  readonly transferWallet: (input: CircleTransferInput) => Promise<CircleTransferResult>;
 };
 
 export const SECTION_9_CHAINS: readonly CirclePaymentChain[] = [
@@ -1146,6 +1161,37 @@ export function createDeveloperControlledCircleTreasuryProvider(
         usdcAddress: config.usdc,
       };
     },
+    transferWallet: async ({ amountMicros, chain, destinationAddress, mode, refId, sourceAddress }) => {
+      const env = readEnv(mode);
+      const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
+      const config = contractConfig(mode, chain);
+      // config.usdc is the token address on every chain, including Arc --
+      // verified live against Circle's estimateTransferFee: the precompile
+      // address returns an ERC-20-shaped gas estimate (~101k gas), matching
+      // how initiateGatewayDeposit already treats Arc's USDC uniformly with
+      // every other chain, never as a native/empty-tokenAddress transfer.
+      //
+      // walletAddress+blockchain (not walletId) because the SDK's
+      // discriminated union only allows tokenAddress alongside
+      // walletAddress+blockchain -- walletId requires tokenId instead.
+      const transfer = await client.createTransaction({
+        amount: [formatMicros(amountMicros)],
+        blockchain: CONTRACT_EXECUTION_BLOCKCHAINS[mode][chain],
+        destinationAddress,
+        fee: circleFee(),
+        idempotencyKey: crypto.randomUUID(),
+        refId,
+        tokenAddress: config.usdc,
+        walletAddress: sourceAddress,
+      });
+      const transactionId = transfer.data?.id;
+      if (transactionId === undefined || transactionId.length === 0) throw new Error('circle_transfer_transaction_missing');
+      await waitForCircleTransaction(client, transactionId, 'circle_transfer');
+      return {
+        amountMicros: amountMicros.toString(),
+        transactionId,
+      };
+    },
     requestTestnetFunds: async ({ address, chain, mode }) => {
       if (mode !== 'test') throw new Error('circle_testnet_faucet_unavailable_in_live_mode');
       const env = readEnv(mode);
@@ -1391,6 +1437,7 @@ export function createCircleAgentWalletTreasuryProvider(options: {
         response,
       };
     },
+    transferWallet: () => Promise.reject(new Error('circle_agent_wallet_cli_transfer_not_supported')),
     settleExactX402: async (input) => {
       const { mode, requirements, walletAddress } = input;
       const chain = chainFromGatewayNetwork(requirements.network);

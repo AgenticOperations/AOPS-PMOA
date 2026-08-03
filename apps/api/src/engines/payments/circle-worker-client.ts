@@ -135,5 +135,6 @@ export function createCircleWorkerTreasuryProvider(options: WorkerProviderOption
       serializeSettlementInput(input),
       'ambiguous_post_submit',
     ),
+    transferWallet: (input) => execute('transferWallet', input),
   };
 }

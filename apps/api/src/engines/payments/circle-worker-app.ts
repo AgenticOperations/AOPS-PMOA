@@ -42,6 +42,7 @@ const operationSchema = z.enum([
   'requestTestnetFunds',
   'settleExactX402',
   'settleGatewayX402',
+  'transferWallet',
 ]);
 const providerRequestSchema = z.object({
   input: z.record(z.string(), z.unknown()),
@@ -165,6 +166,11 @@ async function executeProviderOperation(
         assertCircleTestnetX402Authority('settleGatewayX402', input);
         return provider.settleGatewayX402(input);
       }
+    case 'transferWallet':
+      return provider.transferWallet({
+        ...rawInput,
+        amountMicros: BigInt(String(rawInput.amountMicros)),
+      } as Parameters<CircleTreasuryProvider['transferWallet']>[0]);
   }
 }
 

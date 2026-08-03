@@ -150,6 +150,10 @@ describe('durable x402 paid HTTP flow', () => {
       return settlementResult();
     },
     settleGatewayX402: async (input) => provider.settleExactX402(input),
+    transferWallet: ({ amountMicros }) => Promise.resolve({
+      amountMicros: amountMicros.toString(),
+      transactionId: '0xtransfer',
+    }),
   };
 
   beforeAll(async () => {

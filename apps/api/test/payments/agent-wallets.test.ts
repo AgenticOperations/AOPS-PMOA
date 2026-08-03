@@ -23,6 +23,7 @@ function fakeProvider(createWallet: CircleTreasuryProvider['createWallet']): Cir
     requestTestnetFunds: vi.fn(),
     settleExactX402: vi.fn(),
     settleGatewayX402: vi.fn(),
+    transferWallet: vi.fn(),
   };
 }
 

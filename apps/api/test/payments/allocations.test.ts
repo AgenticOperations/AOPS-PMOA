@@ -22,6 +22,7 @@ function fakeProviderWithGatewayBalance(availableByChain: Record<string, string>
     requestTestnetFunds: vi.fn(),
     settleExactX402: vi.fn(),
     settleGatewayX402: vi.fn(),
+    transferWallet: vi.fn(),
   };
 }
 
