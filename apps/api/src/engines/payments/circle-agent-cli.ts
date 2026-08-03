@@ -373,6 +373,11 @@ const CIRCLE_BLOCKCHAINS: Record<PaymentMode, Record<PaymentChain, string>> = {
     base: 'BASE',
     optimism: 'OP',
     polygon: 'MATIC',
+    // Constraint I.1: Arc mainnet does not exist. A3 flips wallet
+    // provisioning to the developer-controlled path (circle-provider.ts),
+    // which never calls into this Agent Wallet CLI path for Arc -- this
+    // entry exists only because the Record is exhaustive over PaymentChain.
+    arc: 'ARC',
   },
   test: {
     arbitrum: 'ARB-SEPOLIA',
@@ -380,6 +385,7 @@ const CIRCLE_BLOCKCHAINS: Record<PaymentMode, Record<PaymentChain, string>> = {
     base: 'BASE-SEPOLIA',
     optimism: 'OP-SEPOLIA',
     polygon: 'MATIC-AMOY',
+    arc: 'ARC-TESTNET',
   },
 };
 
@@ -389,6 +395,7 @@ const GATEWAY_BALANCE_DOMAINS: Record<PaymentChain, number> = {
   base: 6,
   optimism: 2,
   polygon: 7,
+  arc: 26,
 };
 
 export function circleBlockchainForChain(mode: PaymentMode, chain: PaymentChain): string {

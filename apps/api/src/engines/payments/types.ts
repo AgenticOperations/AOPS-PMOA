@@ -2,18 +2,20 @@ import type { ActivityRecord } from '../approvals/types.js';
 import type { PaidHttpRequest, PaidHttpResponse } from './x402-http.js';
 
 export type PaymentMode = 'test' | 'live';
-export type PaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche';
+export type PaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche' | 'arc';
 export type PaymentRail =
   | 'gateway_base'
   | 'gateway_arbitrum'
   | 'gateway_polygon'
   | 'gateway_optimism'
   | 'gateway_avalanche'
+  | 'gateway_arc'
   | 'exact_base'
   | 'exact_arbitrum'
   | 'exact_polygon'
   | 'exact_optimism'
-  | 'exact_avalanche';
+  | 'exact_avalanche'
+  | 'exact_arc';
 export type PaymentProvider = 'circle_gateway' | 'circle_wallets' | 'manual' | 'simulation';
 export type PaymentSourceType = 'gateway' | 'direct_exact' | 'dedicated_wallet';
 export type PaymentAccessStatus = 'active' | 'disabled';

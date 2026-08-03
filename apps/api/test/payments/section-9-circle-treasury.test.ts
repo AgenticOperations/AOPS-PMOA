@@ -1176,12 +1176,16 @@ describe('Section 9 Circle treasury foundation', () => {
       mode: 'test',
       status: 'active',
     });
+    // Arc sorts last -- listCircleChainCapabilities orders the original
+    // five explicitly (CASE chain WHEN ... THEN 1..5) and everything else
+    // via ELSE 99, which Arc's migration-seeded capability falls into.
     expect(body.wallets.map((wallet) => wallet.chain)).toEqual([
       'base',
       'arbitrum',
       'polygon',
       'optimism',
       'avalanche',
+      'arc',
     ]);
     expect(body.wallets.every((wallet) => wallet.address.startsWith('0x'))).toBe(true);
 
@@ -1190,7 +1194,7 @@ describe('Section 9 Circle treasury foundation', () => {
       url: `/v1/orgs/${orgId}/payments/circle/wallets`,
     });
     expect(wallets.statusCode, wallets.body).toBe(200);
-    expect(wallets.json<WalletsResponse>().wallets).toHaveLength(5);
+    expect(wallets.json<WalletsResponse>().wallets).toHaveLength(6);
 
     const sources = await app.inject({
       method: 'GET',
@@ -1200,13 +1204,17 @@ describe('Section 9 Circle treasury foundation', () => {
     const sourceRails = sources.json<{ readonly sources: ReadonlyArray<{ readonly rail: string }> }>()
       .sources.map((source) => source.rail)
       .sort();
+    // Alphabetical sort: exact_arc/gateway_arc land between avalanche and
+    // base now that Arc's capability is seeded (migration 0023).
     expect(sourceRails).toEqual([
       'exact_arbitrum',
+      'exact_arc',
       'exact_avalanche',
       'exact_base',
       'exact_optimism',
       'exact_polygon',
       'gateway_arbitrum',
+      'gateway_arc',
       'gateway_avalanche',
       'gateway_base',
       'gateway_optimism',
@@ -1223,7 +1231,8 @@ describe('Section 9 Circle treasury foundation', () => {
       method: 'GET',
       url: `/v1/orgs/${orgId}/payments/sources`,
     });
-    expect(sourcesAfterReconcile.json<{ readonly sources: readonly unknown[] }>().sources).toHaveLength(10);
+    // 12 = 2 rails (gateway, exact) x 6 chains, now that Arc is seeded.
+    expect(sourcesAfterReconcile.json<{ readonly sources: readonly unknown[] }>().sources).toHaveLength(12);
   });
 
   it('rejects attempts to enable live payment mode while the product is testnet only', async () => {
@@ -1257,7 +1266,8 @@ describe('Section 9 Circle treasury foundation', () => {
     });
     expect(balances.statusCode, balances.body).toBe(200);
     const body = balances.json<CircleBalancesResponse>();
-    expect(body.balances).toHaveLength(5);
+    // Six chains now that Arc's capability is seeded (migration 0023).
+    expect(body.balances).toHaveLength(6);
     const baseBalance = body.balances.find((balance) => balance.chain === 'base');
     expect(baseBalance?.gateway).toMatchObject({
       available: '4.25',

@@ -31,7 +31,7 @@ const require = createRequire(import.meta.url);
 const CircleWalletsSdk = require('@circle-fin/developer-controlled-wallets') as typeof CircleWalletsSdkTypes;
 
 export type ProviderMode = 'test' | 'live';
-export type CirclePaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche';
+export type CirclePaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche' | 'arc';
 
 export type ChainCapability = {
   readonly chain: CirclePaymentChain;
@@ -373,6 +373,7 @@ const TESTNET_X402_CHAINS = {
   'eip155:84532': 'base',
   'eip155:11155420': 'optimism',
   'eip155:80002': 'polygon',
+  'eip155:5042002': 'arc',
 } as const satisfies Record<string, CirclePaymentChain>;
 
 const CHAIN_CONTRACTS: Record<ProviderMode, Record<CirclePaymentChain, ChainContractConfig>> = {
@@ -382,6 +383,10 @@ const CHAIN_CONTRACTS: Record<ProviderMode, Record<CirclePaymentChain, ChainCont
     base: { domain: 6, gatewayWallet: TESTNET_GATEWAY_WALLET, usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
     optimism: { domain: 2, gatewayWallet: TESTNET_GATEWAY_WALLET, usdc: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7' },
     polygon: { domain: 7, gatewayWallet: TESTNET_GATEWAY_WALLET, usdc: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582' },
+    // Verified live (spike S1, docs/spike-results.md): same GatewayWalletBatched
+    // contract as the other chains; domain 26 per Arc's CCTP v2 registration;
+    // USDC is Arc's native gas asset, exposed at this precompile-shaped address.
+    arc: { domain: 26, gatewayWallet: TESTNET_GATEWAY_WALLET, usdc: '0x3600000000000000000000000000000000000000' },
   },
   live: {
     arbitrum: { domain: 3, gatewayWallet: MAINNET_GATEWAY_WALLET, usdc: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831' },
@@ -389,6 +394,9 @@ const CHAIN_CONTRACTS: Record<ProviderMode, Record<CirclePaymentChain, ChainCont
     base: { domain: 6, gatewayWallet: MAINNET_GATEWAY_WALLET, usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
     optimism: { domain: 2, gatewayWallet: MAINNET_GATEWAY_WALLET, usdc: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85' },
     polygon: { domain: 7, gatewayWallet: MAINNET_GATEWAY_WALLET, usdc: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359' },
+    // Unreachable placeholder. Constraint I.1: Arc mainnet does not exist.
+    // contractConfig() throws before this entry is ever read.
+    arc: { domain: -1, gatewayWallet: '0x0000000000000000000000000000000000000000', usdc: '0x0000000000000000000000000000000000000000' },
   },
 };
 
@@ -450,6 +458,7 @@ const TESTNET_FAUCET_BLOCKCHAINS: Record<CirclePaymentChain, TestnetBlockchain> 
   base: 'BASE-SEPOLIA',
   optimism: 'OP-SEPOLIA',
   polygon: 'MATIC-AMOY',
+  arc: 'ARC-TESTNET',
 };
 
 const CONTRACT_EXECUTION_BLOCKCHAINS: Record<ProviderMode, Record<CirclePaymentChain, ContractExecutionBlockchain>> = {
@@ -459,6 +468,7 @@ const CONTRACT_EXECUTION_BLOCKCHAINS: Record<ProviderMode, Record<CirclePaymentC
     base: 'BASE-SEPOLIA',
     optimism: 'OP-SEPOLIA',
     polygon: 'MATIC-AMOY',
+    arc: 'ARC-TESTNET',
   },
   live: {
     arbitrum: 'ARB',
@@ -466,6 +476,10 @@ const CONTRACT_EXECUTION_BLOCKCHAINS: Record<ProviderMode, Record<CirclePaymentC
     base: 'BASE',
     optimism: 'OP',
     polygon: 'MATIC',
+    // Constraint I.1: Arc mainnet does not exist. This SDK enum member
+    // exists ('ARC') but nothing in this codebase may ever select it in
+    // live mode -- see contractConfig()'s explicit guard above.
+    arc: 'ARC',
   },
 };
 
@@ -524,6 +538,13 @@ function gatewayApiUrl(mode: ProviderMode): string {
 }
 
 function contractConfig(mode: ProviderMode, chain: CirclePaymentChain): ChainContractConfig {
+  // Constraint I.1: Arc mainnet does not exist. CHAIN_CONTRACTS.live.arc
+  // below is an unreachable placeholder required only because this is an
+  // exhaustive Record<ProviderMode, Record<CirclePaymentChain, ...>> --
+  // fail loudly here rather than silently handing out a fake address.
+  if (chain === 'arc' && mode === 'live') {
+    throw new Error('arc_mainnet_not_supported');
+  }
   return CHAIN_CONTRACTS[mode][chain];
 }
 

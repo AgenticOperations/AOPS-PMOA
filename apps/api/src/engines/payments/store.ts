@@ -618,11 +618,13 @@ function normalizeRail(input: string): PaymentRail {
     input === 'gateway_polygon' ||
     input === 'gateway_optimism' ||
     input === 'gateway_avalanche' ||
+    input === 'gateway_arc' ||
     input === 'exact_base' ||
     input === 'exact_arbitrum' ||
     input === 'exact_polygon' ||
     input === 'exact_optimism' ||
-    input === 'exact_avalanche'
+    input === 'exact_avalanche' ||
+    input === 'exact_arc'
   ) {
     return input;
   }
@@ -630,10 +632,17 @@ function normalizeRail(input: string): PaymentRail {
 }
 
 function normalizeChain(input: string): PaymentChain {
-  if (input === 'base' || input === 'arbitrum' || input === 'polygon' || input === 'optimism' || input === 'avalanche') {
+  if (
+    input === 'base' ||
+    input === 'arbitrum' ||
+    input === 'polygon' ||
+    input === 'optimism' ||
+    input === 'avalanche' ||
+    input === 'arc'
+  ) {
     return input;
   }
-  throw badRequest('unsupported_payment_chain', 'Section 9 supports Base, Arbitrum, Polygon, Optimism, and Avalanche.');
+  throw badRequest('unsupported_payment_chain', 'Section 9 supports Base, Arbitrum, Polygon, Optimism, Avalanche, and Arc.');
 }
 
 function railKind(rail: PaymentRail): 'direct_exact' | 'gateway' {
@@ -706,6 +715,9 @@ const TEST_GATEWAY_NETWORKS: Record<PaymentChain, string> = {
   base: 'eip155:84532',
   optimism: 'eip155:11155420',
   polygon: 'eip155:80002',
+  // Verified live against both Arc's RPC (eth_chainId) and Circle's own
+  // x402 facilitator /v1/x402/supported (spike S1, docs/spike-results.md).
+  arc: 'eip155:5042002',
 };
 
 const LIVE_GATEWAY_NETWORKS: Record<PaymentChain, string> = {
@@ -714,6 +726,9 @@ const LIVE_GATEWAY_NETWORKS: Record<PaymentChain, string> = {
   base: 'eip155:8453',
   optimism: 'eip155:10',
   polygon: 'eip155:137',
+  // Unreachable placeholder. Constraint I.1: Arc mainnet does not exist.
+  // gatewayNetworkForMode() throws before this entry is ever read.
+  arc: 'eip155:0',
 };
 
 const TEST_GATEWAY_USDC: Record<PaymentChain, string> = {
@@ -722,6 +737,9 @@ const TEST_GATEWAY_USDC: Record<PaymentChain, string> = {
   base: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
   optimism: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
   polygon: '0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582',
+  // Precompile-shaped address: on Arc, USDC IS the native gas asset.
+  // Confirmed via spike S1/S6.
+  arc: '0x3600000000000000000000000000000000000000',
 };
 
 const LIVE_GATEWAY_USDC: Record<PaymentChain, string> = {
@@ -730,6 +748,8 @@ const LIVE_GATEWAY_USDC: Record<PaymentChain, string> = {
   base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   optimism: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
   polygon: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+  // Unreachable placeholder -- see LIVE_GATEWAY_NETWORKS.arc.
+  arc: '0x0000000000000000000000000000000000000000',
 };
 
 function networkToChain(network: string): PaymentChain | null {
@@ -772,14 +792,29 @@ function networkToChain(network: string): PaymentChain | null {
   ) {
     return 'avalanche';
   }
+  // Constraint I.1: Arc mainnet does not exist, so there is no live
+  // CAIP-2 id to recognize here -- only the testnet one.
+  if (normalized === 'arc' || normalized === 'arc-testnet' || normalized === 'eip155:5042002') {
+    return 'arc';
+  }
   return null;
 }
 
+function assertNotLiveArc(chain: PaymentChain, mode: PaymentMode): void {
+  // Constraint I.1: Arc mainnet does not exist. Fail loudly rather than
+  // resolve the LIVE_GATEWAY_* placeholder values.
+  if (chain === 'arc' && mode === 'live') {
+    throw badRequest('arc_mainnet_not_supported', 'Arc mainnet is not supported.');
+  }
+}
+
 function gatewayNetworkForMode(chain: PaymentChain, mode: PaymentMode): string {
+  assertNotLiveArc(chain, mode);
   return mode === 'test' ? TEST_GATEWAY_NETWORKS[chain] : LIVE_GATEWAY_NETWORKS[chain];
 }
 
 function gatewayUsdcForMode(chain: PaymentChain, mode: PaymentMode): string {
+  assertNotLiveArc(chain, mode);
   return mode === 'test' ? TEST_GATEWAY_USDC[chain] : LIVE_GATEWAY_USDC[chain];
 }
 
@@ -795,6 +830,7 @@ function networkMatchesMode(network: string, chain: PaymentChain, mode: PaymentM
     base: ['base-sepolia'],
     optimism: ['op-sepolia'],
     polygon: ['polygon-amoy', 'matic-amoy'],
+    arc: ['arc-testnet'],
   };
   return testAliases[chain].includes(normalized);
 }
@@ -871,6 +907,13 @@ function quoteFromAccept(accept: RuntimeX402Accept, mode: PaymentMode): RuntimeQ
   if (accept.scheme !== 'exact') return null;
   const chain = networkToChain(accept.network);
   if (chain === null) return null;
+  // Constraint I.1: Arc mainnet does not exist. Treat a live-mode Arc offer
+  // as "no match" here -- quoteFromAccept must stay total (never throw) so
+  // one unsupported offer among several accepts doesn't abort quote
+  // selection for the others. assertNotLiveArc()'s throw still guards the
+  // internal wallet/treasury provisioning paths that call
+  // gatewayNetworkForMode/gatewayUsdcForMode directly.
+  if (chain === 'arc' && mode === 'live') return null;
   if (!networkMatchesMode(accept.network, chain, mode)) return null;
   const assetAddress = canonicalUsdcAsset(stringValue(accept.asset), chain, mode);
   if (assetAddress === null) return null;
