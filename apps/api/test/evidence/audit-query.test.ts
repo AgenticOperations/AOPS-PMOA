@@ -149,4 +149,67 @@ describe('audit query and verification services', () => {
       reason: 'previous_hash_mismatch',
     });
   });
+
+  async function seedAuditChain(orgId: string, count: number): Promise<void> {
+    await store.pool.query(
+      'INSERT INTO orgs (id, display_name) VALUES ($1, $2)', [orgId, orgId],
+    );
+    for (let i = 0; i < count; i += 1) {
+      await withTransaction(store.pool, (client) =>
+        recordAuditEvent(client, {
+          orgId,
+          eventType: 'agent.created',
+          actor: { type: 'system' },
+          action: 'agent.create',
+          outcome: 'success',
+          payload: { i },
+        }),
+      );
+    }
+  }
+
+  it('verifies a chain longer than the 500-event page cap', async () => {
+    await seedAuditChain('org_query_chain_long', 1200);
+
+    const result = await verifyAuditChain(store.pool, 'org_query_chain_long', {});
+    expect(result.valid).toBe(true);
+    expect(result.checked).toBe(1200); // today this caps at 500
+  }, 60_000);
+
+  it('detects a truncated tail when the head is not also rewritten', async () => {
+    await seedAuditChain('org_query_chain_tail', 100);
+
+    // Deletes the last 10 events but leaves audit_event_heads untouched --
+    // the realistic case whenever the head has ANY separate protection
+    // from the events table (e.g. a distinct write role/credential). A
+    // fully coordinated attacker who also rewrites the head to match the
+    // truncated state produces a chain that is genuinely self-consistent
+    // with no internal signal left to catch it -- that residual gap is
+    // real and requires an external checkpoint (a separately-secured copy
+    // of the head, written somewhere the same compromise can't reach),
+    // which is out of scope here. This test covers what the tail check
+    // actually catches: a truncation that does NOT also rewrite the head.
+    await store.pool.query(
+      'DELETE FROM audit_events WHERE org_id = $1 AND sequence > 90', ['org_query_chain_tail'],
+    );
+
+    const result = await verifyAuditChain(store.pool, 'org_query_chain_tail', {});
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe('event_count_mismatch');
+  }, 30_000);
+
+  it('detects a tampered event beyond the old 500-event page cap', async () => {
+    await seedAuditChain('org_query_chain_deep_tamper', 800);
+
+    const target = await store.pool.query<{ id: string }>(
+      'SELECT id FROM audit_events WHERE org_id = $1 AND sequence = 600', ['org_query_chain_deep_tamper'],
+    );
+    await store.pool.query(
+      "UPDATE audit_events SET canonical_body = jsonb_set(canonical_body, '{payload,i}', '99999'::jsonb) WHERE id = $1",
+      [target.rows[0]?.id],
+    );
+
+    const result = await verifyAuditChain(store.pool, 'org_query_chain_deep_tamper', {});
+    expect(result.valid).toBe(false);
+  }, 60_000);
 });

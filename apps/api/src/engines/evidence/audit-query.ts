@@ -111,7 +111,9 @@ export type VerifyAuditChainResult = {
   readonly reason?:
     | 'canonical_body_hash_mismatch'
     | 'event_hash_mismatch'
-    | 'previous_hash_mismatch';
+    | 'previous_hash_mismatch'
+    | 'event_count_mismatch'
+    | 'tail_hash_mismatch';
 };
 
 function toDetail(row: AuditEventQueryRow): AuditEventDetail {
@@ -245,58 +247,92 @@ export async function verifyAuditEvent(
   return verifyDetail(event);
 }
 
+const VERIFY_PAGE_SIZE = 500;
+
+/**
+ * Walks the FULL chain for an org, paging internally in batches of
+ * VERIFY_PAGE_SIZE and carrying previousHash across page boundaries --
+ * boundedLimit correctly bounds the list endpoints, but verification must
+ * never stop at a page size, only at chain exhaustion or a real mismatch.
+ * After the walk, compares the final computed hash and event count against
+ * audit_event_heads: without this tail check, an attacker who deletes a
+ * chain's suffix and rewrites the head pointer produces a chain that
+ * verifies perfectly on its own -- the truncation is only visible by
+ * comparing against the independently-maintained head.
+ */
 export async function verifyAuditChain(
   pool: pg.Pool,
   orgId: string,
   params: ListAuditEventsParams = {},
 ): Promise<VerifyAuditChainResult> {
-  const limit = boundedLimit(params.limit);
-  const result = await pool.query<AuditEventQueryRow>(
-    `SELECT ${detailColumns}
-       FROM audit_events
-      WHERE org_id = $1
-      ORDER BY sequence ASC
-      LIMIT $2`,
-    [orgId, limit],
-  );
-
   let previousHash: string | null = null;
   let checked = 0;
+  let afterSequence = 0;
 
-  for (const row of result.rows) {
-    const event = toDetail(row);
-    checked += 1;
+  for (;;) {
+    const result = await pool.query<AuditEventQueryRow>(
+      `SELECT ${detailColumns}
+         FROM audit_events
+        WHERE org_id = $1 AND sequence > $2
+        ORDER BY sequence ASC
+        LIMIT $3`,
+      [orgId, afterSequence, VERIFY_PAGE_SIZE],
+    );
+    if (result.rows.length === 0) break;
 
-    const canonicalBodyHash = sha256Hex(canonicalJson(event.canonicalBody));
-    if (canonicalBodyHash !== event.canonicalBodyHash) {
-      return {
-        valid: false,
-        checked,
-        failedEventId: event.id,
-        reason: 'canonical_body_hash_mismatch',
-      };
+    for (const row of result.rows) {
+      const event = toDetail(row);
+      checked += 1;
+      afterSequence = event.sequence;
+
+      const canonicalBodyHash = sha256Hex(canonicalJson(event.canonicalBody));
+      if (canonicalBodyHash !== event.canonicalBodyHash) {
+        return {
+          valid: false,
+          checked,
+          failedEventId: event.id,
+          reason: 'canonical_body_hash_mismatch',
+        };
+      }
+
+      if (event.previousHash !== previousHash) {
+        return {
+          valid: false,
+          checked,
+          failedEventId: event.id,
+          reason: 'previous_hash_mismatch',
+        };
+      }
+
+      if (expectedEventHash(event) !== event.eventHash) {
+        return {
+          valid: false,
+          checked,
+          failedEventId: event.id,
+          reason: 'event_hash_mismatch',
+        };
+      }
+
+      previousHash = event.eventHash;
     }
 
-    if (event.previousHash !== previousHash) {
-      return {
-        valid: false,
-        checked,
-        failedEventId: event.id,
-        reason: 'previous_hash_mismatch',
-      };
-    }
-
-    if (expectedEventHash(event) !== event.eventHash) {
-      return {
-        valid: false,
-        checked,
-        failedEventId: event.id,
-        reason: 'event_hash_mismatch',
-      };
-    }
-
-    previousHash = event.eventHash;
+    if (result.rows.length < VERIFY_PAGE_SIZE) break;
   }
 
+  const head = await pool.query<{ last_sequence: string; last_event_hash: string | null }>(
+    'SELECT last_sequence, last_event_hash FROM audit_event_heads WHERE org_id = $1',
+    [orgId],
+  );
+  const headRow = head.rows[0];
+  if (headRow !== undefined) {
+    if (Number(headRow.last_sequence) !== checked) {
+      return { valid: false, checked, reason: 'event_count_mismatch' };
+    }
+    if (headRow.last_event_hash !== previousHash) {
+      return { valid: false, checked, reason: 'tail_hash_mismatch' };
+    }
+  }
+
+  void params; // limit no longer bounds full-chain verification; kept for API compatibility.
   return { valid: true, checked };
 }
