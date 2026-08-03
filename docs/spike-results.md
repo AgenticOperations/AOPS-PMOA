@@ -364,6 +364,44 @@ Job ID `166059`. Independently verifiable: **https://testnet.arcscan.app/address
 
 ---
 
+### Phase 7 · Task 4 proof test — real Gateway deposit and burn-intent signing; mint blocked on wallet funding
+
+Run against real infrastructure: real Circle developer-controlled-wallets API (test mode), real Arc testnet RPC, real Circle Gateway API (`https://gateway-api-testnet.circle.com`) — through the actual `createDeveloperControlledCircleTreasuryProvider().bridgeWalletTopUp()` code path added in this phase, not a script re-implementing the logic.
+
+**Step 1 — real Gateway deposit.** `initiateGatewayDeposit` for Agent B (`0x216c05b8d3409d2fd2b82375334d4b87e789367e`) on Arc: `approve` then `deposit(address,uint256)` for 0.20 USDC, both real transactions via the Circle SDK. Confirmed via the public Gateway balances API:
+
+```
+POST /v1/balances { sources: [{ depositor: "0x216c...367e", domain: 26 }] }
+-> { balance: "0.200000" }
+```
+
+**Step 2 — real burn-intent signing and attestation.** `bridgeWalletTopUp({ amount: '0.10', fromChain: 'arc', toChain: 'base', mode: 'test' })` through the real code path: Circle's MPC `signTypedData` produced a real EIP-712 signature over the `BurnIntent` (domain `{name: "GatewayWallet", version: "1"}`, distinct from the `GatewayWalletBatched` x402 domain), and `POST /v1/transfer` returned a real attestation:
+
+```
+POST https://gateway-api-testnet.circle.com/v1/transfer -> 201
+{
+  attestation: "0xff6fb334...",       <- real, ~230-byte encoded attestation
+  signature: "0x7f41070d...",         <- Circle operator's signature
+  fees: { total: "0.0035", perIntent: [{ domain: 26, baseFee: "0.0035" }] },
+  expirationBlock: "45005267"
+}
+```
+
+This is independent confirmation the MPC wallet can produce a valid EIP-712 signature Circle's Gateway operator accepts, and that the real fee (0.0035 USDC on a 0.02 USDC transfer here — consistent with the documented 0.005% rate plus a small base component) is nowhere near the `maxFee` ceiling this code authorizes.
+
+**Step 3 — mint on Base Sepolia blocked on wallet funding, not on this code.** `contractExecution`'s `gatewayMint(bytes,bytes)` call failed with Circle's own structured error:
+
+```
+POST https://api.circle.com/v1/w3s/developer/transactions/contractExecution -> 400
+{ code: 155258, message: "the asset amount owned by the wallet is insufficient for the transaction." }
+```
+
+The destination wallet (`0xecf29492264424ae73fc1434a30a66d2f6a9b48f` on Base Sepolia) started with 0 ETH; the user funded it with 0.0001 ETH via a public faucet, which was **not enough** — real gas price sampled at 0.006 gwei implies a ~150k-gas call should cost roughly 9×10⁻⁷ ETH, two orders of magnitude less than what was sent, yet Circle's platform still rejected it. This points to a minimum-balance floor enforced by Circle's transaction-creation API independent of the actual computed gas cost, not a bug in this bridge's code — every step this code controls (deposit, signing, attestation, request construction) succeeded for real. Re-verify with a larger funding amount (0.01 ETH) before next attempting a real mint; several retries at small burn amounts (0.10, then 0.03) also demonstrated that **Gateway reserves the burn amount against the depositor's balance as soon as an attestation is issued, before the mint completes** — a real behavior worth remembering (available balance dropped from 0.200000 to 0.039500 across three attestation attempts whose mints never landed).
+
+**Status:** deposit and burn-intent/attestation halves of Task 4's live verification are done with real evidence above. The mint-on-destination half is code-complete and unit-tested but not yet independently verified with a real destination-chain tx hash — blocked on further Base Sepolia wallet funding beyond what's been provided so far. `docs/decisions.md`'s K-18 entry is left as-is (not marked resolved) until a real mint tx hash lands.
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
