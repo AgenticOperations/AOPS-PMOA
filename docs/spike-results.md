@@ -336,54 +336,45 @@ Independently verifiable: **https://testnet.arcscan.app/tx/0x566966b754ae9dca563
 
 ---
 
-### Phase 6 · Task 7 — Base Sepolia Gateway deposit BLOCKED: the faucet API requires a mainnet-upgraded account
+### Phase 6 · Task 7 — Base Sepolia: RESOLVED. The cause was an unregistered entity secret.
 
-Arc's treasury Gateway deposit succeeds for real. **Base Sepolia's does not.**
+**Base Sepolia works.** Externally-sent ETH pays gas normally, no faucet and no mainnet upgrade required.
 
-**Root cause, from Circle's own OpenAPI spec for `POST /v1/faucet/drips`:**
-
-> *"Calling the `/v1/faucet/drips` API requires upgrading to mainnet."*
-
-The chain of consequence:
-
-1. A Base Sepolia EOA must hold native ETH to pay gas (Gas Station would remove this, but it requires SCA — incompatible with the EOA-only Gateway/Nanopayments rails, see `change-manifest.md:300`).
-2. Circle only recognizes native ETH that arrives through a transaction it originates — externally-sent ETH is never ingested (evidence below).
-3. The only such path is the faucet API, which is gated behind a mainnet-upgraded account.
-4. Neither developer account used in this project is mainnet-upgraded → Base Sepolia gas is unobtainable.
-
-Arc is unaffected because its gas asset *is* USDC, which Circle indexes natively.
+Proof — `approve(spender, 0)` (needs zero USDC, so it tests gas alone) on a wallet funded only by an external ETH transfer:
 
 ```
-POST /v1/w3s/developer/transactions/contractExecution
-  approve(0x0077777d7EBA4688BDeF3E311b846F25870A19B9, 12000000)  BASE-SEPOLIA
-  -> 400 { code: 155258, message: "the asset amount owned by the wallet is insufficient for the transaction." }
+wallet  0x88d7cb9f7db35845efaa7ca38bd626f7de9f4cdd   (BASE-SEPOLIA, EOA)
+funded  0.0001 ETH, sent externally (NOT via Circle's faucet)
+tx      0x9ef42300e061e5fba6d103961dab8217745dfcdce77cf9a9a35692c73dd5462f  -> CONFIRMED
 ```
 
-**What the wallet actually holds** (two independent wallets, both reproduce this):
+**Root cause:** the original developer account's **entity secret was never registered** with Circle
+(`GET /v1/w3s/config/entity/publicKey` returned Circle's encryption key, which is NOT proof of
+registration; attempting to use the secret returned `156016 "The entity secret has not been set yet"`).
+The entity secret authorizes signing on developer-controlled wallets, so every signing operation failed.
 
-| Wallet | Real on-chain (raw RPC) | Circle's `getWalletTokenBalance` |
-|---|---|---|
-| `0x350654f61dbf1a4d47d1a5ae3ac512f15b5a2b33` | 20 USDC + **0.0019 ETH** | `USDC=20` — **no native entry at all** |
-| `0xfbdadb6cb6ea3a8bba8f484807455bbdf6778ec9` | 20 USDC + **0.0001 ETH** | `USDC=20` — **no native entry at all** |
+**Circle's error message was misleading.** An unregistered entity secret surfaced as
+`155258 "the asset amount owned by the wallet is insufficient for the transaction."` — an undocumented
+code (Circle's public error list skips 155257–155263) that points at balances rather than credentials.
 
-**Why this is conclusively a gas-balance read, not a USDC problem:** `approve(spender, 0)` — which requires zero USDC — fails with the identical error. So does every fee level (`LOW`/`MEDIUM`/`HIGH`) and every amount tested (`0`, `100`, `1000000`, `12000000`).
+**Wrong turns this caused, recorded so they aren't repeated:**
+- *"Circle can't index externally-sent ETH"* — false. It spends it fine once the entity secret is registered.
+- *"The faucet API is required"* — false. The demo funds via manual USDC transfer + `gateway-deposits`;
+  the faucet is never called. (Its `403` is real — Circle's OpenAPI states `/v1/faucet/drips` requires a
+  mainnet-upgraded account — but it is irrelevant to this flow.)
+- *"Gas Station / SCA is the fix"* — would have broken both payment rails: Gateway rejects non-EOA
+  signatures and Nanopayments is EOA-only (`change-manifest.md:300`, migration `0025`'s
+  `CHECK (account_type = 'eoa')`).
+- *`maxFee` being validated instead of actual cost* — disproved; an explicit absolute fee whose worst
+  case was 0.000005 ETH against a 0.0019 ETH balance still failed.
 
-**Externally-sent ETH is never ingested:** the ETH is genuinely on-chain and confirmed on a live, syncing Base Sepolia (head advancing normally). Circle's `listTransactions` shows only the USDC `INBOUND` transfer — **no record of the ETH transfers at all**. Polled `getWalletTokenBalance` every 20s for 2 minutes, and re-checked over an hour later: the native entry never appeared. The decisive test: Circle refused to *send* 0.0001 ETH from a wallet holding 0.0019 ETH (19× the amount, no token or contract involved).
-
-**Contrast with Arc, which works:** the same address on ARC-TESTNET succeeds. Circle reports **two** entries for the Arc wallet (`USDC isNative=true` = 15.994665988351355426, and `USDC isNative=false` = 15.994665), and an identical `approve()` confirmed on-chain: `0x46ca4f9b25716a36c922d9527a08c7a1298959835b484ad410bca305d1c79620`. Base's gas asset is ETH, which Circle lists for neither Base wallet.
-
-**The faucet is gated, not rate-limited.** `POST /v1/faucet/drips` returns `403 {"code":3,"message":"Forbidden"}` on **every** chain (BASE-SEPOLIA *and* ETH-SEPOLIA), for both `native` and `usdc`, on **two separate developer accounts** — while `/v1/w3s/*` returns 200 with the same key. Omitting the auth header returns 401, so the key is read and then refused. Circle's OpenAPI spec explains it: the endpoint requires a mainnet-upgraded account. (An earlier `429` on the older key was a trial allowance being exhausted before the gate applied — S5's "no faucet entitlement" note describes the same wall.)
-
-**Not fixable from this codebase.** The unblock is account-level: upgrade the Circle developer account to mainnet so `/v1/faucet/drips` becomes callable, then request `native: true` on BASE-SEPOLIA so gas arrives through a path Circle records. Everything Phase 6 built for the cross-chain hop is unaffected and independently proven: `demo/agents/senior-reviewer/server.mjs` and its real end-to-end test (`apps/api/test/payments/demo-senior-reviewer.test.ts`) pass against a real Base-chain Permit2 delegation, and `permit2.ts` was made chain-parametric (correct Base chainId 84532 + Base USDC address) specifically for this leg.
-
-**Dead ends ruled out along the way** (each tested against live infrastructure, recorded so they aren't re-attempted):
-- *Sending more ETH* — failed at 0.0001 and at 0.0019 ETH (19× headroom); amount is irrelevant.
-- *`maxFee` being validated instead of actual cost* — disproved; an explicit absolute fee whose worst case was 0.000005 ETH still failed.
-- *Fee level* — `LOW`/`MEDIUM`/`HIGH` all fail identically.
-- *Token amount* — `approve(spender, 0)`, needing zero USDC, fails identically. The rejection is entirely about gas.
-- *Indexer lag* — still absent after >1 hour.
-- *Rotating to a fresh API key/account* — same 403; the gate is account-tier, not key-specific.
-- *Switching Base wallets to SCA for Gas Station* — architecturally incompatible: Gateway rejects non-EOA signatures and Nanopayments is EOA-only (`change-manifest.md:300`, migration `0025`'s `CHECK (account_type = 'eoa')`).
+**Correct setup for a fresh Circle developer account** (this is the real prerequisite):
+1. Create an API key in the Circle Console. It MUST carry the full `TEST_API_KEY:<id>:<secret>` prefix form.
+2. Generate a 32-byte entity secret **locally** and register it via `registerEntitySecretCiphertext`
+   (it is not a value copied from the console). Store the recovery file securely — `recovery/` and
+   `*.dat` are gitignored; Circle cannot recover it for you.
+3. Fund treasury wallets by direct transfer: USDC on both chains, plus native ETH on Base for gas.
+   Arc needs no separate gas asset because its gas token *is* USDC.
 
 ---
 
