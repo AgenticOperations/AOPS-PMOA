@@ -46,6 +46,9 @@ describe('Permit2 delegation', () => {
       readonly drawnUsdc?: string;
       readonly expiresAt?: Date;
       readonly status?: 'active' | 'revoked';
+      // Payer is the operator's own wallet, so payer_agent_id is NULL and
+      // the platform holds no key for it.
+      readonly userOwnedPayer?: boolean;
     },
   ) {
     const orgId = `org_permit2_${suffix}`;
@@ -76,12 +79,15 @@ describe('Permit2 delegation', () => {
     });
     await store.pool.query(
       `INSERT INTO agent_delegations (
-         id, org_id, payer_agent_id, payee_agent_id, payee_address, mode, chain,
+         id, org_id, payer_agent_id, payer_address, payee_agent_id, payee_address, mode, chain,
          token_address, ceiling_usdc, drawn_usdc, expires_at, permit_nonce, signature,
          status, approved_by
-       ) VALUES ($1, $2, $3, $4, $5, 'test', 'arc', $6, $7, $8, $9, 0, '0xsig', $10, 'usr_1')`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'test', 'arc', $7, $8, $9, $10, 0, '0xsig', $11, 'usr_1')`,
       [
-        delegationId, orgId, payerAgentId, payeeAgentId,
+        delegationId, orgId,
+        input.userOwnedPayer === true ? null : payerAgentId,
+        `0xpayer${suffix}00000000000000000000000000000`.slice(0, 42),
+        payeeAgentId,
         `0xpayee${suffix}0000000000000000000000000000000`.slice(0, 42),
         '0x3600000000000000000000000000000000000000',
         input.ceilingUsdc, input.drawnUsdc ?? '0',
@@ -267,5 +273,69 @@ describe('recordSignedDelegation', () => {
 
     const permitArgs = calls[1]?.[0] as { abiFunctionSignature?: string };
     expect(permitArgs.abiFunctionSignature).toContain('permit');
+  });
+
+  it('records a user-signed delegation without ever signing or approving for them', async () => {
+    // The non-custodial path: the operator's own wallet produced the
+    // signature and sent approve() itself, so the platform must do neither.
+    const orgId = 'org_permit2_user';
+    const teamId = 'team_permit2_user';
+    const payeeAgentId = 'agt_permit2_user_payee';
+    const userWallet = '0xu5e40000000000000000000000000000000000e1';
+
+    await store.pool.query("INSERT INTO orgs (id, display_name) VALUES ($1, 'Permit2 User Org')", [orgId]);
+    await store.pool.query('INSERT INTO teams (id, org_id, name) VALUES ($1, $2, $3)', [teamId, orgId, 'Default Team']);
+    await store.pool.query('INSERT INTO agents (id, org_id, team_id, name) VALUES ($1, $2, $3, $4)', [
+      payeeAgentId, orgId, teamId, 'Payee Agent',
+    ]);
+    const walletSetId = 'ws_permit2_user';
+    await store.pool.query(
+      `INSERT INTO circle_wallet_sets (id, org_id, mode, circle_wallet_set_id, label, created_by)
+       VALUES ($1, $2, 'test', $3, 'Permit2 user wallet set', 'usr_1')`,
+      [walletSetId, orgId, `circle_${walletSetId}`],
+    );
+    await recordProvisionedWallet(store.pool, {
+      orgId, agentId: payeeAgentId, mode: 'test', chain: 'arc',
+      circleWalletId: 'w_permit2_user_payee', address: '0xpayee00000000000000000000000000000000e02',
+      refId: 'ref_permit2_user', walletSetId, circleBlockchain: 'ARC-TESTNET',
+    });
+
+    const signPermit2Delegation = vi.fn(() => Promise.resolve({ signature: '0xshould_never_be_called' }));
+    const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xpermittx' }));
+
+    const delegation = await recordSignedDelegation(
+      store.pool,
+      fakeProvider({ executePermit2Transaction, signPermit2Delegation }),
+      {
+        orgId,
+        payeeAgentId,
+        payeeAddress: '0xpayee00000000000000000000000000000000e02',
+        mode: 'test',
+        chain: 'arc',
+        ceilingUsdc: '5.00',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        approvedBy: 'usr_1',
+        userSigned: { payerAddress: userWallet, signature: '0xuser_signature', nonce: 7n },
+      },
+    );
+
+    // The platform holds no key for this address -- it must not have tried.
+    expect(signPermit2Delegation).not.toHaveBeenCalled();
+    expect(delegation.signature).toBe('0xuser_signature');
+    expect(delegation.payer_address).toBe(userWallet);
+    expect(delegation.payer_agent_id).toBeNull();
+    // The nonce the user actually signed over, not a re-read one.
+    expect(Number(delegation.permit_nonce)).toBe(7);
+
+    // Exactly one on-chain call: permit(). No approve() -- the user sent
+    // that from their own wallet before this ever reached the API.
+    expect(executePermit2Transaction).toHaveBeenCalledTimes(1);
+    const permitCall = (executePermit2Transaction.mock.calls as unknown[][])[0]?.[0] as {
+      abiFunctionSignature?: string;
+      senderAddress?: string;
+    };
+    expect(permitCall.abiFunctionSignature).toContain('permit');
+    // Submitted by the payee agent, because the payer's key is the user's.
+    expect(permitCall.senderAddress).toBe('0xpayee00000000000000000000000000000000e02');
   });
 });

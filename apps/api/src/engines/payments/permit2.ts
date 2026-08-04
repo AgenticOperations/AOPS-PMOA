@@ -183,7 +183,9 @@ export function buildPermitSingle(input: {
 export type AgentDelegationRow = {
   readonly id: string;
   readonly org_id: string;
-  readonly payer_agent_id: string;
+  // NULL when the payer is a user-owned wallet rather than an agent.
+  readonly payer_agent_id: string | null;
+  readonly payer_address: string;
   readonly payee_agent_id: string | null;
   readonly payee_address: string;
   readonly mode: PaymentMode;
@@ -200,7 +202,10 @@ export type AgentDelegationRow = {
 
 export type RecordSignedDelegationInput = {
   readonly orgId: string;
-  readonly payerAgentId: string;
+  // Set when the payer is an agent this platform holds keys for. Omitted
+  // for a user-owned wallet, which supplies payerAddress + signature
+  // instead -- see the userSigned pair below.
+  readonly payerAgentId?: string | undefined;
   readonly payeeAgentId?: string | undefined;
   readonly payeeAddress: string;
   readonly mode: PaymentMode;
@@ -209,6 +214,19 @@ export type RecordSignedDelegationInput = {
   readonly ceilingUsdc: string;
   readonly expiresAt: Date;
   readonly approvedBy: string;
+  // A delegation signed by the operator's own wallet in the browser. The
+  // platform never holds this key, so it can neither produce the signature
+  // nor send the ERC-20 approve() -- both happen client-side. Supplying
+  // this pair is what makes the non-custodial flow possible.
+  readonly userSigned?: {
+    readonly payerAddress: string;
+    readonly signature: string;
+    // Echoed back from the typed-data call. Permit2 nonces are strictly
+    // increasing per (owner, token, spender); re-reading it here could
+    // pick up a different value than the user actually signed over, which
+    // would revert on-chain with no useful error.
+    readonly nonce: bigint;
+  } | undefined;
 };
 
 // EIP-712 domain chainId per PaymentChain -- Permit2's signature is only
@@ -226,6 +244,56 @@ const PERMIT2_DOMAIN_CHAIN_ID: Record<PaymentChain, number> = {
 };
 
 /**
+ * Picks an address the platform can actually send permit() from.
+ *
+ * Permit2 recovers the owner from the signature, so the submitter is free
+ * -- it only needs a key this platform holds and enough gas. Order:
+ *
+ *   1. the payer, when it's an agent wallet (agent-to-agent: unchanged)
+ *   2. the payee, when it's an agent wallet (user-owned payer)
+ *   3. the org treasury (user-owned payer paying an off-fleet address)
+ *
+ * Throws rather than guessing if none qualify: submitting from an address
+ * without a key fails deep inside Circle with an opaque error.
+ */
+async function resolvePermitSubmitter(
+  db: pg.PoolClient,
+  input: {
+    readonly orgId: string;
+    readonly mode: PaymentMode;
+    readonly chain: PaymentChain;
+    readonly payerAddress: string;
+    readonly payerIsPlatformControlled: boolean;
+    readonly payeeAgentId?: string | undefined;
+    readonly payeeAddress: string;
+  },
+): Promise<string> {
+  if (input.payerIsPlatformControlled) return input.payerAddress;
+
+  if (input.payeeAgentId !== undefined) {
+    const payee = await db.query<{ address: string }>(
+      `SELECT address FROM agent_chain_wallets
+        WHERE agent_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+        LIMIT 1`,
+      [input.payeeAgentId, input.mode, input.chain],
+    );
+    const address = payee.rows[0]?.address;
+    if (address !== undefined) return address;
+  }
+
+  const treasury = await db.query<{ address: string }>(
+    `SELECT address FROM circle_chain_wallets
+      WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+      LIMIT 1`,
+    [input.orgId, input.mode, input.chain],
+  );
+  const treasuryAddress = treasury.rows[0]?.address;
+  if (treasuryAddress !== undefined) return treasuryAddress;
+
+  throw new Error('permit_submitter_unavailable');
+}
+
+/**
  * Signs a fresh PermitSingle for a payer->payee delegation and persists
  * it as 'active'. The on-chain allowance is the authority -- this row is
  * the control plane's mirror of it, not a replacement.
@@ -236,14 +304,23 @@ export async function recordSignedDelegation(
   input: RecordSignedDelegationInput,
 ): Promise<AgentDelegationRow> {
   return withTransaction(pool, async (client) => {
-    const payer = await client.query<{ address: string }>(
-      `SELECT address FROM agent_chain_wallets
-        WHERE agent_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
-        LIMIT 1`,
-      [input.payerAgentId, input.mode, input.chain],
-    );
-    const payerRow = payer.rows[0];
-    if (payerRow === undefined) throw new Error('agent_wallet_not_found');
+    // Either an agent wallet the platform controls, or a user-owned address
+    // it does not. Everything downstream works off payerAddress alone.
+    let payerAddress: string;
+    if (input.userSigned !== undefined) {
+      payerAddress = input.userSigned.payerAddress;
+    } else {
+      if (input.payerAgentId === undefined) throw new Error('delegation_payer_required');
+      const payer = await client.query<{ address: string }>(
+        `SELECT address FROM agent_chain_wallets
+          WHERE agent_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+          LIMIT 1`,
+        [input.payerAgentId, input.mode, input.chain],
+      );
+      const payerRow = payer.rows[0];
+      if (payerRow === undefined) throw new Error('agent_wallet_not_found');
+      payerAddress = payerRow.address;
+    }
 
     const tokenAddress = input.tokenAddress ?? usdcTokenAddress(input.mode, input.chain);
     const ceilingMicros = parseUsdcMicros(input.ceilingUsdc);
@@ -255,63 +332,87 @@ export async function recordSignedDelegation(
     // "API parameter invalid" from Circle rather than a clear revert
     // reason, so this bug would have been very hard to diagnose from the
     // error message alone).
-    const nonce = await readPermit2Nonce(payerRow.address, tokenAddress, input.payeeAddress, input.chain);
+    // A user-signed delegation carries the nonce it was actually signed
+    // over. Re-reading it here could return a different value (another
+    // delegation may have landed in between), and the signature would then
+    // revert on-chain against a nonce nobody signed.
+    const nonce = input.userSigned?.nonce
+      ?? await readPermit2Nonce(payerAddress, tokenAddress, input.payeeAddress, input.chain);
 
-    const { typedData } = buildPermitSingle({
-      chainId: PERMIT2_DOMAIN_CHAIN_ID[input.chain],
-      tokenAddress,
-      spenderAddress: input.payeeAddress,
-      amountMicros: ceilingMicros,
-      expiration: expirationSeconds,
-      nonce,
-    });
+    let signature: string;
+    if (input.userSigned !== undefined) {
+      // The operator's wallet already signed this in the browser, and sent
+      // the ERC-20 approve() itself. The platform holds no key for this
+      // address, so it can do neither -- which is the whole point.
+      signature = input.userSigned.signature;
+    } else {
+      const { typedData } = buildPermitSingle({
+        chainId: PERMIT2_DOMAIN_CHAIN_ID[input.chain],
+        tokenAddress,
+        spenderAddress: input.payeeAddress,
+        amountMicros: ceilingMicros,
+        expiration: expirationSeconds,
+        nonce,
+      });
 
-    const signed = await provider.signPermit2Delegation({
-      chain: input.chain,
-      mode: input.mode,
-      ownerAddress: payerRow.address,
-      typedData,
-    });
+      const signed = await provider.signPermit2Delegation({
+        chain: input.chain,
+        mode: input.mode,
+        ownerAddress: payerAddress,
+        typedData,
+      });
+      signature = signed.signature;
 
-    // Permit2 moves funds via the TOKEN's own transferFrom, so the token
-    // must first allow Permit2 to spend the payer's balance. Without this
-    // the whole flow still signs and permits cleanly, then reverts at
-    // drawDown with `TRANSFER_FROM_FAILED` -- the token refusing a pull it
-    // was never approved for. Spike S4 proved this exact ordering on Arc:
-    // approve(Permit2) -> permit() -> transferFrom().
-    //
-    // Approved at the delegation ceiling rather than maxUint160: Permit2's
-    // own per-delegation allowance is the real spending limit, and a
-    // bounded ERC-20 approval means a Permit2 compromise still can't drain
-    // more than this delegation was ever meant to cover.
-    await provider.executePermit2Transaction({
-      mode: input.mode,
-      chain: input.chain,
-      senderAddress: payerRow.address,
-      abiFunctionSignature: 'approve(address,uint256)',
-      abiParameters: [PERMIT2_ADDRESS, ceilingMicros.toString()],
-      contractAddress: tokenAddress,
-      refId: `agentops-p2-approve-${crypto.randomUUID()}`,
-    });
+      // Permit2 moves funds via the TOKEN's own transferFrom, so the token
+      // must first allow Permit2 to spend the payer's balance. Without this
+      // the whole flow still signs and permits cleanly, then reverts at
+      // drawDown with `TRANSFER_FROM_FAILED` -- the token refusing a pull it
+      // was never approved for. Spike S4 proved this exact ordering on Arc:
+      // approve(Permit2) -> permit() -> transferFrom().
+      //
+      // Approved at the delegation ceiling rather than maxUint160: Permit2's
+      // own per-delegation allowance is the real spending limit, and a
+      // bounded ERC-20 approval means a Permit2 compromise still can't drain
+      // more than this delegation was ever meant to cover.
+      await provider.executePermit2Transaction({
+        mode: input.mode,
+        chain: input.chain,
+        senderAddress: payerAddress,
+        abiFunctionSignature: 'approve(address,uint256)',
+        abiParameters: [PERMIT2_ADDRESS, ceilingMicros.toString()],
+        contractAddress: tokenAddress,
+        refId: `agentops-p2-approve-${crypto.randomUUID()}`,
+      });
+    }
 
     // The signature alone does nothing -- Permit2 only recognizes it once
-    // permit() has actually submitted it on-chain, recording the
-    // allowance in Permit2's own storage. Without this step, drawDown's
-    // transferFrom would fail against a real zero allowance forever.
-    // Submitted by the PAYER (the signer) rather than the payee: Permit2
-    // recovers the owner from the signature regardless of who calls
-    // permit(), and the payer already has a wallet in every case (needed
-    // to sign), while the payee might not (payeeAgentId is optional --
-    // Task 3 covers off-fleet payees too).
+    // permit() has actually submitted it on-chain, recording the allowance
+    // in Permit2's own storage. Without this step, drawDown's transferFrom
+    // would fail against a real zero allowance forever.
+    //
+    // Permit2 recovers the owner from the signature, so ANYONE may submit
+    // permit(). That matters: a user-owned payer has no key here, so the
+    // platform submits from a wallet it does control. Preference order is
+    // payer (agent-to-agent, unchanged) -> payee -> org treasury.
+    const permitSubmitter = await resolvePermitSubmitter(client, {
+      orgId: input.orgId,
+      mode: input.mode,
+      chain: input.chain,
+      payerAddress,
+      payerIsPlatformControlled: input.userSigned === undefined,
+      payeeAgentId: input.payeeAgentId,
+      payeeAddress: input.payeeAddress,
+    });
+
     await provider.executePermit2Transaction({
       mode: input.mode,
       chain: input.chain,
-      senderAddress: payerRow.address,
+      senderAddress: permitSubmitter,
       abiFunctionSignature: 'permit(address,((address,uint160,uint48,uint48),address,uint256),bytes)',
       abiParameters: [
-        payerRow.address,
+        payerAddress,
         [[tokenAddress, ceilingMicros.toString(), expirationSeconds.toString(), nonce.toString()], input.payeeAddress, expirationSeconds.toString()],
-        signed.signature,
+        signature,
       ],
       // Kept short deliberately: confirmed live that a long refId
       // (~100 chars, e.g. embedding both orgId and a full address) makes
@@ -324,16 +425,17 @@ export async function recordSignedDelegation(
 
     const inserted = await client.query<AgentDelegationRow>(
       `INSERT INTO agent_delegations (
-         id, org_id, payer_agent_id, payee_agent_id, payee_address, mode, chain,
+         id, org_id, payer_agent_id, payer_address, payee_agent_id, payee_address, mode, chain,
          token_address, ceiling_usdc, expires_at, permit_nonce, signature,
          status, approved_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10, $11, $12, 'active', $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::numeric, $11, $12, $13, 'active', $14)
        RETURNING *`,
       [
-        prefixedId('dele'), input.orgId, input.payerAgentId, input.payeeAgentId ?? null,
+        prefixedId('dele'), input.orgId, input.payerAgentId ?? null, payerAddress,
+        input.payeeAgentId ?? null,
         input.payeeAddress, input.mode, input.chain, tokenAddress,
-        input.ceilingUsdc, input.expiresAt, nonce, signed.signature, input.approvedBy,
+        input.ceilingUsdc, input.expiresAt, nonce, signature, input.approvedBy,
       ],
     );
     const row = inserted.rows[0];
@@ -384,14 +486,10 @@ export async function drawDown(
       throw conflict('delegation_ceiling_exceeded', 'Drawdown would exceed the remaining delegation ceiling.');
     }
 
-    const payer = await client.query<{ address: string }>(
-      `SELECT address FROM agent_chain_wallets
-        WHERE agent_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
-        LIMIT 1`,
-      [delegation.payer_agent_id, delegation.mode, delegation.chain],
-    );
-    const payerRow = payer.rows[0];
-    if (payerRow === undefined) throw new Error('agent_wallet_not_found');
+    // payer_address is recorded on the delegation itself, so a drawdown
+    // works whether the payer is an agent wallet or a user-owned one the
+    // platform holds no key for -- the payee submits transferFrom either way.
+    const payerAddress = delegation.payer_address;
 
     const drawdownId = prefixedId('deledraw');
     // Inserted 'submitted' before the provider call so a crash mid-call
@@ -411,7 +509,7 @@ export async function drawDown(
       chain: delegation.chain,
       senderAddress: delegation.payee_address,
       abiFunctionSignature: 'transferFrom(address,address,uint160,address)',
-      abiParameters: [payerRow.address, delegation.payee_address, amountMicros.toString(), delegation.token_address],
+      abiParameters: [payerAddress, delegation.payee_address, amountMicros.toString(), delegation.token_address],
       // Kept short -- see recordSignedDelegation's note on refId length.
       refId: `agentops-draw-${crypto.randomUUID()}`,
     });
@@ -440,45 +538,54 @@ export type RevokeDelegationInput = {
  * Revokes a delegation via Permit2's lockdown(), which invalidates the
  * allowance on-chain instantly -- not just a local status flip.
  */
+export type RevokeDelegationResult = {
+  // false when the payer is a user-owned wallet: the row is revoked, but
+  // the on-chain Permit2 allowance survives until the user signs lockdown()
+  // themselves. Callers must surface that difference, never assume it.
+  readonly onChainRevoked: boolean;
+};
+
 export async function revokeDelegation(
   pool: pg.Pool,
   provider: CircleTreasuryProvider,
   input: RevokeDelegationInput,
-): Promise<void> {
-  await withTransaction(pool, async (client) => {
+): Promise<RevokeDelegationResult> {
+  return withTransaction(pool, async (client) => {
     const locked = await client.query<AgentDelegationRow>(
       'SELECT * FROM agent_delegations WHERE id = $1 FOR UPDATE',
       [input.delegationId],
     );
     const delegation = locked.rows[0];
     if (delegation === undefined) throw new Error('agent_delegation_not_found');
-    if (delegation.status === 'revoked') return;
+    if (delegation.status === 'revoked') return { onChainRevoked: delegation.payer_agent_id !== null };
 
-    const payer = await client.query<{ address: string }>(
-      `SELECT address FROM agent_chain_wallets
-        WHERE agent_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
-        LIMIT 1`,
-      [delegation.payer_agent_id, delegation.mode, delegation.chain],
-    );
-    const payerRow = payer.rows[0];
-    if (payerRow === undefined) throw new Error('agent_wallet_not_found');
-
-    // lockdown(AllowanceTransferDetails[]) -- a single-entry array
-    // revoking exactly this token/spender pair, submitted by the payer
-    // (only the owner can revoke their own allowance).
-    await provider.executePermit2Transaction({
-      mode: delegation.mode,
-      chain: delegation.chain,
-      senderAddress: payerRow.address,
-      abiFunctionSignature: 'lockdown((address,address)[])',
-      abiParameters: [[[delegation.token_address, delegation.payee_address]]],
-      // Kept short -- see recordSignedDelegation's note on refId length.
-      refId: `agentops-revoke-${crypto.randomUUID()}`,
-    });
+    // Permit2's lockdown() may ONLY be called by the allowance owner, so
+    // for a user-owned payer this platform cannot submit it -- the user
+    // signs that transaction in their own wallet.
+    //
+    // The row is still marked revoked either way, and that alone stops
+    // this control plane from issuing further drawdowns. But be precise
+    // about what that does and does not mean: until the on-chain lockdown
+    // lands, the Permit2 allowance itself is still live. The caller learns
+    // which case it got from onChainRevoked, and the UI must prompt for
+    // the user's signature when it is false.
+    const platformControlsPayer = delegation.payer_agent_id !== null;
+    if (platformControlsPayer) {
+      await provider.executePermit2Transaction({
+        mode: delegation.mode,
+        chain: delegation.chain,
+        senderAddress: delegation.payer_address,
+        abiFunctionSignature: 'lockdown((address,address)[])',
+        abiParameters: [[[delegation.token_address, delegation.payee_address]]],
+        // Kept short -- see recordSignedDelegation's note on refId length.
+        refId: `agentops-revoke-${crypto.randomUUID()}`,
+      });
+    }
 
     await client.query(
       `UPDATE agent_delegations SET status = 'revoked', updated_at = now() WHERE id = $1`,
       [input.delegationId],
     );
+    return { onChainRevoked: platformControlsPayer };
   });
 }
