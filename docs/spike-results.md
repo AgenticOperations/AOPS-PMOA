@@ -336,6 +336,35 @@ Independently verifiable: **https://testnet.arcscan.app/tx/0x566966b754ae9dca563
 
 ---
 
+### Phase 6 · Task 7 — Base Sepolia Gateway deposit BLOCKED by a Circle-side indexing gap
+
+Arc's treasury Gateway deposit succeeds for real. **Base Sepolia's does not**, and the cause is on Circle's side, not in this codebase.
+
+```
+POST /v1/w3s/developer/transactions/contractExecution
+  approve(0x0077777d7EBA4688BDeF3E311b846F25870A19B9, 12000000)  BASE-SEPOLIA
+  -> 400 { code: 155258, message: "the asset amount owned by the wallet is insufficient for the transaction." }
+```
+
+**What the wallet actually holds** (two independent wallets, both reproduce this):
+
+| Wallet | Real on-chain (raw RPC) | Circle's `getWalletTokenBalance` |
+|---|---|---|
+| `0x350654f61dbf1a4d47d1a5ae3ac512f15b5a2b33` | 20 USDC + **0.0019 ETH** | `USDC=20` — **no native entry at all** |
+| `0xfbdadb6cb6ea3a8bba8f484807455bbdf6778ec9` | 20 USDC + **0.0001 ETH** | `USDC=20` — **no native entry at all** |
+
+**Why this is conclusively a gas-balance read, not a USDC problem:** `approve(spender, 0)` — which requires zero USDC — fails with the identical error. So does every fee level (`LOW`/`MEDIUM`/`HIGH`) and every amount tested (`0`, `100`, `1000000`, `12000000`).
+
+**Why this is conclusively Circle-side:** the ETH is genuinely on-chain and confirmed on a live, syncing Base Sepolia (head advancing normally). Circle's own `listTransactions` shows only the USDC `INBOUND` transfer — it has **no record of the ETH transfers at all**. Polled `getWalletTokenBalance` every 20s for 2 minutes: the native entry never appeared. Circle's pre-flight check reads its own cached balance, sees zero gas, and rejects regardless of chain state.
+
+**Contrast with Arc, which works:** Arc's gas asset *is* USDC, a token Circle indexes, so Circle reports **two** entries for an Arc wallet (`USDC native=true` and `USDC native=false`) and the pre-flight check passes. Base's gas asset is ETH, which Circle does not list in `getWalletTokenBalance` for these testnet wallets.
+
+**Circle's own faucet cannot work around it:** `requestTestnetTokens({ blockchain: 'BASE-SEPOLIA', native: true })` → `429 API rate limit error` (the same entitlement/limit problem S5 documents).
+
+**Not fixable from this codebase.** Resolving it needs either Circle-side native-balance indexing for Base Sepolia, or faucet entitlement on the API key so gas arrives through a path Circle records. Everything Phase 6 built for the cross-chain hop is unaffected and independently proven: `demo/agents/senior-reviewer/server.mjs` and its real end-to-end test (`apps/api/test/payments/demo-senior-reviewer.test.ts`) pass against a real Base-chain Permit2 delegation, and `permit2.ts` was made chain-parametric (correct Base chainId 84532 + Base USDC address) specifically for this leg.
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
