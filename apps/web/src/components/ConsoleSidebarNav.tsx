@@ -155,6 +155,11 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       label: 'Agent Access',
     },
     {
+      href: `${base}/payments/funding`,
+      icon: <IconDatabaseDollar aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
+      label: 'Funding',
+    },
+    {
       href: `${base}/payments/delegations`,
       icon: <IconKey aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
       label: 'Delegations',

@@ -434,3 +434,72 @@ export async function readSpendableMicros(
   const spendable = balance - gasReserveMicros;
   return spendable > 0n ? spendable : 0n;
 }
+
+export type AgentWalletFundingRow = {
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly chain: PaymentChain;
+  readonly address: string;
+  readonly status: string;
+  // On-chain USDC, in micros, as a decimal string. Null when the balance
+  // could not be read -- Arc's public RPC was measured failing ~56% of
+  // identical calls (spike S6), and a funding screen that 500s because one
+  // RPC blipped is worse than one showing an unknown balance.
+  readonly usdcMicros: string | null;
+  // Allocation, when the org funds this agent the custodial way. Null under
+  // just-in-time funding, where the operator's own wallet is the source.
+  readonly allocatedUsdc: string | null;
+  readonly lowWaterMarkUsdc: string | null;
+};
+
+/**
+ * Every agent wallet in the org with its real on-chain balance -- the
+ * middle tier of the funding hierarchy (treasury -> agent wallet -> the
+ * agent spending it). No HTTP route exposed this before, which is why
+ * demo/reset.mjs reads the table directly.
+ */
+export async function listAgentWalletFunding(
+  pool: pg.Pool,
+  orgId: string,
+  mode: PaymentMode,
+): Promise<readonly AgentWalletFundingRow[]> {
+  const result = await pool.query<{
+    agent_id: string;
+    agent_name: string;
+    chain: PaymentChain;
+    address: string;
+    status: string;
+    allocated_usdc: string | null;
+    low_water_mark_usdc: string | null;
+  }>(
+    `SELECT w.agent_id, a.name AS agent_name, w.chain, w.address, w.status,
+            al.allocated_usdc, al.low_water_mark_usdc
+       FROM agent_chain_wallets w
+       JOIN agents a ON a.id = w.agent_id
+       LEFT JOIN agent_allocations al
+         ON al.agent_id = w.agent_id AND al.chain = w.chain
+        AND al.mode = w.mode AND al.status = 'active'
+      WHERE w.org_id = $1 AND w.mode = $2 AND w.status = 'active'
+      ORDER BY a.name, w.chain`,
+    [orgId, mode],
+  );
+
+  return Promise.all(result.rows.map(async (row) => {
+    let usdcMicros: string | null = null;
+    try {
+      usdcMicros = (await nativeBalanceMicros(row.address, row.chain, mode)).toString();
+    } catch {
+      usdcMicros = null;
+    }
+    return {
+      agentId: row.agent_id,
+      agentName: row.agent_name,
+      chain: row.chain,
+      address: row.address,
+      status: row.status,
+      usdcMicros,
+      allocatedUsdc: row.allocated_usdc,
+      lowWaterMarkUsdc: row.low_water_mark_usdc,
+    };
+  }));
+}

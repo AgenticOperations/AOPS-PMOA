@@ -1,16 +1,21 @@
 export type PaymentMode = 'test' | 'live';
-export type PaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche';
+// Must stay in sync with apps/api's PaymentChain. Arc was missing here
+// while the API already provisioned Arc wallets, so any screen rendering a
+// treasury crashed on the unknown chain.
+export type PaymentChain = 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche' | 'arc';
 export type PaymentRail =
   | 'gateway_base'
   | 'gateway_arbitrum'
   | 'gateway_polygon'
   | 'gateway_optimism'
   | 'gateway_avalanche'
+  | 'gateway_arc'
   | 'exact_base'
   | 'exact_arbitrum'
   | 'exact_polygon'
   | 'exact_optimism'
-  | 'exact_avalanche';
+  | 'exact_avalanche'
+  | 'exact_arc';
 export type PaymentStatus = 'active' | 'disabled';
 
 export type OrgPaymentModeRecord = {

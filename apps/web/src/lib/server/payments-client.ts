@@ -494,3 +494,25 @@ export async function revokeDelegation(
 ): Promise<{ readonly onChainRevoked: boolean }> {
   return apiFetch(`/v1/orgs/${orgId}/payments/delegations/${delegationId}/revoke`, { method: 'POST' });
 }
+
+// --- Funding hierarchy: org treasury -> agent wallet -> the agent ---------
+
+export type AgentWalletFundingRecord = {
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly chain: PaymentChain;
+  readonly address: string;
+  readonly status: string;
+  // Null when the on-chain read failed; the screen shows "—" rather than
+  // pretending the balance is zero, which would look like an empty wallet.
+  readonly usdcMicros: string | null;
+  readonly allocatedUsdc: string | null;
+  readonly lowWaterMarkUsdc: string | null;
+};
+
+export async function listAgentWalletFunding(orgId: string): Promise<readonly AgentWalletFundingRecord[]> {
+  const body = await apiFetch<{ readonly wallets: readonly AgentWalletFundingRecord[] }>(
+    `/v1/orgs/${orgId}/payments/agent-wallets`,
+  );
+  return body.wallets;
+}

@@ -8474,3 +8474,32 @@ html[data-theme="dark"] .sidebar-brand-logo {
     grid-template-columns: 1fr;
   }
 }
+
+/* Funding hierarchy — one-click copy for a deposit address. The address is
+   truncated for layout but the full value is copied and in the title. */
+.funding-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.funding-address code {
+  font-size: 0.8125rem;
+}
+
+.funding-address span {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
+.funding-address:hover span {
+  opacity: 1;
+}

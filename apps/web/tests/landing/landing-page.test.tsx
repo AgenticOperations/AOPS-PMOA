@@ -33,7 +33,8 @@ describe('AOPS public landing page', () => {
     expect(screen.queryByRole('tablist', { name: 'Supported USDC chains' })).not.toBeInTheDocument();
 
     const chains = screen.getByRole('list', { name: 'Supported networks' });
-    expect(within(chains).getAllByRole('listitem')).toHaveLength(5);
+    // 5 Gateway chains + Arc, the product's home chain.
+    expect(within(chains).getAllByRole('listitem')).toHaveLength(6);
     expect(within(chains).getByText('Base')).toBeInTheDocument();
     expect(within(chains).getByText('Avalanche')).toBeInTheDocument();
     expect(screen.getByText('One treasury surface. Every execution path.')).toBeInTheDocument();
@@ -53,6 +54,9 @@ describe('AOPS public landing page', () => {
       '/landing/chains/polygon.svg',
       '/landing/chains/optimism.svg',
       '/landing/chains/avalanche.svg',
+      // Arc is the product's home chain -- it belongs in the compatibility
+      // proof alongside the Gateway chains.
+      '/landing/chains/arc.svg',
     ];
     const chainSources = Array.from(
       container.querySelectorAll<HTMLImageElement>('[data-chain-logo]'),

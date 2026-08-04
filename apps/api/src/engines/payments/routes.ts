@@ -47,6 +47,7 @@ import {
   verifyPaymentRail,
 } from './store.js';
 import { revokeAgent } from './agent-revocation.js';
+import { listAgentWalletFunding } from './agent-wallets.js';
 import { setAllocation } from './allocations.js';
 import { payIntraFleet } from './intra-fleet.js';
 import { resolveAgentPayee } from './agent-payee.js';
@@ -658,6 +659,16 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
     return { wallets: await listCircleWallets(deps.pool, params.orgId) };
+  });
+
+  // The middle tier of the funding hierarchy: org treasury -> agent wallet
+  // -> the agent spending it. Nothing exposed agent wallet addresses over
+  // HTTP before, so there was no way to see or fund one from the console.
+  app.get('/v1/orgs/:orgId/payments/agent-wallets', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    return { wallets: await listAgentWalletFunding(deps.pool, params.orgId, mode) };
   });
 
   app.get('/v1/orgs/:orgId/payments/circle/balances', async (request) => {

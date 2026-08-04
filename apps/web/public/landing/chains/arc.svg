@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Arc">
+  <!-- Neutral placeholder mark, not Circle's Arc brand asset: a ring with an
+       open arc. Swap for the official logo when one is available. -->
+  <circle cx="128" cy="128" r="120" fill="#0B1524"/>
+  <path d="M128 40a88 88 0 1 1-62.2 25.8" fill="none" stroke="#4ADE80" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="128" cy="128" r="30" fill="#4ADE80"/>
+</svg>
