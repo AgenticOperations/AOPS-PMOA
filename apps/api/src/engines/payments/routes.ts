@@ -49,6 +49,13 @@ import {
 import { revokeAgent } from './agent-revocation.js';
 import { setAllocation } from './allocations.js';
 import { payIntraFleet } from './intra-fleet.js';
+import { resolveAgentPayee } from './agent-payee.js';
+import {
+  buildUserDelegationTypedData,
+  listDelegations,
+  recordSignedDelegation,
+  revokeDelegation,
+} from './permit2.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
 import {
@@ -140,6 +147,35 @@ const agentAllocationSchema = z.object({
 const providerModeSchema = z.object({
   mode: modeSchema,
 });
+
+// A 20-byte hex address. Rejected early rather than passed to an RPC that
+// would fail with something far less legible.
+const addressSchema = z.string().trim().regex(/^0x[0-9a-fA-F]{40}$/, 'Must be a 0x-prefixed 20-byte address.');
+
+const delegationTargetSchema = z.object({
+  chain: chainSchema,
+  ceiling_usdc: moneySchema,
+  expires_at: z.coerce.date(),
+  payee_agent_id: z.string().trim().min(1).max(120).optional(),
+  payee_address: addressSchema.optional(),
+  token_address: addressSchema.optional(),
+}).refine(
+  (value) => value.payee_agent_id !== undefined || value.payee_address !== undefined,
+  { message: 'Either payee_agent_id or payee_address is required.' },
+);
+
+const delegationTypedDataSchema = z.object({
+  payer_address: addressSchema,
+}).and(delegationTargetSchema);
+
+const recordDelegationSchema = z.object({
+  payer_address: addressSchema,
+  signature: z.string().trim().regex(/^0x[0-9a-fA-F]+$/, 'Must be a 0x-prefixed hex signature.'),
+  // Echoed back from the typed-data call. Re-reading it server-side could
+  // return a newer value than the wallet signed over, and permit() would
+  // then revert on-chain with no useful error.
+  nonce: z.string().trim().regex(/^\d+$/, 'Must be a decimal nonce.'),
+}).and(delegationTargetSchema);
 
 const circleTreasurySchema = z.object({
   label: z.string().trim().min(1).max(120).default('Org treasury'),
@@ -270,6 +306,39 @@ async function requireOrgOperator(
 
 function parseBody<T>(schema: z.ZodType<T>, request: FastifyRequest): T {
   return schema.parse(request.body ?? {});
+}
+
+/**
+ * Resolves a delegation's payee to a real address. A fleet agent goes
+ * through resolveAgentPayee, which also auto-allowlists its wallet for the
+ * payTo guard. An explicit address is taken as given -- it may be an
+ * off-fleet payee this system never provisioned.
+ *
+ * The typed-data and record calls MUST resolve identically: the payee is
+ * the Permit2 spender, so a mismatch would produce a signature that is
+ * valid for a different spender than the one recorded.
+ */
+async function resolveDelegationPayee(
+  pool: pg.Pool,
+  orgId: string,
+  mode: 'test' | 'live',
+  body: {
+    readonly chain: 'arc' | 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche';
+    readonly payee_agent_id?: string | undefined;
+    readonly payee_address?: string | undefined;
+  },
+): Promise<{ readonly address: string; readonly agentId: string | undefined }> {
+  if (body.payee_agent_id !== undefined) {
+    const payee = await resolveAgentPayee(pool, {
+      orgId,
+      agentId: body.payee_agent_id,
+      mode,
+      chain: body.chain,
+    });
+    return { address: payee.address, agentId: payee.agentId };
+  }
+  if (body.payee_address === undefined) throw new IdentityError('payee_required', 400, 'A payee is required.');
+  return { address: body.payee_address, agentId: undefined };
 }
 
 function unavailableCircleProvider(): CircleTreasuryProvider {
@@ -777,6 +846,81 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       createdBy: operator.actorId,
     });
     return reply.code(201).send({ allocation });
+  });
+
+  // --- Delegations from a user-owned wallet -------------------------------
+  //
+  // The operator's own wallet (MetaMask etc.) is the payer: it keeps the
+  // funds, and an agent draws against a Permit2 allowance bounded by the
+  // ceiling below. This platform holds no key for that address, so the two
+  // steps that require the owner -- approve(Permit2) and lockdown() -- must
+  // happen in the browser. Everything else is a signature.
+
+  // Pure read: builds the EIP-712 payload to sign. Writes nothing, sends
+  // nothing on-chain. The returned nonce MUST be echoed back on record,
+  // because re-reading it later could return a newer value than the wallet
+  // signed over and permit() would revert against a nonce nobody signed.
+  app.post('/v1/orgs/:orgId/payments/delegations/typed-data', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const body = parseBody(delegationTypedDataSchema, request);
+    const payee = await resolveDelegationPayee(deps.pool, params.orgId, mode, body);
+    return buildUserDelegationTypedData({
+      orgId: params.orgId,
+      payerAddress: body.payer_address,
+      payeeAddress: payee.address,
+      mode,
+      chain: body.chain,
+      tokenAddress: body.token_address,
+      ceilingUsdc: body.ceiling_usdc,
+      expiresAt: body.expires_at,
+    });
+  });
+
+  app.post('/v1/orgs/:orgId/payments/delegations', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const body = parseBody(recordDelegationSchema, request);
+    const payee = await resolveDelegationPayee(deps.pool, params.orgId, mode, body);
+    const delegation = await recordSignedDelegation(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId,
+      payeeAgentId: payee.agentId,
+      payeeAddress: payee.address,
+      mode,
+      chain: body.chain,
+      tokenAddress: body.token_address,
+      ceilingUsdc: body.ceiling_usdc,
+      expiresAt: body.expires_at,
+      approvedBy: operator.actorId,
+      userSigned: {
+        payerAddress: body.payer_address,
+        signature: body.signature,
+        nonce: BigInt(body.nonce),
+      },
+    });
+    return reply.code(201).send({ delegation });
+  });
+
+  app.get('/v1/orgs/:orgId/payments/delegations', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    return { delegations: await listDelegations(deps.pool, params.orgId, mode) };
+  });
+
+  // Always stops THIS control plane from issuing further drawdowns. Whether
+  // the on-chain allowance also died depends on who owns the payer: only
+  // the owner may call Permit2's lockdown(). onChainRevoked reports which
+  // happened, and the caller must not report a full revoke when it is false.
+  app.post('/v1/orgs/:orgId/payments/delegations/:delegationId/revoke', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly delegationId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const result = await revokeDelegation(deps.pool, providerForOrg(params.orgId), {
+      delegationId: params.delegationId,
+    });
+    return result;
   });
 
   app.post('/v1/orgs/:orgId/agents/:agentId/revoke', async (request) => {

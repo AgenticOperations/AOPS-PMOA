@@ -589,3 +589,107 @@ export async function revokeDelegation(
     return { onChainRevoked: platformControlsPayer };
   });
 }
+
+export type BuildUserDelegationTypedDataInput = {
+  readonly orgId: string;
+  readonly payerAddress: string;
+  readonly payeeAddress: string;
+  readonly mode: PaymentMode;
+  readonly chain: PaymentChain;
+  readonly tokenAddress?: string | undefined;
+  readonly ceilingUsdc: string;
+  readonly expiresAt: Date;
+};
+
+export type UserDelegationTypedData = {
+  readonly typedData: Record<string, unknown>;
+  // Returned so the caller can hand back the SAME nonce when recording the
+  // signature. Re-reading it at record time could pick up a newer value and
+  // the signature would revert on-chain against a nonce nobody signed.
+  readonly nonce: string;
+  readonly tokenAddress: string;
+  // The user must have approved Permit2 for at least the ceiling before any
+  // drawdown can succeed -- Permit2 pulls through the token's own
+  // transferFrom. Surfaced so the UI can prompt for approve() only when it
+  // is actually needed, instead of on every delegation.
+  readonly permit2Address: string;
+};
+
+/**
+ * Builds the exact EIP-712 payload a user's wallet should sign to delegate
+ * spending authority to an agent. Nothing is written and nothing is sent
+ * on-chain -- this is a pure read plus a payload the browser signs.
+ */
+export async function buildUserDelegationTypedData(
+  input: BuildUserDelegationTypedDataInput,
+): Promise<UserDelegationTypedData> {
+  const tokenAddress = input.tokenAddress ?? usdcTokenAddress(input.mode, input.chain);
+  const ceilingMicros = parseUsdcMicros(input.ceilingUsdc);
+  const expirationSeconds = Math.floor(input.expiresAt.getTime() / 1000);
+  const nonce = await readPermit2Nonce(input.payerAddress, tokenAddress, input.payeeAddress, input.chain);
+
+  const { typedData } = buildPermitSingle({
+    chainId: PERMIT2_DOMAIN_CHAIN_ID[input.chain],
+    tokenAddress,
+    spenderAddress: input.payeeAddress,
+    amountMicros: ceilingMicros,
+    expiration: expirationSeconds,
+    nonce,
+  });
+
+  return {
+    typedData,
+    nonce: nonce.toString(),
+    tokenAddress,
+    permit2Address: PERMIT2_ADDRESS,
+  };
+}
+
+export type DelegationSummary = {
+  readonly id: string;
+  readonly payerAgentId: string | null;
+  readonly payerAddress: string;
+  readonly payeeAgentId: string | null;
+  readonly payeeAddress: string;
+  readonly chain: PaymentChain;
+  readonly tokenAddress: string;
+  readonly ceilingUsdc: string;
+  readonly drawnUsdc: string;
+  readonly remainingUsdc: string;
+  readonly expiresAt: Date;
+  readonly status: string;
+  // false for a user-owned payer: revoking here stops this control plane,
+  // but only the owner can kill the on-chain allowance via lockdown().
+  readonly platformControlsPayer: boolean;
+};
+
+export async function listDelegations(
+  pool: pg.Pool,
+  orgId: string,
+  mode: PaymentMode,
+): Promise<readonly DelegationSummary[]> {
+  const result = await pool.query<AgentDelegationRow>(
+    `SELECT * FROM agent_delegations
+      WHERE org_id = $1 AND mode = $2
+      ORDER BY created_at DESC`,
+    [orgId, mode],
+  );
+  return result.rows.map((row) => {
+    const remaining = parseUsdcMicros(row.ceiling_usdc) - parseUsdcMicros(row.drawn_usdc);
+    return {
+      id: row.id,
+      payerAgentId: row.payer_agent_id,
+      payerAddress: row.payer_address,
+      payeeAgentId: row.payee_agent_id,
+      payeeAddress: row.payee_address,
+      chain: row.chain,
+      tokenAddress: row.token_address,
+      ceilingUsdc: row.ceiling_usdc,
+      drawnUsdc: row.drawn_usdc,
+      remainingUsdc: formatUsdc(remaining > 0n ? remaining : 0n),
+      expiresAt: row.expires_at,
+      status: row.status,
+      platformControlsPayer: row.payer_agent_id !== null,
+    };
+  });
+}
