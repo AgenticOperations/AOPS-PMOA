@@ -69,12 +69,12 @@ async function withTransaction<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => 
 }
 
 async function treasuryAddress(
-  client: pg.PoolClient,
+  db: pg.Pool | pg.PoolClient,
   orgId: string,
   mode: PaymentMode,
   chain: PaymentChain,
 ): Promise<string> {
-  const result = await client.query<{ address: string }>(
+  const result = await db.query<{ address: string }>(
     `SELECT address FROM circle_chain_wallets
       WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
       LIMIT 1`,
@@ -93,13 +93,13 @@ async function treasuryAddress(
  * of bug Phase 3's balance ceiling was built to avoid for agent wallets.
  */
 async function treasuryDepositsMicros(
-  client: pg.PoolClient,
+  db: pg.Pool | pg.PoolClient,
   provider: CircleTreasuryProvider,
   orgId: string,
   mode: PaymentMode,
   chain: PaymentChain,
 ): Promise<bigint> {
-  const address = await treasuryAddress(client, orgId, mode, chain);
+  const address = await treasuryAddress(db, orgId, mode, chain);
   const balance = await provider.getGatewayBalance({ address, chain, mode });
   return parseUsdcMicros(balance.available);
 }
@@ -110,9 +110,26 @@ async function treasuryDepositsMicros(
  *   sum(allocated across all agents) <= real treasury deposits
  *
  * Without this, two agents can each hold a $100 allocation against a $50
- * treasury and nothing fires. The check and the write share one
- * transaction; the whole thing runs under the org's advisory lock so two
- * concurrent writers can't both read the same stale sum and both pass.
+ * treasury and nothing fires.
+ *
+ * The treasury read happens BEFORE the org lock is acquired, deliberately
+ * -- provider.getGatewayBalance is a real network call, and when the
+ * provider is worker-backed (real dev/production config) that call goes
+ * out over HTTP to a separate process (circle-worker) which independently
+ * takes the SAME org advisory lock before answering. Holding the lock
+ * across that call deadlocks: this process never releases the lock
+ * because it's blocked waiting on the worker's response, and the worker
+ * never gets the lock because this process holds it. (Invisible to any
+ * test using an in-process fake provider -- only a real, worker-backed
+ * provider ever makes the out-of-process call that creates the cycle.)
+ *
+ * This does widen the race window between reading the balance and
+ * writing the allocation -- two concurrent setAllocation calls could both
+ * read the same deposits figure before either writes. The sum-check AND
+ * the write still happen together inside the lock, so the worst case is a
+ * slightly stale solvency figure, not a torn read/write; the same
+ * external-read-then-serialized-write shape every other real-money check
+ * in this codebase already uses.
  *
  * withPostgresCircleOrgLock takes the POOL and opens its own connection
  * for the advisory lock -- it must wrap the transaction, not sit inside
@@ -125,9 +142,9 @@ export async function setAllocation(
   provider: CircleTreasuryProvider,
   input: SetAllocationInput,
 ): Promise<AgentAllocationRow> {
-  return withPostgresCircleOrgLock(pool, input.orgId, () => withTransaction(pool, async (client) => {
-    const deposits = await treasuryDepositsMicros(client, provider, input.orgId, input.mode, input.chain);
+  const deposits = await treasuryDepositsMicros(pool, provider, input.orgId, input.mode, input.chain);
 
+  return withPostgresCircleOrgLock(pool, input.orgId, () => withTransaction(pool, async (client) => {
     const others = await client.query<{ total: string }>(
       `SELECT COALESCE(SUM(allocated_usdc), 0) AS total
          FROM agent_allocations
