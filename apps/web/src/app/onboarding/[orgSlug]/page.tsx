@@ -1,16 +1,10 @@
 import { redirect } from 'next/navigation';
-import {
-  completeCircleConnectionAction,
-  disconnectCircleConnectionAction,
-  fundTreasuryOnboardingAction,
-  skipTreasuryOnboardingAction,
-  startCircleConnectionAction,
-  syncTreasuryOnboardingAction,
-} from '@/app/actions/onboarding';
+import { provisionTreasuryAction } from '@/app/actions/onboarding';
 import { AuthEntryShell } from '@/components/AuthEntryShell';
-import { CircleTreasuryOnboarding } from '@/components/onboarding/CircleTreasuryOnboarding';
+import { WalletOnboarding } from '@/components/onboarding/WalletOnboarding';
+import { WalletProvider } from '@/components/wallet/WalletProvider';
 import { getCurrentSession, getOrgBySlug } from '@/lib/server/identity-spine-client';
-import { getCircleConnection, listCircleWallets } from '@/lib/server/payments-client';
+import { listCircleWallets } from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,28 +22,26 @@ export default async function TreasuryOnboardingPage({ params }: TreasuryOnboard
   } catch {
     redirect('/auth');
   }
-  const connection = await getCircleConnection(org.id);
-  const wallets = connection.status === 'connected' ? await listCircleWallets(org.id) : [];
+
+  // A workspace with no wallet set yet simply has none to list; that is the
+  // pre-provision state, not an error.
+  const wallets = await listCircleWallets(org.id).catch(() => []);
+  const treasuryReady = wallets.some((wallet) => wallet.status === 'active');
 
   return (
     <AuthEntryShell
       activeStep={3}
-      description="Connect the organization-owned Circle Agent Wallet and prepare the testnet treasury. You can skip this and resume later."
-      eyebrow="Treasury setup"
-      title="Connect your treasury"
+      description="Prepare your workspace, then connect the wallet your agents will spend from. Your funds stay in your wallet."
+      eyebrow="Workspace setup"
+      title="Connect your wallet"
     >
-      <CircleTreasuryOnboarding
-        completeAction={completeCircleConnectionAction.bind(null, org.id, org.slug)}
-        connection={connection}
-        defaultEmail={session.user.email}
-        disconnectAction={disconnectCircleConnectionAction.bind(null, org.id, org.slug)}
-        fundAction={fundTreasuryOnboardingAction.bind(null, org.id, org.slug)}
-        orgSlug={org.slug}
-        skipAction={skipTreasuryOnboardingAction.bind(null, org.id, org.slug)}
-        startAction={startCircleConnectionAction.bind(null, org.id)}
-        syncAction={syncTreasuryOnboardingAction.bind(null, org.id, org.slug)}
-        walletCount={wallets.filter((wallet) => wallet.status === 'active').length}
-      />
+      <WalletProvider>
+        <WalletOnboarding
+          orgSlug={org.slug}
+          provisionAction={provisionTreasuryAction.bind(null, org.id, org.slug)}
+          treasuryReady={treasuryReady}
+        />
+      </WalletProvider>
     </AuthEntryShell>
   );
 }

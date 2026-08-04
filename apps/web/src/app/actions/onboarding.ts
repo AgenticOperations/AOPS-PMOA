@@ -126,3 +126,27 @@ export async function skipTreasuryOnboardingAction(orgId: string, orgSlug: strin
   });
   redirect(`/app/${orgSlug}/overview`);
 }
+
+/**
+ * Provisions the org's Circle wallet set with NO email/OTP step.
+ *
+ * Under developer-controlled wallets the entity secret authorizes wallet
+ * creation directly, so there is nothing for a human to verify here -- see
+ * docs/decision-wallet-model.md. The wallet set exists purely as the parent
+ * container agent wallets are created inside; it holds no money, because
+ * agents draw just-in-time from the operator's own wallet instead.
+ */
+export async function provisionTreasuryAction(
+  orgId: string,
+  orgSlug: string,
+  _previousState: CircleOnboardingActionState,
+): Promise<CircleOnboardingActionState> {
+  try {
+    await createCircleTreasury(orgId, { label: 'Org treasury' });
+    await upsertOnboardingState(orgId, 'circle_wallet_sync', { status: 'completed' });
+    revalidatePath(`/onboarding/${orgSlug}`);
+    return { message: 'Workspace ready.' };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Could not prepare the workspace.' };
+  }
+}

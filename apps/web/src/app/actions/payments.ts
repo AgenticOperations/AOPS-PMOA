@@ -173,7 +173,13 @@ export async function setAgentPaymentAccessAction(orgId: string, orgSlug: string
   await setAgentPaymentAccess(orgId, requiredStringField(formData, 'agentId'), {
     allowed_rails: railFields(formData),
     budget_usdc: moneyField(formData, 'budget'),
-    dedicated_wallet_required: false,
+    // An agent needs its own on-chain address to be paid, to be delegated
+    // to, and to submit its own drawdowns. This was hardcoded false, so
+    // every agent granted access through the console came out with no
+    // wallet -- it could not receive a payment or appear as a delegation
+    // payee. Developer-controlled wallets make this cheap: one entity
+    // secret provisions them, with no per-agent key or login.
+    dedicated_wallet_required: true,
     approval_threshold_usdc: optionalMoneyField(formData, 'approvalThreshold'),
     per_request_cap_usdc: moneyField(formData, 'perRequestCap'),
     status: statusField(formData),

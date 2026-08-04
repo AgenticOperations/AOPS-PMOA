@@ -369,7 +369,9 @@ Genuine unknowns. Each could change the plan.
 
    The rule: Gateway rejects signatures from smart-contract wallets (*"only EOA signatures are accepted"*), and Nanopayments only works with regular ones. So a smart-contract wallet would break **both** cross-chain bridging and the sub-cent payment rail.
 
-   **Good news:** the developer-controlled wallet code already hardcodes `EOA` at creation — it's not configurable, so every wallet it makes is the right type. And this is another quiet argument for switching: the Agent Wallets we run *today* are genuinely smart-contract accounts, which means the current setup couldn't do Gateway cross-chain even if we wanted to.
+   **Good news:** the developer-controlled wallet code already hardcodes `EOA` at creation — it's not configurable, so every wallet it makes is the right type. The Agent Wallets we run *today* are genuinely smart-contract accounts.
+
+   > ⚠️ **Corrected 2026-08-05.** This paragraph previously concluded that being smart-contract accounts meant Agent Wallets "couldn't do Gateway cross-chain even if we wanted to." **That conclusion was wrong.** Circle documents Agent Nanopayments (built on Gateway Nanopayments) for agent wallets, and they bridge cross-chain via CCTP (`circle bridge transfer` — which our own `bridgeWalletTopUp` already calls). The account type is right; the inference drawn from it was not. See `docs/decision-wallet-model.md` for the reasoning that actually decides the wallet model.
 
    **What's still stale:** an old migration set the database default to smart-contract across the wallet tables and rewrote existing rows to match — correct at the time, since it was describing Agent Wallets. For the new per-agent wallet table we need the default set to regular, and ideally constrained to regular only, so the database rejects a wrong value instead of letting it surface as a confusing payment failure later.
 8. **Arc's chain ID doesn't agree across sources** — Arc's own docs say one number, Circle's live payment service reports another. Confirm which before hardcoding; a wrong value fails silently or signs against the wrong domain.

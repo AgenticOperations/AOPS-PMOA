@@ -401,7 +401,9 @@ export async function setAgentPaymentAccess(
     readonly allowed_rails: readonly PaymentRail[];
     readonly approval_threshold_usdc?: string | null | undefined;
     readonly budget_usdc: string;
-    readonly dedicated_wallet_required: false;
+    // Was pinned to `false` at the type level, which made provisioning an
+    // agent wallet from the console impossible rather than merely unused.
+    readonly dedicated_wallet_required: boolean;
     readonly per_request_cap_usdc: string;
     readonly status: 'active' | 'disabled';
   },
