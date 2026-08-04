@@ -15,3 +15,8 @@ test-results/
 *.log
 *.tsbuildinfo
 .DS_Store
+
+# Circle entity-secret recovery files -- NEVER commit (only way to reset a lost entity secret)
+recovery/
+**/recovery/
+*.dat
