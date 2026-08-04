@@ -411,3 +411,84 @@ export async function setAgentPaymentAccess(
     body: JSON.stringify(input),
   });
 }
+
+// --- Delegations from a user-owned wallet ---------------------------------
+//
+// The operator's own wallet is the payer. This platform holds no key for it,
+// so the browser produces the signature and sends approve() itself; these
+// calls only build the payload to sign and record the result.
+
+export type DelegationTypedDataRequest = {
+  readonly payer_address: string;
+  readonly chain: string;
+  readonly ceiling_usdc: string;
+  readonly expires_at: string;
+  readonly payee_agent_id?: string;
+  readonly payee_address?: string;
+};
+
+export type DelegationTypedDataResponse = {
+  readonly typedData: Record<string, unknown>;
+  readonly nonce: string;
+  readonly tokenAddress: string;
+  readonly permit2Address: string;
+};
+
+export async function buildDelegationTypedData(
+  orgId: string,
+  body: DelegationTypedDataRequest,
+): Promise<DelegationTypedDataResponse> {
+  return apiFetch<DelegationTypedDataResponse>(`/v1/orgs/${orgId}/payments/delegations/typed-data`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export type RecordDelegationRequest = DelegationTypedDataRequest & {
+  readonly signature: string;
+  // Echoed back exactly as issued by typed-data. Re-deriving it here could
+  // produce a different nonce than the wallet signed over.
+  readonly nonce: string;
+};
+
+export async function recordDelegation(orgId: string, body: RecordDelegationRequest): Promise<unknown> {
+  return apiFetch(`/v1/orgs/${orgId}/payments/delegations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export type DelegationSummary = {
+  readonly id: string;
+  readonly payerAgentId: string | null;
+  readonly payerAddress: string;
+  readonly payeeAgentId: string | null;
+  readonly payeeAddress: string;
+  readonly chain: string;
+  readonly ceilingUsdc: string;
+  readonly drawnUsdc: string;
+  readonly remainingUsdc: string;
+  readonly expiresAt: string;
+  readonly status: string;
+  readonly platformControlsPayer: boolean;
+};
+
+export async function listDelegations(orgId: string): Promise<readonly DelegationSummary[]> {
+  const body = await apiFetch<{ readonly delegations: readonly DelegationSummary[] }>(
+    `/v1/orgs/${orgId}/payments/delegations`,
+  );
+  return body.delegations;
+}
+
+/**
+ * Revoking always stops THIS control plane from issuing further drawdowns.
+ * onChainRevoked is false when the payer is a user-owned wallet: Permit2's
+ * lockdown() may only be called by the allowance owner, so the on-chain
+ * allowance survives until the user signs it. Callers must surface that.
+ */
+export async function revokeDelegation(
+  orgId: string,
+  delegationId: string,
+): Promise<{ readonly onChainRevoked: boolean }> {
+  return apiFetch(`/v1/orgs/${orgId}/payments/delegations/${delegationId}/revoke`, { method: 'POST' });
+}
