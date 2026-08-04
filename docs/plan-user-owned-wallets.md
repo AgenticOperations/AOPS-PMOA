@@ -100,22 +100,41 @@ List active delegations: agent, chain, ceiling, drawn, remaining, expiry, revoke
 
 ---
 
-## Phase 3 — Make the treasury optional
+## Phase 3 — Make the treasury optional ✅
 
-With user-owned payers, agents don't need pre-funded USDC — they draw on demand. Allocations,
-top-ups, and the Gateway deposit stop being on the critical path.
+`fundAgentFromUserDelegation` ([agent-funding.ts](../apps/api/src/engines/payments/agent-funding.ts))
+tops an agent up **at the moment it spends**, drawing only the shortfall from a delegation the
+operator signed with their own wallet. It runs on the same path as the custodial flow and is a
+no-op when the agent already holds enough, so both funding models coexist.
 
-Still required: **agents pay their own gas.** On Base that's ETH, and nothing supplies it today
-(Arc hides this because its gas asset is USDC). A gas-only top-up path is the one piece of funding
-that must remain.
+That removes allocations, treasury top-ups, and the Gateway deposit from the critical path. The
+treasury (Circle wallet set) is still needed to *provision* agent wallets — it just no longer needs
+to hold money.
+
+Guards that matter, each covered by a test:
+- only `payer_agent_id IS NULL` delegations count — an agent-owned one would have the agent paying
+  itself, funding nothing and burning its own headroom
+- never draws past the ceiling; a partial top-up would leave the agent unable to pay anyway
+- returns a reason rather than throwing, so an org still on the custodial path is unaffected
+
+**Still open: agents pay their own gas.** On Base that's ETH, and nothing supplies it (Arc hides
+this because its gas asset is USDC). A gas-only top-up path is the one piece of funding that must
+remain, and it is not built.
 
 ---
 
 ## Order
 
-1. Phase 1 — foundation, testable immediately
-2. Phase 2 — makes it usable by a human
-3. Phase 3 — simplification, only after 1–2 prove out
+1. Phase 1 — foundation ✅
+2. Phase 2 — browser wallet ✅
+3. Phase 3 — treasury no longer on the critical path ✅
+
+## Not yet proven
+
+Every test uses a fake provider. **No real wallet has signed anything yet.** The path that matters
+— MetaMask producing a signature Permit2's `permit()` accepts on Arc — is untested end to end.
+Spike S4 proved the payload shape via Circle's signer and EIP-712 is EIP-712, so it should hold,
+but "should" is not "does". That live run is the next real milestone.
 
 ## Explicitly out of scope
 
