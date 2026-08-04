@@ -273,6 +273,27 @@ export async function recordSignedDelegation(
       typedData,
     });
 
+    // Permit2 moves funds via the TOKEN's own transferFrom, so the token
+    // must first allow Permit2 to spend the payer's balance. Without this
+    // the whole flow still signs and permits cleanly, then reverts at
+    // drawDown with `TRANSFER_FROM_FAILED` -- the token refusing a pull it
+    // was never approved for. Spike S4 proved this exact ordering on Arc:
+    // approve(Permit2) -> permit() -> transferFrom().
+    //
+    // Approved at the delegation ceiling rather than maxUint160: Permit2's
+    // own per-delegation allowance is the real spending limit, and a
+    // bounded ERC-20 approval means a Permit2 compromise still can't drain
+    // more than this delegation was ever meant to cover.
+    await provider.executePermit2Transaction({
+      mode: input.mode,
+      chain: input.chain,
+      senderAddress: payerRow.address,
+      abiFunctionSignature: 'approve(address,uint256)',
+      abiParameters: [PERMIT2_ADDRESS, ceilingMicros.toString()],
+      contractAddress: tokenAddress,
+      refId: `agentops-p2-approve-${crypto.randomUUID()}`,
+    });
+
     // The signature alone does nothing -- Permit2 only recognizes it once
     // permit() has actually submitted it on-chain, recording the
     // allowance in Permit2's own storage. Without this step, drawDown's

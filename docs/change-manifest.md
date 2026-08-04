@@ -656,3 +656,106 @@ The honest assessment, given the deadline:
 **Recommendation (revised):** build to **T3** — per-agent wallets, fleet treasury, auto-topup, gas headroom, sweep-revocation, **plus Permit2 scoped delegation with drawdown for agent-to-agent payment**. That combination delivers the original "scoped delegation" goal with genuine on-chain teeth, needs no Draft EIPs, and carries all three strongest claims (provable max-loss, scoped revocable delegation, instant revocation). Add `[D2]` escrow → `[D4]` reputation → `[D5]` allocation feedback only as time allows.
 
 **Verify `[K-12]` first.** If Permit2 can't handle Arc's native-USDC view, Lane 2 falls back to per-payment `exact` authorizations and the target tier drops to T4 — better to learn that on day one than on Aug 8. Decide the final tier by **Aug 7** so the video and deck describe what actually runs.
+
+---
+
+# SECTION L — The demo, actually run: full lifecycle with on-chain evidence
+
+**Status: the complete five-agent scenario ran end to end on real testnets.** Every payment below is a real
+on-chain transaction, executed by real agents through the real API — no mocks, no human in the loop after
+the trigger.
+
+**Run date:** 2026-08-04 · **Org:** `org_9add7cd3-03eb-471f-85db-7024a9a0a5bd` · **Mode:** test
+**Treasury (same address on both chains):** `0xd7e0b42a09399e29b2e84fbea02382ba2715d551`
+
+Explorer bases: Arc `https://explorer.testnet.arc.network/tx/<hash>` · Base Sepolia `https://sepolia.basescan.org/tx/<hash>`
+
+## L.1 The four payments — the scenario itself
+
+| # | Payment | Chain | Amount | Tx |
+|---|---|---|---|---|
+| 1 | Orchestrator → DataFetcher | Arc | 0.01 USDC | `0x5657a95681542228932e15d80bff73df2ba2e5cca9aa3ee1052f916e6c849cc5` |
+| 2 | Orchestrator → Analyst | Arc | 0.05 USDC | `0x1b42bbd22859c6ba74028b3ec0b706edf331726910c7541d901fadb831fa3aee` |
+| 3 | **Analyst → DataFetcher** (second hop) | Arc | 0.01 USDC | `0xa5c667785b53b73b3e4d156a46d95a2350c46289b9f8ae7c9376cd328b402bb7` |
+| 4 | Orchestrator → Writer | Arc | 0.02 USDC | `0xf91a9ec77cc3e5d7863c6fa7ce29beffaf5d668db2b1ea3461648fdc77d68821` |
+| 5 | **Orchestrator → SeniorReviewer** (cross-chain) | **Base** | 0.03 USDC | `0x362acbdf1e3f4aee6f06b434777d50e135211119163b3e6ec1bfae0a6265280b` |
+
+**All three architectural claims are now proven on-chain:**
+- **Hub→spoke fan-out** — payments 1, 2, 4.
+- **Second-hop payment** — payment 3. The Analyst, mid-task, decided it needed better data and *paid for it
+  itself*. An agent acting as both seller and buyer in the same request is what makes this an economy rather
+  than one hub paying leaves.
+- **Cross-chain hop** — payment 5. An Arc-resident fleet hired and paid a Base-resident agent, settled on Base.
+
+## L.2 The Permit2 lifecycle, per payment
+
+Each payment is three real transactions: `approve` on the token, `permit()` on Permit2, then `transferFrom`.
+The Base leg, in full:
+
+| Step | Contract | Tx |
+|---|---|---|
+| 1. `approve(Permit2, ceiling)` | Base USDC `0x036CbD53…` | `0x0aec796a98d62a31945ca1e5488105f3b9ec14b45251743ef39b4c0bc1e9a4ee` |
+| 2. `permit(...)` | Permit2 `0x0000…78BA3` | `0x321c7e821e6312f2c395f53907e3348da18966d9dae837d64b3308b0aa34e9b0` |
+| 3. `transferFrom(...)` | Permit2 `0x0000…78BA3` | `0x362acbdf1e3f4aee6f06b434777d50e135211119163b3e6ec1bfae0a6265280b` |
+
+## L.3 Funding lifecycle — how the money got there
+
+| Stage | Chain | Tx |
+|---|---|---|
+| Treasury consolidation | Arc | `0xdc51dd4052175354be33f50449c339e0863442579910025011817ae2c212b245` |
+| Treasury consolidation | Base | `0x76c84efd30d1cb8c18a472aa65550df42fe41880cdf9d341013a5e3c3a9e729b` |
+| Gateway `approve` | Arc | `0x656e4dce3d6ac06cb829e1b21426a3fdf27a38c0c899fc0f090f92802de858ab` |
+| Gateway `deposit` (24 USDC) | Arc | `0x34a4d5d0f525f09f6f35dc97443ab958a92c2342724c6490a7b347ecedbe40a8` |
+| Agent gas funding (Orchestrator) | Base | `0x470c5977a6a371cb7c8216fee888ff62560fe0b8d7bb9ab29933c597d1bde506` |
+| Agent gas funding (SeniorReviewer) | Base | `0xf6867de05ea560fae60b9e213ad0fcbd621390d5b89a7b832d2ba83c6bea675c` |
+
+Final Gateway balances backing the fleet: **Arc 32.00 USDC** (domain 26), **Base 16.00 USDC** (domain 6).
+
+## L.4 Bugs this run exposed — all real, all fixed
+
+These were found by running against live infrastructure. Each would have shipped silently.
+
+**1. Multi-agent top-up starvation** (`allocations.ts`) — the solvency clamp computed
+`entitlement = own_allocation − SUM(other agents' allocations)`. With N agents holding equal allocations on a
+chain, every entitlement collapses to ≤ 0 and **no agent is ever funded**. The doc comment said the clamp
+should be against *treasury deposits*; the code never read deposits at all. Now clamps against real Gateway
+deposits minus what other agents actually hold on-chain. Regression test added and verified to fail against
+the old formula.
+
+**2. Permit2 drawdowns reverted with `TRANSFER_FROM_FAILED`** (`permit2.ts`) — Permit2 moves funds through
+the *token's* `transferFrom`, so the token must first approve Permit2 as a spender. The runtime never issued
+that approve; the flow signed and permitted cleanly, then reverted at drawdown. Spike S4 had documented the
+required order (`approve → permit → transferFrom`) but only the last two were implemented. Approve is issued
+at the delegation ceiling, not `maxUint160`, so a Permit2 compromise can't exceed what the delegation covers.
+
+**3. `BASE_SEPOLIA_RPC_URL` missing from `apps/api/.env`** — the circle-worker's entire liquidity pass died
+with `agent_wallet_balance_rpc_not_configured:base`, so **no chain** got topped up. The demo scripts defaulted
+the value; the worker did not.
+
+**4. Base agent wallets had no gas** — agents received USDC but no native ETH, and every Base transaction needs
+it. Arc hides this because its gas asset *is* USDC. Funded from treasury for this run; **productizing this is
+the one real gap left** (see L.5).
+
+## L.5 Known gaps
+
+- **Base gas provisioning is manual.** Agent wallets on Base need native ETH and nothing in the product
+  supplies it. Arc is unaffected. This needs a gas top-up path alongside the USDC one before Base is
+  self-sufficient.
+- **`/v1/faucet/drips` returns 403** on both developer accounts — Circle's OpenAPI states the endpoint
+  "requires upgrading to mainnet." Not on the demo's path (funding is manual transfer + `gateway-deposits`),
+  but it rules out automated testnet funding.
+- **Gateway credit lags chain finality.** A deposit that just confirmed on-chain can still read as `0` from
+  Gateway's balance API for minutes. `reset.mjs` now waits for the credit rather than allocating against a
+  stale zero.
+
+## L.6 Reproducing this run
+
+```bash
+docker compose up -d postgres redis
+npm run dev:api            # needs BASE_SEPOLIA_RPC_URL set
+npm run dev:circle-worker  # separate process; treasury calls route through it
+DEMO_ORG_ID=<funded org> node --env-file=apps/api/.env demo/run.mjs
+```
+
+`DEMO_ORG_ID` reuses an already-funded org. Without it every run mints a fresh org, a fresh treasury address,
+and fresh agent wallets — stranding the previous run's real funds at addresses nothing references again.

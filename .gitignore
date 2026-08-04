@@ -20,3 +20,7 @@ test-results/
 recovery/
 **/recovery/
 *.dat
+
+# Timestamped .env backups (contain live credentials -- never commit)
+.env.bak.*
+**/.env.bak.*

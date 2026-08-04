@@ -3,6 +3,7 @@ import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-p
 import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import {
   drawDown,
+  PERMIT2_ADDRESS,
   recordSignedDelegation,
   revokeDelegation,
 } from '../../src/engines/payments/permit2.js';
@@ -242,12 +243,29 @@ describe('recordSignedDelegation', () => {
     );
     expect(row.rows[0]).toEqual({ status: 'active', signature: '0xsig' });
 
-    // The signature alone does nothing on-chain -- permit() must actually
-    // submit it, or drawDown's transferFrom would fail against a real
-    // zero allowance forever. Confirms this call really happens, not just
-    // that a signature was obtained and stored.
-    expect(executePermit2Transaction).toHaveBeenCalledTimes(1);
-    const callArgs: unknown[] = executePermit2Transaction.mock.calls[0] ?? [];
-    expect((callArgs[0] as { abiFunctionSignature?: string }).abiFunctionSignature).toContain('permit');
+    // Two on-chain calls are required, in this order:
+    //   1. approve(Permit2) on the TOKEN -- Permit2 pulls funds through the
+    //      token's own transferFrom, so without this drawDown reverts with
+    //      TRANSFER_FROM_FAILED (confirmed live on Arc).
+    //   2. permit() on Permit2 -- the signature alone does nothing until
+    //      permit() records the allowance in Permit2's own storage.
+    // Asserting both, and their order, is what keeps either from being
+    // dropped again.
+    expect(executePermit2Transaction).toHaveBeenCalledTimes(2);
+
+    const calls: unknown[][] = executePermit2Transaction.mock.calls;
+    const approveArgs = calls[0]?.[0] as {
+      abiFunctionSignature?: string;
+      abiParameters?: readonly unknown[];
+      contractAddress?: string;
+    };
+    expect(approveArgs.abiFunctionSignature).toContain('approve');
+    // Targets the token, NOT Permit2 -- the default contractAddress would
+    // approve Permit2 to spend Permit2's own balance, which is a no-op.
+    expect(approveArgs.contractAddress).toBe('0x3600000000000000000000000000000000000000');
+    expect(approveArgs.abiParameters?.[0]).toBe(PERMIT2_ADDRESS);
+
+    const permitArgs = calls[1]?.[0] as { abiFunctionSignature?: string };
+    expect(permitArgs.abiFunctionSignature).toContain('permit');
   });
 });

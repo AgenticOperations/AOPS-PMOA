@@ -199,6 +199,8 @@ type NativeBalanceReader = (address: string, chain: PaymentChain, mode: PaymentM
 export type EvaluateTopUpsInput = {
   readonly mode: PaymentMode;
   readonly nativeBalanceMicros: NativeBalanceReader;
+  // Org-scoped, because the real deposits clamp reads Gateway per org.
+  readonly providerFactory: (orgId: string) => CircleTreasuryProvider;
 };
 
 type AllocationWithWalletRow = AgentAllocationRow & {
@@ -236,13 +238,47 @@ export async function evaluateTopUps(pool: pg.Pool, input: EvaluateTopUpsInput):
   );
 
   for (const allocation of allocations.rows) {
-    await evaluateSingleTopUp(pool, input.nativeBalanceMicros, allocation);
+    await evaluateSingleTopUp(
+      pool,
+      input.nativeBalanceMicros,
+      input.providerFactory(allocation.org_id),
+      allocation,
+    );
   }
+}
+
+/**
+ * Sum of what every OTHER active agent on this org+chain is actually
+ * holding on-chain right now. Deliberately real balances, not allocations:
+ * the clamp protects against over-committing real deposits, and an
+ * allocation nobody has drawn yet has not consumed any.
+ */
+async function otherAgentsOnChainMicros(
+  db: pg.PoolClient,
+  nativeBalanceMicros: NativeBalanceReader,
+  allocation: AllocationWithWalletRow,
+): Promise<bigint> {
+  const others = await db.query<{ wallet_address: string }>(
+    `SELECT w.address AS wallet_address
+       FROM agent_allocations a
+       JOIN agent_chain_wallets w
+         ON w.agent_id = a.agent_id AND w.mode = a.mode AND w.chain = a.chain AND w.status = 'active'
+      WHERE a.org_id = $1 AND a.mode = $2 AND a.chain = $3
+        AND a.status = 'active' AND a.agent_id <> $4`,
+    [allocation.org_id, allocation.mode, allocation.chain, allocation.agent_id],
+  );
+
+  let total = 0n;
+  for (const row of others.rows) {
+    total += await nativeBalanceMicros(row.wallet_address, allocation.chain, allocation.mode);
+  }
+  return total;
 }
 
 async function evaluateSingleTopUp(
   pool: pg.Pool,
   nativeBalanceMicros: NativeBalanceReader,
+  provider: CircleTreasuryProvider,
   allocation: AllocationWithWalletRow,
 ): Promise<void> {
   const rawBalance = await nativeBalanceMicros(allocation.wallet_address, allocation.chain, allocation.mode);
@@ -265,24 +301,31 @@ async function evaluateSingleTopUp(
     );
     if ((pending.rowCount ?? 0) > 0) return;
 
-    const others = await client.query<{ total: string }>(
-      `SELECT COALESCE(SUM(allocated_usdc), 0) AS total
-         FROM agent_allocations
-        WHERE org_id = $1 AND mode = $2 AND chain = $3
-          AND status = 'active' AND agent_id <> $4`,
-      [allocation.org_id, allocation.mode, allocation.chain, allocation.agent_id],
-    );
-    const committed = parseUsdcMicros(others.rows[0]?.total ?? '0');
-
-    // Solvency headroom for this specific agent's slice: real deposits
-    // minus what every OTHER active agent already claims. A top-up must
-    // never push this agent's on-chain balance past what its own
-    // allocation is entitled to, even if the wider treasury holds more.
+    // This agent may be funded up to its own allocation -- that is what an
+    // allocation means. (Subtracting other agents' allocations here would
+    // be wrong: with N agents holding equal allocations, every agent's
+    // entitlement collapses to zero and no agent is ever funded.)
     const allocated = parseUsdcMicros(allocation.allocated_usdc);
-    const entitlement = allocated > committed ? allocated - committed : 0n;
-    const solvencyHeadroom = entitlement > rawBalance ? entitlement - rawBalance : 0n;
+    const entitlement = allocated > rawBalance ? allocated - rawBalance : 0n;
 
-    const topUpMicros = ceilingGap < solvencyHeadroom ? ceilingGap : solvencyHeadroom;
+    // Fleet solvency clamp: real Gateway deposits, minus what every OTHER
+    // agent on this chain is already holding on-chain. An allocation is an
+    // intent, not proof the money exists -- auto-topup must never
+    // manufacture funds no deposit backed.
+    const deposits = await treasuryDepositsMicros(
+      client,
+      provider,
+      allocation.org_id,
+      allocation.mode,
+      allocation.chain,
+    );
+    const heldByOthers = await otherAgentsOnChainMicros(client, nativeBalanceMicros, allocation);
+    const solvencyHeadroom = deposits > heldByOthers ? deposits - heldByOthers : 0n;
+
+    // Smallest of: room under the ceiling, this agent's own entitlement,
+    // and real fleet solvency headroom.
+    const underCeiling = ceilingGap < entitlement ? ceilingGap : entitlement;
+    const topUpMicros = underCeiling < solvencyHeadroom ? underCeiling : solvencyHeadroom;
     if (topUpMicros <= 0n) return;
 
     await client.query(

@@ -146,7 +146,11 @@ try {
       // mode: 'test' matches this worker's existing testnet-only scope
       // (assertTestInput's circle_worker_testnet_only guard) -- live mode
       // isn't wired up anywhere in this worker yet.
-      await evaluateTopUps(pool, { mode: 'test', nativeBalanceMicros });
+      await evaluateTopUps(pool, {
+        mode: 'test',
+        nativeBalanceMicros,
+        providerFactory: (orgId) => createOrgScopedCircleTreasuryProvider(connectionService, orgId),
+      });
       return purged;
     },
   }, pollMs);

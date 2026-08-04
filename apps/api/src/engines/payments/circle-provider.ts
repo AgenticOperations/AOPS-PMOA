@@ -135,6 +135,9 @@ export type CirclePermit2ExecuteInput = {
   readonly abiFunctionSignature: string;
   readonly abiParameters: readonly unknown[];
   readonly refId: string;
+  // Defaults to Permit2 itself. Overridden for the ERC-20 approve that has
+  // to precede permit(), which targets the TOKEN contract, not Permit2.
+  readonly contractAddress?: string;
 };
 
 export type CirclePermit2ExecuteResult = {
@@ -1248,14 +1251,14 @@ export function createDeveloperControlledCircleTreasuryProvider(
       if (signature === undefined || signature.length === 0) throw new Error('circle_permit2_signature_missing');
       return { signature };
     },
-    executePermit2Transaction: async ({ abiFunctionSignature, abiParameters, chain, mode, refId, senderAddress }) => {
+    executePermit2Transaction: async ({ abiFunctionSignature, abiParameters, chain, contractAddress, mode, refId, senderAddress }) => {
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
       const submitted = await client.createContractExecutionTransaction({
         abiFunctionSignature,
         abiParameters: abiParameters as unknown[],
         blockchain: CONTRACT_EXECUTION_BLOCKCHAINS[mode][chain],
-        contractAddress: PERMIT2_ADDRESS,
+        contractAddress: contractAddress ?? PERMIT2_ADDRESS,
         fee: circleFee(),
         idempotencyKey: crypto.randomUUID(),
         refId,
