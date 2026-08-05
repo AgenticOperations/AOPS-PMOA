@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
-import { fundAgentFromUserDelegation } from '../../src/engines/payments/agent-funding.js';
+import { fundAgentFromTreasuryDelegation } from '../../src/engines/payments/agent-funding.js';
 import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
@@ -28,9 +28,10 @@ function fakeProvider(overrides: Partial<CircleTreasuryProvider> = {}): CircleTr
   };
 }
 
-const USER_WALLET = '0xu5e40000000000000000000000000000000000f1';
+const USER_WALLET = '0x115e40000000000000000000000000000000000f';
+const TREASURY_WALLET = '0x7ea50000000000000000000000000000000000f2';
 
-describe('just-in-time funding from a user-owned delegation', () => {
+describe('just-in-time funding from the org treasury delegation', () => {
   let store: PostgresTestStore;
 
   beforeAll(async () => {
@@ -41,9 +42,17 @@ describe('just-in-time funding from a user-owned delegation', () => {
     if (store !== undefined) await store.stop();
   });
 
+  type SeedDelegation = {
+    readonly ceilingUsdc: string;
+    readonly drawnUsdc?: string;
+    // Which payer funds this delegation. Only 'treasury' is drawable by
+    // just-in-time funding -- see the predicate in agent-funding.ts.
+    readonly payerKind: 'user' | 'agent' | 'treasury';
+  };
+
   async function setupAgent(
     suffix: string,
-    delegation: { readonly ceilingUsdc: string; readonly drawnUsdc?: string; readonly userOwned: boolean } | null,
+    delegation: SeedDelegation | readonly SeedDelegation[] | null,
   ) {
     const orgId = `org_jit_${suffix}`;
     const teamId = `team_jit_${suffix}`;
@@ -67,35 +76,42 @@ describe('just-in-time funding from a user-owned delegation', () => {
       refId: `ref_jit_${suffix}`, walletSetId, circleBlockchain: 'ARC-TESTNET',
     });
 
-    if (delegation !== null) {
+    const seeds = delegation === null ? [] : (Array.isArray(delegation) ? delegation : [delegation]) as readonly SeedDelegation[];
+    let nonce = 0;
+    for (const seed of seeds) {
+      const payerAddress = seed.payerKind === 'user'
+        ? USER_WALLET
+        : seed.payerKind === 'treasury' ? TREASURY_WALLET : agentAddress;
       await store.pool.query(
         `INSERT INTO agent_delegations (
            id, org_id, payer_agent_id, payer_address, payee_agent_id, payee_address, mode, chain,
            token_address, ceiling_usdc, drawn_usdc, expires_at, permit_nonce, signature,
-           status, approved_by
-         ) VALUES ($1, $2, $3, $4, $5, $6, 'test', 'arc', $7, $8, $9, $10, 0, '0xsig', 'active', 'usr_1')`,
+           status, approved_by, payer_kind
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'test', 'arc', $7, $8, $9, $10, $11, '0xsig', 'active', 'usr_1', $12)`,
         [
-          `dele_jit_${suffix}`, orgId,
-          delegation.userOwned ? null : agentId,
-          delegation.userOwned ? USER_WALLET : agentAddress,
+          `dele_jit_${suffix}_${seed.payerKind}`, orgId,
+          seed.payerKind === 'agent' ? agentId : null,
+          payerAddress,
           agentId, agentAddress,
           '0x3600000000000000000000000000000000000000',
-          delegation.ceilingUsdc, delegation.drawnUsdc ?? '0',
+          seed.ceilingUsdc, seed.drawnUsdc ?? '0',
           new Date(Date.now() + 3_600_000),
+          nonce, seed.payerKind,
         ],
       );
+      nonce += 1;
     }
 
     return { orgId, agentId, agentAddress };
   }
 
   it('draws only the shortfall, leaving what the agent already earned', async () => {
-    const { orgId, agentId } = await setupAgent('shortfall', { ceilingUsdc: '5.00', userOwned: true });
+    const { orgId, agentId } = await setupAgent('shortfall', { ceilingUsdc: '5.00', payerKind: 'treasury' });
     const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xshortfall' }));
     // Agent holds 0.30; about to spend 1.00 -> draw 0.70, not the full 1.00.
     const balance = vi.fn(() => Promise.resolve(300_000n));
 
-    const result = await fundAgentFromUserDelegation(
+    const result = await fundAgentFromTreasuryDelegation(
       store.pool,
       fakeProvider({ executePermit2Transaction }),
       balance,
@@ -110,11 +126,11 @@ describe('just-in-time funding from a user-owned delegation', () => {
   });
 
   it('does nothing when the agent already holds enough', async () => {
-    const { orgId, agentId } = await setupAgent('enough', { ceilingUsdc: '5.00', userOwned: true });
+    const { orgId, agentId } = await setupAgent('enough', { ceilingUsdc: '5.00', payerKind: 'treasury' });
     const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xunused' }));
     const balance = vi.fn(() => Promise.resolve(2_000_000n));
 
-    const result = await fundAgentFromUserDelegation(
+    const result = await fundAgentFromTreasuryDelegation(
       store.pool,
       fakeProvider({ executePermit2Transaction }),
       balance,
@@ -129,19 +145,45 @@ describe('just-in-time funding from a user-owned delegation', () => {
     // A delegation whose payer is the agent itself is the custodial,
     // agent-to-agent shape. Drawing on it here would have the agent paying
     // itself, which funds nothing and would burn its Permit2 headroom.
-    const { orgId, agentId } = await setupAgent('agentowned', { ceilingUsdc: '5.00', userOwned: false });
+    const { orgId, agentId } = await setupAgent('agentowned', { ceilingUsdc: '5.00', payerKind: 'agent' });
     const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xunused' }));
     const balance = vi.fn(() => Promise.resolve(0n));
 
-    const result = await fundAgentFromUserDelegation(
+    const result = await fundAgentFromTreasuryDelegation(
       store.pool,
       fakeProvider({ executePermit2Transaction }),
       balance,
       { orgId, agentId, mode: 'test', chain: 'arc', neededMicros: 1_000_000n },
     );
 
-    expect(result).toEqual({ funded: false, reason: 'no_user_delegation' });
+    expect(result).toEqual({ funded: false, reason: 'no_treasury_delegation' });
     expect(executePermit2Transaction).not.toHaveBeenCalled();
+  });
+
+  it('draws from a treasury delegation and ignores a user-owned one', async () => {
+    // Since migration 0030 both kinds have payer_agent_id IS NULL, so the
+    // old predicate matched BOTH and would draw against whichever row came
+    // back first -- bypassing the org ceiling entirely when it picked the
+    // user-owned one.
+    const { orgId, agentId } = await setupAgent('mixed', [
+      { ceilingUsdc: '5.00', payerKind: 'user' },
+      { ceilingUsdc: '5.00', payerKind: 'treasury' },
+    ]);
+    const result = await fundAgentFromTreasuryDelegation(
+      store.pool,
+      fakeProvider(),
+      vi.fn(() => Promise.resolve(0n)),
+      { orgId, agentId, mode: 'test', chain: 'arc', neededMicros: 1_000_000n },
+    );
+
+    expect(result.funded).toBe(true);
+    const drawn = await store.pool.query<{ payer_kind: string }>(
+      `SELECT d.payer_kind FROM agent_delegation_drawdowns dd
+         JOIN agent_delegations d ON d.id = dd.delegation_id
+        WHERE d.org_id = $1`,
+      [orgId],
+    );
+    expect(drawn.rows[0]?.payer_kind).toBe('treasury');
   });
 
   it('does not draw past the delegation ceiling', async () => {
@@ -149,30 +191,30 @@ describe('just-in-time funding from a user-owned delegation', () => {
     // shortfall. Partially funding would leave the agent unable to pay
     // anyway, having spent headroom for nothing.
     const { orgId, agentId } = await setupAgent('ceiling', {
-      ceilingUsdc: '1.00', drawnUsdc: '0.80', userOwned: true,
+      ceilingUsdc: '1.00', drawnUsdc: '0.80', payerKind: 'treasury',
     });
     const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xunused' }));
     const balance = vi.fn(() => Promise.resolve(0n));
 
-    const result = await fundAgentFromUserDelegation(
+    const result = await fundAgentFromTreasuryDelegation(
       store.pool,
       fakeProvider({ executePermit2Transaction }),
       balance,
       { orgId, agentId, mode: 'test', chain: 'arc', neededMicros: 1_000_000n },
     );
 
-    expect(result).toEqual({ funded: false, reason: 'no_user_delegation' });
+    expect(result).toEqual({ funded: false, reason: 'no_treasury_delegation' });
     expect(executePermit2Transaction).not.toHaveBeenCalled();
   });
 
   it('reports no delegation rather than throwing, so the custodial path still runs', async () => {
     const { orgId, agentId } = await setupAgent('none', null);
-    const result = await fundAgentFromUserDelegation(
+    const result = await fundAgentFromTreasuryDelegation(
       store.pool,
       fakeProvider(),
       vi.fn(() => Promise.resolve(0n)),
       { orgId, agentId, mode: 'test', chain: 'arc', neededMicros: 1_000_000n },
     );
-    expect(result).toEqual({ funded: false, reason: 'no_user_delegation' });
+    expect(result).toEqual({ funded: false, reason: 'no_treasury_delegation' });
   });
 });

@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { resolveAgentPayee } from './agent-payee.js';
 import { nativeBalanceMicros } from './agent-wallets.js';
-import { fundAgentFromUserDelegation } from './agent-funding.js';
+import { fundAgentFromTreasuryDelegation } from './agent-funding.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { drawDown, recordSignedDelegation } from './permit2.js';
 import type { PaymentChain, PaymentMode } from './types.js';
@@ -111,12 +111,11 @@ export async function payIntraFleet(
   const amountMicros = amountMicrosFromAccept(accept);
 
   // Permit2 pulls from the PAYER's wallet, so this agent must actually hold
-  // the USDC it is about to spend. In the non-custodial model it holds
-  // nothing up front: it draws what it needs, when it needs it, from a
-  // delegation its operator signed with their own wallet. A no-op when the
-  // agent is already funded (it earned enough, or the custodial allocation
+  // the USDC it is about to spend. It holds nothing up front: it draws what
+  // it needs, when it needs it, from the org treasury's delegation. A no-op
+  // when the agent is already funded (it earned enough, or the allocation
   // path topped it up), so both funding models share this path.
-  await fundAgentFromUserDelegation(pool, provider, nativeBalanceMicros, {
+  await fundAgentFromTreasuryDelegation(pool, provider, nativeBalanceMicros, {
     orgId: input.orgId,
     agentId: input.payerAgentId,
     mode: input.mode,

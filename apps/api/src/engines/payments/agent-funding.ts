@@ -14,7 +14,7 @@ export type JustInTimeFundingInput = {
 };
 
 export type JustInTimeFundingResult =
-  | { readonly funded: false; readonly reason: 'already_funded' | 'no_user_delegation' }
+  | { readonly funded: false; readonly reason: 'already_funded' | 'no_treasury_delegation' }
   | { readonly funded: true; readonly amountUsdc: string; readonly txHash: string };
 
 type NativeBalanceReader = (address: string, chain: PaymentChain, mode: PaymentMode) => Promise<bigint>;
@@ -25,21 +25,20 @@ function formatUsdc(micros: bigint): string {
 }
 
 /**
- * Tops an agent's wallet up from a delegation its operator signed with
- * their OWN wallet, at the moment the agent needs the money.
+ * Tops an agent's wallet up from the ORG TREASURY's delegation, at the
+ * moment the agent needs the money.
  *
- * This is the non-custodial replacement for the allocation + treasury
- * top-up path. There, the operator had to move real USDC into a treasury
- * this platform custodies, then allocate it out to each agent in advance.
- * Here the funds stay in the operator's wallet until an agent actually
- * spends, and the delegation ceiling caps total exposure regardless.
+ * One shared pool pays every agent. Each agent draws against its own
+ * Permit2 allowance -- isolation comes from allowance[treasury][USDC][agent]
+ * being keyed by spender address -- and the org-wide ceiling bounds the sum.
+ * The funds sit in the treasury until an agent actually spends.
  *
- * Deliberately NOT an error when no user delegation exists: an org may
- * still be funding its agents the custodial way, and this runs on the same
+ * Deliberately NOT an error when no treasury delegation exists: an org may
+ * still be funding its agents the allocation way, and this runs on the same
  * path for both. The caller decides whether an unfunded agent is a problem
  * -- which it discovers anyway when the payment itself fails.
  */
-export async function fundAgentFromUserDelegation(
+export async function fundAgentFromTreasuryDelegation(
   pool: pg.Pool,
   provider: CircleTreasuryProvider,
   nativeBalanceMicros: NativeBalanceReader,
@@ -52,19 +51,19 @@ export async function fundAgentFromUserDelegation(
     [input.agentId, input.mode, input.chain],
   );
   const address = wallet.rows[0]?.address;
-  if (address === undefined) return { funded: false, reason: 'no_user_delegation' };
+  if (address === undefined) return { funded: false, reason: 'no_treasury_delegation' };
 
   const balance = await nativeBalanceMicros(address, input.chain, input.mode);
   if (balance >= input.neededMicros) return { funded: false, reason: 'already_funded' };
   const shortfall = input.neededMicros - balance;
 
-  // payer_agent_id IS NULL is precisely what marks a user-owned payer: the
-  // operator's own wallet, which this platform holds no key for. The payee
-  // is this agent, so drawing moves USDC straight from the operator's
-  // wallet into the agent's -- the agent itself submits, paying gas.
+  // payer_kind = 'treasury' selects the org's shared pool. Deliberately NOT
+  // `payer_agent_id IS NULL`, which since migration 0030 matches BOTH a
+  // treasury payer and a user-owned wallet -- drawing against the wrong one
+  // would bypass the org ceiling entirely.
   const delegations = await pool.query<{ id: string; ceiling_usdc: string; drawn_usdc: string }>(
     `SELECT id, ceiling_usdc, drawn_usdc FROM agent_delegations
-      WHERE org_id = $1 AND payee_agent_id = $2 AND payer_agent_id IS NULL
+      WHERE org_id = $1 AND payee_agent_id = $2 AND payer_kind = 'treasury'
         AND mode = $3 AND chain = $4 AND status = 'active' AND expires_at > now()
       ORDER BY created_at DESC`,
     [input.orgId, input.agentId, input.mode, input.chain],
@@ -78,5 +77,5 @@ export async function fundAgentFromUserDelegation(
     return { funded: true, amountUsdc, txHash: draw.txHash };
   }
 
-  return { funded: false, reason: 'no_user_delegation' };
+  return { funded: false, reason: 'no_treasury_delegation' };
 }
