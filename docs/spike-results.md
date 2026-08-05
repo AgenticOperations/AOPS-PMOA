@@ -381,6 +381,8 @@ code (Circle's public error list skips 155257–155263) that points at balances 
 
 **Verdict: the escrow lifecycle mechanically works end to end — Open → Funded → Submitted → Completed, six real transactions, all `status: success` on Arc testnet. But decisive question 2 fails on hard evidence: the deployed `fund()` function has no `expectedBudget` parameter, so the plan's assumed front-running guard (`fund(jobId, expectedBudget)` "reverts on mismatch") does not exist on this contract. Per this plan's own pre-committed fallback rule ("if any of 1–4 fails, escrow (D2) does not ship"), D2 does not ship in Phase 7.**
 
+> **REOPENED (2026-08-05).** The fallback verdict above stands *for the deployed reference contract*, but `[D2]` is no longer dead. Two later findings changed the picture: ERC-8183's prose **mandates** the `fund(jobId, expectedBudget, …)` guard that its own reference implementation omits, so the flaw is in the reference code rather than the standard; and the state getter works fine once called by its real name (see the correction on question 5). The new plan deploys our own conformant escrow rather than integrating this one. See `docs/superpowers/specs/2026-08-05-escrow-trust-graduation-design.md`.
+
 **Setup:** two agent wallets already funded from Phase 3/6 (Circle developer-controlled wallets, test mode, Arc testnet): Agent B `0x216c05b8d3409d2fd2b82375334d4b87e789367e` acting as client+evaluator (Mode 2), Agent A `0xecf29492264424ae73fc1434a30a66d2f6a9b48f` acting as provider. Escrow proxy `0x0747EEf0706327138c69792bF28Cd525089e4583` (confirmed deployed, 213 bytes of proxy bytecode).
 
 **Question 1 — does the wallet need to `approve` before `fund()`?** ✅ **YES, confirmed.** `fund()`'s internal `Transfer` event on Arc's native-USDC ERC-20 view (`0x3600...0000`) shows funds moving from the client to the escrow contract via `transferFrom`, which requires a prior `approve`. Real `approve(escrow, 50000)` tx: `0xb87ea8aad554fb25b863fbe4c48f5d312c312c315103796b9a7be438a8958a5b`.
@@ -415,6 +417,21 @@ There is no `uint256 expectedBudget` argument anywhere in this function's ABI �
 | Complete | `complete(uint256,bytes32,bytes)` (`0xd75bbdf3`) — jobId, reason hash, `0x` | Agent B (evaluator) | `0x3d25ff048f6f0ff2fc6acc226a75bec3dd788dc70b8cfefffa99b60f361baa6e` |
 
 Job ID `166059`. Independently verifiable: **https://testnet.arcscan.app/address/0x0747EEf0706327138c69792bF28Cd525089e4583**
+
+> **CORRECTION (2026-08-05).** Question 5's conclusion below is **wrong** and is kept only as the record. The state getter is not broken — we called the wrong function. The plan used `jobs(uint256)` from Arc's tutorials; the EIP defines **`getJob(uint256) returns (Job)`**. Called correctly against this same job `166059`, it decodes cleanly and consistently:
+>
+> ```
+> jobId      166059
+> client     0x216c05b8...367e
+> provider   0xecf29492...b48f
+> evaluator  0x216c05b8...367e     <- == client, confirms Mode 2
+> budget     40000                 <- 0.04 USDC, the FRONT-RUN amount
+> expiredAt  1785860226
+> state      3
+> metadata   "AgentOps S8 escrow spike"   (24 bytes, exact)
+> ```
+>
+> The `288` reported below as a corrupt `state` is word [5] — the string offset `0x120` — misread because `jobs()` returns without the leading struct-offset word, shifting every slot by one. Note `budget` reads **40000**, independently confirming the front-run overcharge from a different angle than the event logs. So the deployed contract's state **is** readable, and question 5's real answer is that the deliverable is not in `getJob`'s struct — only in the logs, as the spec says. The ABI mismatch is real for `createJob` and `fund`, but not for the state getter.
 
 **Question 5 — does `deliverable` appear only in the event log, not in `jobs()` state?** **Partially confirmed.** The deliverable hash (`0x063c548e...`) and the completion reason hash (`0x2ad4a5e2...`) both appear in the `submit`/`complete` transaction calldata and in the escrow's own emitted event logs. We could **not** independently confirm their absence from `jobs()` state, because the plan's assumed `jobs()` getter signature — `function jobs(uint256) view returns (address,address,address,uint256,uint8)` — **does not match this contract either**: calling it against both job `1` (Arc's own showcase job) and job `166059` returns internally-inconsistent, garbage-looking tuples (an invalid short address in the first slot, an absurd `uint256` in the budget slot, `state` decoding to `288`). This is the same class of finding as question 2 — **the plan's assumed ABI, sourced from Arc's tutorials, does not match the deployed bytecode.** We did not reverse-engineer the correct `jobs()` struct layout; it wasn't needed once question 2 had already failed.
 
