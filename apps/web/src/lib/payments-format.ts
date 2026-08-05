@@ -20,9 +20,23 @@ export const CHAIN_LABELS: Record<PaymentChain, string> = {
   polygon: 'Polygon',
 };
 
+// Every rail the console can offer. Arc belongs here even though it is not
+// one of the Section 9 chains: the API accepts arc rails, migration 0023
+// seeds an arc capability row, and demo/reset.mjs grants exact_arc over
+// HTTP. Omitting it made Arc unreachable from the console alone -- an agent
+// could never be granted an Arc wallet, so every Arc delegation failed with
+// agent_wallet_not_found.
+//
+// Each entry is still gated by railIsSettlementVerified, so this list is
+// what CAN be offered, not what is assignable. On Arc that resolves to
+// exact_arc assignable (exact_settlement_verified defaults true) and
+// gateway_arc shown but disabled (gateway_settlement_verified defaults
+// false, and Arc's gateway domain is unused until the Phase 7 bridge work).
 export const PRIMARY_RAILS: readonly PaymentRail[] = [
   'gateway_base',
   'exact_base',
+  'gateway_arc',
+  'exact_arc',
   'gateway_arbitrum',
   'exact_arbitrum',
   'gateway_polygon',

@@ -30,6 +30,19 @@ const capability = {
   wallet_supported: true,
 };
 
+// Mirrors what migration 0023 seeds plus the column defaults it relies on:
+// exact settlement verified, gateway settlement NOT verified.
+const arcCapability = {
+  ...capability,
+  chain: 'arc' as const,
+  circle_blockchain: 'ARC-TESTNET',
+  gateway_domain: 26,
+  gateway_settlement_verified: false,
+  id: 'cap_test_arc',
+  network_label: 'Arc Testnet',
+  wallet_account_type: 'eoa' as const,
+};
+
 const avalancheCapability = {
   ...capability,
   chain: 'avalanche' as const,
@@ -202,5 +215,44 @@ describe('TreasuryAgentAccess', () => {
     expect(screen.getByLabelText('Monthly budget')).toHaveValue('9.00');
     expect(screen.getByLabelText('Per request')).toHaveValue('4.00');
     expect(screen.getByLabelText('Approval threshold')).toHaveValue('2.50');
+  });
+
+  it('offers Exact · Arc so an agent can be granted an Arc wallet at all', () => {
+    // Arc was missing from PRIMARY_RAILS, so no Arc rail could be assigned
+    // from the console -- which meant no agent ever got an Arc wallet, and
+    // every Arc delegation then failed with agent_wallet_not_found. Arc is
+    // the primary demo chain, so this must not silently regress.
+    render(
+      <TreasuryAgentAccess
+        accessAction={async () => {}}
+        accounts={[]}
+        agents={[agent]}
+        capabilities={[capability, arcCapability]}
+        orgSlug="sample-qa-workspace"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grant access' }));
+    const arcExact = screen.getByRole('checkbox', { name: /Exact · Arc/ });
+    expect(arcExact).toBeInTheDocument();
+    expect(arcExact).not.toBeDisabled();
+  });
+
+  it('shows Gateway · Arc as unverified rather than assignable', () => {
+    // gateway_settlement_verified is false for Arc and its gateway domain is
+    // unused until the Phase 7 bridge work. Offering it as assignable would
+    // let an operator pick a rail that cannot settle.
+    render(
+      <TreasuryAgentAccess
+        accessAction={async () => {}}
+        accounts={[]}
+        agents={[agent]}
+        capabilities={[capability, arcCapability]}
+        orgSlug="sample-qa-workspace"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grant access' }));
+    expect(screen.getByRole('checkbox', { name: /Gateway · Arc/ })).toBeDisabled();
   });
 });
