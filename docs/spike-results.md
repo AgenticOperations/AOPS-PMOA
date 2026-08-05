@@ -448,6 +448,52 @@ Job ID `166059`. Independently verifiable: **https://testnet.arcscan.app/address
 
 ---
 
+### S9 — the ERC-8183 guard proof against the deployed escrow — **PASS: the S8 front-run is blocked**
+
+Closes S8's fallback. Deploys **our own** vendored copy of the current ERC-8183 reference implementation — not Arc's stale build that S8 tested — and replays the exact S8 attack against it, on-chain, with real transactions.
+
+**Pinned source:** `github.com/erc-8183/base-contracts` at commit `142e669c1fd318486a4628395b629f033654dd06`, MIT licensed. Vendored under `packages/onchain/lib/base-contracts`. Confirmed present in the vendored source before building: `revert BudgetMismatch();` and `revert PaymentTokenMismatch();` (S8's stale build had neither).
+
+**Build:** `via_ir = true`, `optimizer_runs = 200`. Deployed runtime bytecode size: **19,954 bytes** — under EIP-170's 24,576-byte limit with a 4,622-byte margin. No optimizer tuning was needed.
+
+**Local tests (compile-time proof):** `forge test` — 3/3 passing, including the exact S8 scenario reproduced with `vm.expectRevert`. See `packages/onchain/test/FrontRunGuard.t.sol`.
+
+**Deployed addresses:**
+
+| Chain | chainId | Proxy (ERC-1967) | Implementation |
+|---|---|---|---|
+| Arc testnet | `5042002` | `0x31C050d9D20504c4E11b2A894051d8181B14e0F5` | `0x22F24Fa7161d00e6Bd2529548A7508414Ac9A760` |
+| Base Sepolia | `84532` | `0x31C050d9D20504c4E11b2A894051d8181B14e0F5` | `0x22F24Fa7161d00e6Bd2529548A7508414Ac9A760` |
+
+(Same addresses on both chains — same deployer, same nonce sequence, both CREATE not CREATE2; coincidence of the deploy order, not a cross-chain feature.) Full record including tx hashes for every deployment transaction: `packages/onchain/deployments.json`.
+
+**Selector check on the deployed implementation bytecode** (not the proxy — selectors live in the implementation for a UUPS proxy), on both chains:
+
+```
+PUSH4 + 1f989ec8 (guarded fund(uint256,address,uint256,bytes))  -> present, count 1
+PUSH4 + e25ba707 (stale   fund(uint256,bytes))                  -> absent, count 0
+```
+
+**The on-chain proof (Arc testnet, `scripts/spikes/s9-escrow-guard-proof.mjs`), mirroring S8's real scenario with two real funded wallets:**
+
+| Step | Function | Caller | Tx hash |
+|---|---|---|---|
+| Create job | `createJob(...)` | client | `0x7d914e096d9f886bd2a5bfda8e802f0ffb7d9a96ebf521ab074f0d9b55ddfc57` |
+| Quote | `setBudget(jobId, usdc, 20000, "")` | provider | `0xbff543a961003b4d70740ef492e0d97504876a78e522d3feeab2291e4191846a` |
+| Approve (exact) | `approve(escrow, 20000)` | client | `0x9ac1f92916dfda0cfc0f5ae6bedde58e6b15e2cdd98be5c23cb2e0f8687eceb8` |
+| **Front-run** | `setBudget(jobId, usdc, 40000, "")` | provider | `0xda69a6789a16093c9a3e39adad1cf3834542b116d5475e07db2e2b4b46143afe` |
+| **Fund (attack replay)** | `fund(jobId, usdc, 20000, "")` | client | `0x77f4c847adeadc3f962710d7a8e11548340c83d9c144ce7169718d3c4657e382` — **status: reverted** |
+
+**Direct before/after against S8.** On Arc's stale deployment (S8), the equivalent `fund` tx `0x0907ac70b8b542a780b8f42630da30e5e8a00c9b510c7c7d3ba06db5d2f2e2a2` **succeeded**, and the escrow ended up holding **40000** (0.04 USDC) — the front-run amount, overcharging the client by 0.02 USDC. Against this deployment, the equivalent `fund` tx **reverted**, and the escrow's USDC balance was independently read from the RPC before and after: **`0` before, `0` after.** No funds moved.
+
+(The client's own USDC balance did drop slightly across the whole run — but that is gas, not the attack: on Arc, the gas token and this USDC ERC-20 view are the same underlying balance, so every transaction the client sends costs a sliver of it regardless of outcome. The decisive number is the escrow's balance, which stayed exactly zero.)
+
+**Honest framing, preserved from the design doc:** ERC-8183 is a Draft EIP, roughly five months old at time of writing. We could not verify any audit — a search result claiming audits by Cyfrin/Nethermind/EF Security did not survive checking the cited source. This deployment is testnet only. The contract's neutral-evaluator design is only as neutral as whoever is set as `evaluator`; this proof never calls `complete()` and makes no claim about evaluator behavior.
+
+**S8's failure was a stale deployment, not a flaw in the standard.** ERC-8183's prose mandates the guard; Arc's specific deployed build simply predated it. S9 deploys the current reference implementation and demonstrates the guard working exactly as the standard requires.
+
+---
+
 ### Phase 7 · Task 4 proof test — real Gateway deposit and burn-intent signing; mint blocked on wallet funding
 
 Run against real infrastructure: real Circle developer-controlled-wallets API (test mode), real Arc testnet RPC, real Circle Gateway API (`https://gateway-api-testnet.circle.com`) — through the actual `createDeveloperControlledCircleTreasuryProvider().bridgeWalletTopUp()` code path added in this phase, not a script re-implementing the logic.
