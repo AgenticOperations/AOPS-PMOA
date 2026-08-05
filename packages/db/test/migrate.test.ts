@@ -71,6 +71,9 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0026_agent_allocations');
     expect(firstRun).toContain('0027_payto_allowlist');
     expect(firstRun).toContain('0028_permit2_delegations');
+    expect(firstRun).toContain('0029_delegation_payer_address');
+    expect(firstRun).toContain('0030_treasury_payer_and_org_ceiling');
+    expect(firstRun).toContain('0031_changelog_sync');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -106,6 +109,9 @@ describe('PMOA database migrations', () => {
       '0026_agent_allocations',
       '0027_payto_allowlist',
       '0028_permit2_delegations',
+      '0029_delegation_payer_address',
+      '0030_treasury_payer_and_org_ceiling',
+      '0031_changelog_sync',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(

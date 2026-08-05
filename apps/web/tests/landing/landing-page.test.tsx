@@ -20,6 +20,13 @@ describe('AOPS public landing page', () => {
     expect(screen.queryByRole('button', { name: /Switch to dark theme/i })).not.toBeInTheDocument();
   });
 
+  it('links to the public changelog from primary navigation', async () => {
+    render(await HomePage());
+
+    const navigation = screen.getByRole('navigation', { name: 'Primary navigation' });
+    expect(within(navigation).getByRole('link', { name: 'Changelog' })).toHaveAttribute('href', '/changelog');
+  });
+
   it('exposes four control stages and presents supported chains as compatibility proof', async () => {
     render(await HomePage());
 

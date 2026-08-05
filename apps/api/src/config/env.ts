@@ -8,8 +8,13 @@ export type ApiEnv = {
   readonly circleWorkerTimeoutMs: number;
   readonly circleWorkerToken: string;
   readonly circleWorkerUrl: string;
+  readonly changelogSyncIntervalMs: number;
+  readonly changelogSyncToken: string;
   readonly databaseUrl: string;
   readonly enableTestnetX402Fixtures: boolean;
+  readonly githubOrg: string;
+  readonly githubRepos: readonly string[];
+  readonly githubToken: string;
   readonly googleClientId: string;
   readonly googleClientSecret: string;
   readonly googleOAuthRedirectUrl: string;
@@ -180,12 +185,24 @@ export function readApiEnv(
     circleWorkerTimeoutMs: numberValue(environment, 'CIRCLE_WORKER_TIMEOUT_MS', 10_000, 300_000),
     circleWorkerToken: stringValue(environment, 'CIRCLE_WORKER_TOKEN'),
     circleWorkerUrl: stringValue(environment, 'CIRCLE_WORKER_URL'),
+    // Changelog sync is optional in every environment (including
+    // production): with no GitHub credentials configured, the engine still
+    // boots and simply serves an empty/"not configured" changelog rather
+    // than failing server startup the way the upstream design did.
+    changelogSyncIntervalMs: numberValue(environment, 'CHANGELOG_SYNC_INTERVAL_MS', 7_200_000, 86_400_000),
+    changelogSyncToken: stringValue(environment, 'CHANGELOG_SYNC_TOKEN'),
     databaseUrl: stringValue(
       environment,
       'DATABASE_URL',
       'postgres://agentops:agentops@localhost:5432/agentops_pmoa',
     ),
     enableTestnetX402Fixtures,
+    githubOrg: stringValue(environment, 'GITHUB_ORG'),
+    githubRepos: stringValue(environment, 'GITHUB_REPOS')
+      .split(',')
+      .map((repo) => repo.trim())
+      .filter((repo) => repo.length > 0),
+    githubToken: stringValue(environment, 'GITHUB_TOKEN'),
     googleClientId: stringValue(environment, 'GOOGLE_CLIENT_ID'),
     googleClientSecret: stringValue(environment, 'GOOGLE_CLIENT_SECRET'),
     googleOAuthRedirectUrl: stringValue(

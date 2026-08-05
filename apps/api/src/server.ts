@@ -3,6 +3,7 @@ import { readApiEnv } from './config/env.js';
 import pg from 'pg';
 import { Redis } from 'ioredis';
 import { runMigrations } from '@agentops-pmoa/db';
+import { startChangelogSync } from './engines/changelog/sync.js';
 import { resolveSession } from './engines/auth/store.js';
 import { getMembershipRole } from './engines/identity/store.js';
 import {
@@ -44,8 +45,19 @@ function bearerToken(header: unknown): string | null {
   return match?.[1] ?? null;
 }
 
+const changelogGithubConfig = {
+  org: env.githubOrg,
+  repos: env.githubRepos,
+  token: env.githubToken,
+};
+
 const app = buildApp({
   enableTestnetX402Fixtures: env.enableTestnetX402Fixtures,
+  changelog: {
+    pool,
+    github: changelogGithubConfig,
+    syncToken: env.changelogSyncToken.length > 0 ? env.changelogSyncToken : undefined,
+  },
   identity: {
     pool,
     sessionCookieName: env.sessionCookieName,
@@ -119,7 +131,13 @@ const app = buildApp({
   readiness,
 });
 
+// Fastify forbids registering hooks once the instance has started listening,
+// so this indirection lets the onClose hook (added before listen) call
+// whichever stop function `startChangelogSync` assigns after listen.
+let stopChangelogSync = (): void => {};
+
 app.addHook('onClose', async () => {
+  stopChangelogSync();
   await pool.end();
   redis.disconnect();
 });
@@ -131,3 +149,9 @@ try {
   app.log.error(error);
   process.exit(1);
 }
+
+// Started after listen (not awaited in onModuleInit-style boot hook) so an
+// empty database or a slow first GitHub crawl never delays server startup.
+stopChangelogSync = startChangelogSync(pool, changelogGithubConfig, env.changelogSyncIntervalMs, {
+  onError: (error) => app.log.error({ err: error }, 'changelog sync pass failed'),
+});

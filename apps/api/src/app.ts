@@ -3,6 +3,8 @@ import Fastify from 'fastify';
 import { healthResponseSchema } from '@agentops-pmoa/contracts';
 import type { RegisterApprovalRoutesDeps } from './engines/approvals/routes.js';
 import { registerApprovalRoutes } from './engines/approvals/routes.js';
+import type { RegisterChangelogRoutesDeps } from './engines/changelog/routes.js';
+import { registerChangelogRoutes } from './engines/changelog/routes.js';
 import type { RegisterEvidenceRoutesDeps } from './engines/evidence/routes.js';
 import { registerEvidenceRoutes } from './engines/evidence/routes.js';
 import type { RegisterIdentityRoutesDeps } from './engines/identity/routes.js';
@@ -18,6 +20,7 @@ import type { RegisterRuntimeRoutesDeps } from './engines/runtime/routes.js';
 import { registerRuntimeRoutes } from './engines/runtime/routes.js';
 
 export type BuildAppOptions = {
+  readonly changelog?: RegisterChangelogRoutesDeps;
   readonly evidence?: RegisterEvidenceRoutesDeps;
   readonly identity?: RegisterIdentityRoutesDeps;
   readonly operations?: RegisterOperationRoutesDeps;
@@ -119,6 +122,19 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.approvals === undefined &&
         options.payments === undefined &&
         options.runtime === undefined,
+    });
+  }
+
+  if (options.changelog !== undefined) {
+    registerChangelogRoutes(app, {
+      ...options.changelog,
+      installErrorHandler:
+        options.identity === undefined &&
+        options.policy === undefined &&
+        options.approvals === undefined &&
+        options.payments === undefined &&
+        options.runtime === undefined &&
+        options.operations === undefined,
     });
   }
   return app;

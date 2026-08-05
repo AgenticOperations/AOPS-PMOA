@@ -8,7 +8,12 @@ const navigation = [
   { href: '#product', label: 'Product' },
   { href: '#security', label: 'Security' },
   { href: '#developers', label: 'Developers' },
+  { href: '/changelog', label: 'Changelog' },
 ] as const;
+
+function isRoute(href: string): boolean {
+  return href.startsWith('/');
+}
 
 export function LandingNavigation() {
   const [open, setOpen] = useState(false);
@@ -29,9 +34,13 @@ export function LandingNavigation() {
             <Image alt="" height={157} priority src="/landing/aops-wordmark-nav.png" unoptimized width={580} />
           </a>
           <nav className="aops-nav-links" aria-label="Primary navigation">
-            {navigation.map((item) => (
-              <a href={item.href} key={item.href}>{item.label}</a>
-            ))}
+            {navigation.map((item) =>
+              isRoute(item.href) ? (
+                <Link href={item.href} key={item.href}>{item.label}</Link>
+              ) : (
+                <a href={item.href} key={item.href}>{item.label}</a>
+              ),
+            )}
           </nav>
           <div className="aops-nav-actions">
             <Link href="/auth">Sign in</Link>
@@ -55,9 +64,13 @@ export function LandingNavigation() {
         data-open={open}
         id="aops-mobile-menu"
       >
-        {navigation.map((item) => (
-          <a href={item.href} key={item.href} onClick={() => setOpen(false)}>{item.label}</a>
-        ))}
+        {navigation.map((item) =>
+          isRoute(item.href) ? (
+            <Link href={item.href} key={item.href} onClick={() => setOpen(false)}>{item.label}</Link>
+          ) : (
+            <a href={item.href} key={item.href} onClick={() => setOpen(false)}>{item.label}</a>
+          ),
+        )}
         <Link href="/auth" onClick={() => setOpen(false)}>Sign in</Link>
       </nav>
     </>
