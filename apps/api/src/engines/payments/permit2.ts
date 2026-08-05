@@ -2,8 +2,8 @@ import { encodeFunctionData, parseAbi } from 'viem';
 import type pg from 'pg';
 import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
-import { chainRpcUrl } from './agent-wallets.js';
-import { outstandingHeadroomMicros } from './delegation-ceiling.js';
+import { chainRpcUrl, nativeBalanceMicros } from './agent-wallets.js';
+import { assertDelegationWithinCeilings, outstandingHeadroomMicros } from './delegation-ceiling.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain, PaymentMode } from './types.js';
@@ -99,7 +99,7 @@ export function parseUsdcMicros(value: string | number): bigint {
   return whole + BigInt(decimals.length === 0 ? '0' : decimals);
 }
 
-function formatUsdc(micros: bigint): string {
+export function formatUsdc(micros: bigint): string {
   const whole = micros / 1_000_000n;
   const decimal = (micros % 1_000_000n).toString().padStart(6, '0');
   return `${whole.toString()}.${decimal}`;
@@ -222,6 +222,14 @@ export type RecordSignedDelegationInput = {
   readonly ceilingUsdc: string;
   readonly expiresAt: Date;
   readonly approvedBy: string;
+  // Reads the payer's real on-chain balance, for the solvency bound.
+  // Injected so the caller owns the retry policy (Arc's public RPC was
+  // measured failing ~56% of identical calls, spike S6) and so tests can
+  // stub it. Defaults to nativeBalanceMicros, which already picks the
+  // right read per chain -- native on Arc, ERC-20 balanceOf elsewhere.
+  readonly readPayerBalanceMicros?:
+    | ((address: string, chain: PaymentChain, mode: PaymentMode) => Promise<bigint>)
+    | undefined;
   // A delegation signed by the operator's own wallet in the browser. The
   // platform never holds this key, so it can neither produce the signature
   // nor send the ERC-20 approve() -- both happen client-side. Supplying
@@ -349,6 +357,35 @@ export async function recordSignedDelegation(
     const tokenAddress = input.tokenAddress ?? usdcTokenAddress(input.mode, input.chain);
     const ceilingMicros = parseUsdcMicros(input.ceilingUsdc);
     const expirationSeconds = Math.floor(input.expiresAt.getTime() / 1000);
+
+    // Both bounds run BEFORE anything is signed or sent on-chain. A
+    // delegation refused after approve() would have already raised the
+    // payer's ERC-20 allowance for a delegation that does not exist.
+    //
+    // TREASURY ONLY, deliberately. The other two kinds must not be gated:
+    //
+    //   user  -- their balance is not ours to gate on, and their approve()
+    //            happens in the browser, not here.
+    //   agent -- an agent's ceiling is SUPPOSED to exceed its balance. That
+    //            is the whole just-in-time model: payIntraFleet opens a
+    //            5.00 USDC delegation for an agent holding cents, then the
+    //            agent draws as it spends. Solvency-gating that rejects
+    //            every agent-to-agent payment.
+    //
+    // The org ceiling is likewise a statement about the shared treasury
+    // pool. outstandingHeadroomMicros is scoped per payer address, so
+    // measuring one agent's headroom against an org-wide cap would compare
+    // two different things.
+    if (payerKind === 'treasury') {
+      const readBalance = input.readPayerBalanceMicros ?? nativeBalanceMicros;
+      await assertDelegationWithinCeilings(
+        client,
+        { orgId: input.orgId, payerAddress, mode: input.mode, chain: input.chain, tokenAddress },
+        ceilingMicros,
+        await readBalance(payerAddress, input.chain, input.mode),
+      );
+    }
+
     // Permit2 requires a strictly increasing nonce per owner/token/spender
     // -- MUST read the real current value, never assume 0. A hardcoded 0
     // makes every delegation after the first for the same triple silently

@@ -341,6 +341,7 @@ describe('recordSignedDelegation', () => {
       expiresAt: new Date(Date.now() + 86_400_000),
       approvedBy: 'actor_test',
       payerTreasury: true,
+      readPayerBalanceMicros: () => Promise.resolve(100_000_000n),
     });
 
     expect(delegation.payer_address).toBe(treasuryAddress);
@@ -374,6 +375,7 @@ describe('recordSignedDelegation', () => {
       expiresAt: new Date(Date.now() + 86_400_000),
       approvedBy: 'actor_test',
       payerTreasury: true,
+      readPayerBalanceMicros: () => Promise.resolve(100_000_000n),
     });
 
     const approveCall = (executePermit2Transaction.mock.calls as unknown[][])

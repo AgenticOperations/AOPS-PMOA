@@ -1,5 +1,6 @@
 import type pg from 'pg';
-import { parseUsdcMicros } from './permit2.js';
+import { conflict } from '../identity/errors.js';
+import { formatUsdc, parseUsdcMicros } from './permit2.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 type Db = pg.Pool | pg.PoolClient;
@@ -47,4 +48,40 @@ export async function orgCeilingMicros(
   );
   const row = result.rows[0];
   return row === undefined ? null : parseUsdcMicros(row.ceiling_usdc);
+}
+
+/**
+ * Bounds a proposed new delegation. Called before any on-chain write.
+ *
+ * balanceMicros is injected rather than read here: Arc's public RPC was
+ * measured failing ~56% of identical calls (spike S6), so the caller owns
+ * the retry policy, and tests can stub it without a live chain.
+ */
+export async function assertDelegationWithinCeilings(
+  db: Db,
+  scope: PayerScope,
+  newCeilingMicros: bigint,
+  balanceMicros: bigint,
+): Promise<void> {
+  const outstanding = await outstandingHeadroomMicros(db, scope);
+  const total = outstanding + newCeilingMicros;
+
+  const configured = await orgCeilingMicros(db, {
+    orgId: scope.orgId, mode: scope.mode, chain: scope.chain,
+  });
+  if (configured !== null && total > configured) {
+    throw conflict(
+      'org_delegation_ceiling_exceeded',
+      `This delegation would bring total delegated spend to ${formatUsdc(total)} USDC, above the org ceiling of ${formatUsdc(configured)} USDC.`,
+    );
+  }
+
+  // Solvency. A ceiling the treasury cannot cover is not a cap, it is a
+  // deferred failure that lands on whichever agent happens to draw last.
+  if (total > balanceMicros) {
+    throw conflict(
+      'treasury_insufficient_for_ceiling',
+      `The treasury holds ${formatUsdc(balanceMicros)} USDC but ${formatUsdc(total)} USDC would be delegated. Fund the treasury first.`,
+    );
+  }
 }
