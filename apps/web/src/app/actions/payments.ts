@@ -21,6 +21,22 @@ function paymentsPath(orgSlug: string): string {
   return `/app/${orgSlug}/payments`;
 }
 
+/**
+ * Revalidates the payments console after a mutation.
+ *
+ * The 'layout' type is load-bearing. Every panel an operator actually edits
+ * lives in a NESTED route -- agent-access, sources, delegations, funding,
+ * liquidity, activity -- and revalidating the bare payments path refreshes
+ * only the index page, leaving all of them serving stale server props.
+ *
+ * The symptom is a save that looks lost: the POST succeeds and the database
+ * is correct, but the panel rehydrates from cached props and shows the old
+ * value, so the operator re-enters it and saves again.
+ */
+function revalidatePayments(orgSlug: string): void {
+  revalidatePath(paymentsPath(orgSlug), 'layout');
+}
+
 function stringField(formData: FormData, key: string): string {
   const value = formData.get(key);
   return typeof value === 'string' ? value.trim() : '';
@@ -53,22 +69,34 @@ function modeField(formData: FormData): PaymentMode {
   return stringField(formData, 'mode') === 'live' ? 'live' : 'test';
 }
 
+// These allowlists are the last gate before a value reaches the API, and
+// anything absent is dropped SILENTLY -- railFields filters rather than
+// throws. Arc was missing from all three, so checking "Exact · Arc" and
+// saving produced a successful POST whose payload never contained it, and
+// the panel came back unchecked.
+//
+// Arc is test-mode only: contractConfig throws arc_mainnet_not_supported for
+// live, because Arc mainnet does not exist. That is the API's call to make
+// and it fails loudly, so these lists stay mode-agnostic.
+const PAYMENT_CHAINS = new Set<PaymentChain>([
+  'arbitrum',
+  'avalanche',
+  'base',
+  'optimism',
+  'polygon',
+  'arc',
+]);
+
 function chainField(formData: FormData, key = 'chain'): PaymentChain {
   const value = stringField(formData, key);
-  if (value === 'arbitrum' || value === 'avalanche' || value === 'base' || value === 'optimism' || value === 'polygon') {
-    return value;
-  }
+  if (PAYMENT_CHAINS.has(value as PaymentChain)) return value as PaymentChain;
   throw new Error(`${key} is invalid`);
 }
 
 function chainFields(formData: FormData): PaymentChain[] {
-  const chains = formData.getAll('chains').filter((value): value is PaymentChain => (
-    value === 'arbitrum' ||
-    value === 'avalanche' ||
-    value === 'base' ||
-    value === 'optimism' ||
-    value === 'polygon'
-  ));
+  const chains = formData
+    .getAll('chains')
+    .filter((value): value is PaymentChain => typeof value === 'string' && PAYMENT_CHAINS.has(value as PaymentChain));
   if (chains.length === 0) throw new Error('At least one chain is required');
   return [...new Set(chains)];
 }
@@ -79,11 +107,13 @@ const PAYMENT_RAILS = new Set<PaymentRail>([
   'gateway_polygon',
   'gateway_optimism',
   'gateway_avalanche',
+  'gateway_arc',
   'exact_base',
   'exact_arbitrum',
   'exact_polygon',
   'exact_optimism',
   'exact_avalanche',
+  'exact_arc',
 ]);
 
 function railFields(formData: FormData): PaymentRail[] {
@@ -101,14 +131,14 @@ function railField(formData: FormData, key = 'rail'): PaymentRail {
 
 export async function setProviderModeAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await setProviderMode(orgId, { mode: modeField(formData) });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function createCircleTreasuryAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await createCircleTreasury(orgId, {
     label: requiredStringField(formData, 'label'),
   });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function initiateGatewayDepositAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
@@ -116,19 +146,19 @@ export async function initiateGatewayDepositAction(orgId: string, orgSlug: strin
     amount_usdc: moneyField(formData, 'amount'),
     chain: chainField(formData),
   });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function requestTestnetFundsAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await requestTestnetFunds(orgId, {
     chains: chainFields(formData),
   });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function reconcileCircleProviderJobsAction(orgId: string, orgSlug: string): Promise<void> {
   await reconcileCircleProviderJobs(orgId);
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function bridgeExactWalletTopUpAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
@@ -137,27 +167,27 @@ export async function bridgeExactWalletTopUpAction(orgId: string, orgSlug: strin
     from_chain: chainField(formData, 'fromChain'),
     to_chain: chainField(formData, 'toChain'),
   });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function retryLiquidityJobAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await retryLiquidityJob(orgId, requiredStringField(formData, 'jobId'));
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function cancelLiquidityJobAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await cancelLiquidityJob(orgId, requiredStringField(formData, 'jobId'));
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function verifyPaymentRailAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
   await verifyPaymentRail(orgId, railField(formData));
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function verifyUnverifiedPaymentRailsAction(orgId: string, orgSlug: string): Promise<void> {
   await verifyPaymentRails(orgId, { only_unverified: true });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function createTreasuryAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
@@ -166,7 +196,7 @@ export async function createTreasuryAction(orgId: string, orgSlug: string, formD
     label: requiredStringField(formData, 'label'),
     treasury_type: 'gateway',
   });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
 
 export async function setAgentPaymentAccessAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
@@ -184,5 +214,5 @@ export async function setAgentPaymentAccessAction(orgId: string, orgSlug: string
     per_request_cap_usdc: moneyField(formData, 'perRequestCap'),
     status: statusField(formData),
   });
-  revalidatePath(paymentsPath(orgSlug));
+  revalidatePayments(orgSlug);
 }
