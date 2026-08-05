@@ -24,6 +24,62 @@ function formatUsdc(micros: bigint): string {
   return `${whole.toString()}.${(micros % 1_000_000n).toString().padStart(6, '0')}`;
 }
 
+// Enough to submit a handful of transferFrom calls, no more. On Arc this is
+// literally gas, because USDC is the native gas asset there.
+const AGENT_GAS_FLOOR_MICROS = 100_000n; // 0.10 USDC
+
+/**
+ * Bootstraps an agent wallet so it can submit its OWN Permit2 drawdown.
+ *
+ * Permit2 requires msg.sender == spender, so the agent -- not the treasury
+ * -- submits transferFrom, and pays gas for it. A freshly provisioned agent
+ * wallet holds nothing, so without this the very first drawdown can never
+ * be sent and the agent is stuck.
+ *
+ * A DIRECT treasury transfer, not a Permit2 draw: the treasury is
+ * platform-controlled, and this is the platform funding its own plumbing.
+ * Bounded to a small fixed floor so it never becomes a second uncapped
+ * funding path that sidesteps the delegation ceiling.
+ *
+ * Base and the other ERC-20 chains need NATIVE gas (ETH), which the Circle
+ * provider exposes no method to send -- there, an agent wallet must be
+ * funded with gas out of band. Returns false so the caller can surface that
+ * rather than failing opaquely at submit time.
+ */
+async function ensureAgentGasFloor(
+  pool: pg.Pool,
+  provider: CircleTreasuryProvider,
+  input: {
+    readonly orgId: string;
+    readonly agentAddress: string;
+    readonly balanceMicros: bigint;
+    readonly chain: PaymentChain;
+    readonly mode: PaymentMode;
+  },
+): Promise<boolean> {
+  if (input.chain !== 'arc') return false;
+  if (input.balanceMicros >= AGENT_GAS_FLOOR_MICROS) return true;
+
+  const treasury = await pool.query<{ address: string }>(
+    `SELECT address FROM circle_chain_wallets
+      WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+      LIMIT 1`,
+    [input.orgId, input.mode, input.chain],
+  );
+  const treasuryAddress = treasury.rows[0]?.address;
+  if (treasuryAddress === undefined) return false;
+
+  await provider.transferWallet({
+    amountMicros: AGENT_GAS_FLOOR_MICROS - input.balanceMicros,
+    chain: input.chain,
+    destinationAddress: input.agentAddress,
+    mode: input.mode,
+    refId: `agentops-gas-${crypto.randomUUID()}`,
+    sourceAddress: treasuryAddress,
+  });
+  return true;
+}
+
 /**
  * Tops an agent's wallet up from the ORG TREASURY's delegation, at the
  * moment the agent needs the money.
@@ -56,6 +112,18 @@ export async function fundAgentFromTreasuryDelegation(
   const balance = await nativeBalanceMicros(address, input.chain, input.mode);
   if (balance >= input.neededMicros) return { funded: false, reason: 'already_funded' };
   const shortfall = input.neededMicros - balance;
+
+  // Before drawing: make sure the agent can actually SUBMIT the drawdown.
+  // Reuses the balance already read above rather than re-reading -- Arc's
+  // public RPC was measured failing ~56% of calls (spike S6), so every
+  // avoided round trip is one less thing to retry.
+  await ensureAgentGasFloor(pool, provider, {
+    orgId: input.orgId,
+    agentAddress: address,
+    balanceMicros: balance,
+    chain: input.chain,
+    mode: input.mode,
+  });
 
   // payer_kind = 'treasury' selects the org's shared pool. Deliberately NOT
   // `payer_agent_id IS NULL`, which since migration 0030 matches BOTH a

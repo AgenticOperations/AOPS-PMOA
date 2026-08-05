@@ -76,6 +76,16 @@ describe('just-in-time funding from the org treasury delegation', () => {
       refId: `ref_jit_${suffix}`, walletSetId, circleBlockchain: 'ARC-TESTNET',
     });
 
+    // The org treasury, which is both the delegation payer and the source of
+    // the agent's gas floor.
+    await store.pool.query(
+      `INSERT INTO circle_chain_wallets
+         (id, org_id, wallet_set_id, mode, chain, circle_blockchain,
+          circle_wallet_id, address, account_type, metadata)
+       VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', $4, $5, 'eoa', '{}'::jsonb)`,
+      [`cwallet_jit_${suffix}`, orgId, walletSetId, `circlewallet_jit_${suffix}`, TREASURY_WALLET],
+    );
+
     const seeds = delegation === null ? [] : (Array.isArray(delegation) ? delegation : [delegation]) as readonly SeedDelegation[];
     let nonce = 0;
     for (const seed of seeds) {
@@ -184,6 +194,56 @@ describe('just-in-time funding from the org treasury delegation', () => {
       [orgId],
     );
     expect(drawn.rows[0]?.payer_kind).toBe('treasury');
+  });
+
+  it('tops the agent up to the gas floor from the treasury before drawing', async () => {
+    // Permit2 requires msg.sender == spender, so the AGENT submits its own
+    // transferFrom and pays gas for it. A freshly provisioned wallet holds
+    // nothing, so without this the very first drawdown can never be sent.
+    const { orgId, agentId, agentAddress } = await setupAgent('gasfloor', {
+      ceilingUsdc: '5.00', payerKind: 'treasury',
+    });
+    const transferWallet = vi.fn(() => Promise.resolve({ amountMicros: '100000', transactionId: '0xgas' }));
+    await fundAgentFromTreasuryDelegation(
+      store.pool,
+      fakeProvider({ transferWallet }),
+      vi.fn(() => Promise.resolve(0n)),
+      { orgId, agentId, mode: 'test', chain: 'arc', neededMicros: 1_000_000n },
+    );
+
+    expect(transferWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ destinationAddress: agentAddress, chain: 'arc' }),
+    );
+  });
+
+  it('does not re-send gas when the agent is already above the floor', async () => {
+    const { orgId, agentId } = await setupAgent('gasfloorok', {
+      ceilingUsdc: '5.00', payerKind: 'treasury',
+    });
+    const transferWallet = vi.fn(() => Promise.resolve({ amountMicros: '0', transactionId: '0xunused' }));
+    await fundAgentFromTreasuryDelegation(
+      store.pool,
+      fakeProvider({ transferWallet }),
+      vi.fn(() => Promise.resolve(5_000_000n)),
+      { orgId, agentId, mode: 'test', chain: 'arc', neededMicros: 1_000_000n },
+    );
+
+    expect(transferWallet).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt a gas transfer on a non-Arc chain, where gas is ETH', async () => {
+    // Base agents need native ETH, which the provider exposes no method to
+    // send. Attempting a USDC transfer would not buy the agent any gas.
+    const { orgId, agentId } = await setupAgent('gasbase', null);
+    const transferWallet = vi.fn(() => Promise.resolve({ amountMicros: '0', transactionId: '0xunused' }));
+    await fundAgentFromTreasuryDelegation(
+      store.pool,
+      fakeProvider({ transferWallet }),
+      vi.fn(() => Promise.resolve(0n)),
+      { orgId, agentId, mode: 'test', chain: 'base', neededMicros: 1_000_000n },
+    );
+
+    expect(transferWallet).not.toHaveBeenCalled();
   });
 
   it('does not draw past the delegation ceiling', async () => {
