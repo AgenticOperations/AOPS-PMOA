@@ -37,16 +37,41 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
     if (open) {
       setRendered(true);
       // Let the DOM paint the closed state first, then flip to open.
-      requestAnimationFrame(() => setAnimState('open'));
-    } else {
-      // Flip to closed — CSS exit animation plays, onAnimationEnd unmounts.
-      setAnimState('closed');
+      const frame = requestAnimationFrame(() => setAnimState('open'));
+      return () => cancelAnimationFrame(frame);
     }
+    // Flip to closed — CSS exit animation plays, onAnimationEnd unmounts.
+    setAnimState('closed');
+    return undefined;
   }, [open]);
 
-  // Focus management + scroll lock.
+  // Unmount once the closed state is actually on the DOM.
+  //
+  // onAnimationEnd alone is not enough to rely on: it only ever fires if an
+  // animation actually runs. Under prefers-reduced-motion, before CSS has
+  // loaded, or in jsdom, none does -- and the panel would then sit in the
+  // DOM forever, visible and still holding aria-modal. Checking for a live
+  // animation *after* data-state="closed" has been applied keeps the real
+  // exit animation while making the no-animation case unmount immediately.
   React.useEffect(() => {
-    if (!open) return undefined;
+    // `open` must be part of the guard: on the way IN, animState is still
+    // 'closed' until the rAF above flips it, so testing animState alone
+    // would unmount the panel in the very flush that mounted it.
+    if (open || animState !== 'closed' || !rendered) return undefined;
+    const running = panelRef.current?.getAnimations?.() ?? [];
+    if (running.length === 0) setRendered(false);
+    return undefined;
+  }, [open, animState, rendered]);
+
+  // Focus management + scroll lock.
+  //
+  // Depends on `rendered`, not just `open`: the effect that mounts the panel
+  // runs in this same flush, so on the first open the panel is not in the
+  // DOM yet and panelRef is still null. Keyed on open alone, focusFirst()
+  // would find nothing and never run again -- focus would never enter the
+  // sheet at all.
+  React.useEffect(() => {
+    if (!open || !rendered) return undefined;
 
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
@@ -106,7 +131,7 @@ function Sheet({ children, labelledBy, onOpenChange, open, panelClassName, side 
       document.body.style.overflow = previousOverflow;
       previouslyFocused?.focus();
     };
-  }, [open]);
+  }, [open, rendered]);
 
   // After exit animation ends, remove from DOM.
   const handleAnimationEnd = (event: React.AnimationEvent<HTMLElement>) => {
