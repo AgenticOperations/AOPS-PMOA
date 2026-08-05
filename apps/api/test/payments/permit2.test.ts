@@ -350,6 +350,38 @@ describe('recordSignedDelegation', () => {
     expect(provider.signPermit2Delegation).toHaveBeenCalled();
   });
 
+  it('approves Permit2 for total outstanding headroom, not just the new ceiling', async () => {
+    // An existing active treasury delegation of 10.00 USDC, undrawn.
+    // Issuing a second for 5.00 must approve 15.00, never 5.00 -- approving
+    // 5.00 would strip the first agent's ability to draw.
+    stubPermit2Nonce(0n);
+    const { orgId, payeeAgentId, payeeAddress, treasuryAddress } = await seedTreasuryOrg('sum');
+    await store.pool.query(
+      `INSERT INTO agent_delegations (
+         id, org_id, payer_agent_id, payer_address, payee_agent_id, payee_address,
+         mode, chain, token_address, ceiling_usdc, drawn_usdc, expires_at,
+         permit_nonce, signature, status, approved_by, payer_kind
+       ) VALUES ('dele_sum_existing', $1, NULL, $2, NULL, $3, 'test', 'arc', $4,
+                 '10.00'::numeric, '0'::numeric, $5, 99, '0xsig', 'active', 'usr_1', 'treasury')`,
+      [orgId, treasuryAddress, '0xdead0000000000000000000000000000000000ff',
+        '0x3600000000000000000000000000000000000000', new Date(Date.now() + 86_400_000)],
+    );
+
+    const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xsumtx' }));
+    await recordSignedDelegation(store.pool, fakeProvider({ executePermit2Transaction }), {
+      orgId, payeeAgentId, payeeAddress, mode: 'test', chain: 'arc',
+      ceilingUsdc: '5.00',
+      expiresAt: new Date(Date.now() + 86_400_000),
+      approvedBy: 'actor_test',
+      payerTreasury: true,
+    });
+
+    const approveCall = (executePermit2Transaction.mock.calls as unknown[][])
+      .map(([arg]) => arg as { abiFunctionSignature?: string; abiParameters?: readonly unknown[] })
+      .find((arg) => arg.abiFunctionSignature === 'approve(address,uint256)');
+    expect(approveCall?.abiParameters?.[1]).toBe('15000000');
+  });
+
   it('records a user-signed delegation without ever signing or approving for them', async () => {
     // The non-custodial path: the operator's own wallet produced the
     // signature and sent approve() itself, so the platform must do neither.

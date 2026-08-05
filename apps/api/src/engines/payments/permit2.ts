@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import { chainRpcUrl } from './agent-wallets.js';
+import { outstandingHeadroomMicros } from './delegation-ceiling.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain, PaymentMode } from './types.js';
@@ -393,16 +394,26 @@ export async function recordSignedDelegation(
       // was never approved for. Spike S4 proved this exact ordering on Arc:
       // approve(Permit2) -> permit() -> transferFrom().
       //
-      // Approved at the delegation ceiling rather than maxUint160: Permit2's
-      // own per-delegation allowance is the real spending limit, and a
-      // bounded ERC-20 approval means a Permit2 compromise still can't drain
-      // more than this delegation was ever meant to cover.
+      // Approved at TOTAL OUTSTANDING HEADROOM, not this delegation's
+      // ceiling. ERC-20 approve SETS rather than adds, so with one treasury
+      // paying many agents, approving just this ceiling would silently strip
+      // every earlier agent's allowance. Still bounded rather than
+      // maxUint160: a Permit2 compromise can never exceed what the org has
+      // actually delegated.
+      const approvalMicros = await outstandingHeadroomMicros(client, {
+        orgId: input.orgId,
+        payerAddress,
+        mode: input.mode,
+        chain: input.chain,
+        tokenAddress,
+      }) + ceilingMicros;
+
       await provider.executePermit2Transaction({
         mode: input.mode,
         chain: input.chain,
         senderAddress: payerAddress,
         abiFunctionSignature: 'approve(address,uint256)',
-        abiParameters: [PERMIT2_ADDRESS, ceilingMicros.toString()],
+        abiParameters: [PERMIT2_ADDRESS, approvalMicros.toString()],
         contractAddress: tokenAddress,
         refId: `agentops-p2-approve-${crypto.randomUUID()}`,
       });
