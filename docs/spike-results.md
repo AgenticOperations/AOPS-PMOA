@@ -465,7 +465,33 @@ POST https://api.circle.com/v1/w3s/developer/transactions/contractExecution -> 4
 
 The destination wallet (`0xecf29492264424ae73fc1434a30a66d2f6a9b48f` on Base Sepolia) started with 0 ETH; the user funded it with 0.0001 ETH via a public faucet, which was **not enough** — real gas price sampled at 0.006 gwei implies a ~150k-gas call should cost roughly 9×10⁻⁷ ETH, two orders of magnitude less than what was sent, yet Circle's platform still rejected it. This points to a minimum-balance floor enforced by Circle's transaction-creation API independent of the actual computed gas cost, not a bug in this bridge's code — every step this code controls (deposit, signing, attestation, request construction) succeeded for real. Re-verify with a larger funding amount (0.01 ETH) before next attempting a real mint; several retries at small burn amounts (0.10, then 0.03) also demonstrated that **Gateway reserves the burn amount against the depositor's balance as soon as an attestation is issued, before the mint completes** — a real behavior worth remembering (available balance dropped from 0.200000 to 0.039500 across three attestation attempts whose mints never landed).
 
-**Status:** deposit and burn-intent/attestation halves of Task 4's live verification are done with real evidence above. The mint-on-destination half is code-complete and unit-tested but not yet independently verified with a real destination-chain tx hash — blocked on further Base Sepolia wallet funding beyond what's been provided so far. `docs/decisions.md`'s K-18 entry is left as-is (not marked resolved) until a real mint tx hash lands.
+**Status (superseded — see the next section).** The "minimum-balance floor" hypothesis above is **wrong**, and the funding advice with it. Kept verbatim as the record of a wrong turn.
+
+---
+
+### Phase 7 · Task 4 — mint verified. The blocker was never gas; it was the wrong Circle account.
+
+**The bridge works end to end.** Real Arc → Base Sepolia transfer of 0.05 USDC through the production `bridgeWalletTopUp()` code path, no human in the loop:
+
+```
+mint tx   0x3c71a8a2be8fa01f75211c07526382ea42bf93c6281e953c986957225ef02058
+receipt   status 0x1 (success), block 45089806, gas used 132,532
+to        0x0022222ABE238Cc2C7Bb1f21003F0a260052475B   (Gateway Minter)
+log       USDC Transfer 0x000...000 -> 0xD7E0...d551, 0.05 USDC   (minted, not transferred)
+arc side  gateway balance 32.000000 -> 31.946500
+wallet    0xD7E0B42A09399E29b2e84fbEa02382ba2715d551, same address both chains
+```
+
+**Both sides reconcile exactly.** 0.0535 USDC left the Arc Gateway balance; 0.05 USDC was minted from the zero address on Base; the 0.0035 difference is Circle's fee, matching the rate the attestation response quoted earlier.
+
+**Real root cause of the earlier failures — two distinct problems, neither of them gas:**
+
+1. **The original `155258` was an unregistered entity secret,** not a balance shortfall. See the Phase 6 · Task 7 section above, which proved this independently: Circle surfaces an unregistered entity secret as a *balance* error. Every "fund the wallet with more ETH" inference drawn from it was chasing the wrong signal.
+2. **The old proof wallets were on a different Circle account.** `0x216c...367e` (Arc depositor) and `0xecf2...b48f` (Base recipient) do not exist under the current credentials at all — re-running the bridge against them now fails with `Cannot find target wallet in the system`, and the wallet listing confirms their absence across all 114 wallet rows / 44 distinct addresses. The $0.20 Gateway deposit at `0x216c...367e` is stranded on the old account and cannot be signed for.
+
+**The gas theory is disproven on direct evidence.** The successful mint used 132,532 gas on a wallet holding **0.0000367 ETH** — *less* than the 0.0001 ETH that the note above called "not enough." There is no minimum-balance floor. At Base Sepolia's sampled 0.006 gwei, the mint cost roughly 8×10⁻⁷ ETH, which is what the original arithmetic predicted; the arithmetic was right and the conclusion drawn from it was wrong.
+
+**Operational lesson worth keeping:** when Circle credentials are rotated or a new developer account is created, every wallet address recorded in prior evidence becomes invalid, and Gateway deposits held by those wallets become unreachable. Verify wallet ownership against the *current* API key before trusting any address in an older proof.
 
 ---
 

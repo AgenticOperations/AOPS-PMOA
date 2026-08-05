@@ -310,13 +310,15 @@ Mint lands in **under 500ms** at the same address. Then wire it into `circle-pro
 
 **One-time prerequisite per wallet:** `approve` then `deposit(address,uint256)` into the Gateway contract. Circle frames this as *"wallet onboarding, not a per-call cost."* Implement it as a separate provisioning step, and make the missing-deposit case fail with a clear error rather than a confusing one.
 
-- [ ] **Step 3: Verify on testnet, update the decision record** — **PARTIAL, paused**
+- [x] **Step 3: Verify on testnet, update the decision record** — **DONE**
 
 Run a real Arc→Base bridge. Record tx hashes both sides. Then amend the K-18 entry in `docs/decisions.md`:
 
 > **K-18 regression resolved** in Phase 7 · Task 4. `bridgeWalletTopUp` is implemented via the Gateway JIT path. Cross-chain no longer depends solely on Option A pre-funding.
 
-**Real evidence gathered (see `docs/spike-results.md`'s "Phase 7 · Task 4 proof test" section for full detail):** a real `approve` + `deposit` into Gateway succeeded on Arc testnet ($0.20 from a funded agent wallet), confirmed via the public Gateway balances API. The burn-intent signing (real EIP-712 signature via Circle's MPC) and Gateway `/v1/transfer` attestation round-trip also succeeded for real, with a real fee response (0.0035 USDC). **The mint on Base Sepolia is not yet independently verified with a real tx hash.** First attempt failed on zero destination-wallet gas; after funding with 0.0001 ETH it still failed with Circle's own error code 155258 ("asset amount owned by the wallet is insufficient"), which is ~100x more ETH than the sampled gas price implies is needed — points to a platform-side minimum-balance floor, not a bug in this code (every step this code controls succeeded). Also discovered: Gateway reserves the burn amount against the depositor's balance as soon as an attestation issues, before the mint completes — three attempted mints consumed real balance from the $0.20 deposit down to $0.0395 even though none landed on-chain. **Paused here per explicit direction to move on** rather than continue requesting more testnet funding; the `docs/decisions.md` K-18 entry is left unresolved until a real mint tx hash lands in a future session.
+**Completed in a later session.** The mint is verified: `0x3c71a8a2be8fa01f75211c07526382ea42bf93c6281e953c986957225ef02058` on Base Sepolia, `status 0x1`, a real `Transfer` from the zero address of 0.05 USDC, with the Arc Gateway balance dropping 32.000000 → 31.946500 to match. `docs/decisions.md`'s K-18 entry is now marked resolved. The blocker below was misdiagnosed — it was not gas but stale wallet addresses from a previous Circle account, plus the unregistered entity secret that Phase 6 · Task 7 later identified. Full correction in `docs/spike-results.md`'s "mint verified" section.
+
+**Original (superseded) evidence, kept as the record of the wrong turn (see `docs/spike-results.md`'s "Phase 7 · Task 4 proof test" section for full detail):** a real `approve` + `deposit` into Gateway succeeded on Arc testnet ($0.20 from a funded agent wallet), confirmed via the public Gateway balances API. The burn-intent signing (real EIP-712 signature via Circle's MPC) and Gateway `/v1/transfer` attestation round-trip also succeeded for real, with a real fee response (0.0035 USDC). **The mint on Base Sepolia is not yet independently verified with a real tx hash.** First attempt failed on zero destination-wallet gas; after funding with 0.0001 ETH it still failed with Circle's own error code 155258 ("asset amount owned by the wallet is insufficient"), which is ~100x more ETH than the sampled gas price implies is needed — points to a platform-side minimum-balance floor, not a bug in this code (every step this code controls succeeded). Also discovered: Gateway reserves the burn amount against the depositor's balance as soon as an attestation issues, before the mint completes — three attempted mints consumed real balance from the $0.20 deposit down to $0.0395 even though none landed on-chain. **Paused here per explicit direction to move on** rather than continue requesting more testnet funding; the `docs/decisions.md` K-18 entry is left unresolved until a real mint tx hash lands in a future session.
 
 - [x] **Step 4: Run the full gate and commit**
 
@@ -337,9 +339,9 @@ git commit -m "feat(payments): implement just-in-time Gateway bridge"
 - [ ] ~~Submitted jobs approaching expiry are surfaced as evaluator-liveness risks~~ — N/A, S8 fallback
 - [ ] ~~Escrow refuses sub-cent amounts~~ — N/A, S8 fallback
 - [x] A full Mode 2 job ran on Arc testnet with recorded tx hashes — ran for S8's own verification (6 real txs); not shipped as production code since D2 doesn't ship
-- [ ] The bridge burns on Arc, attests, and mints on Base — verified with tx hashes both sides — **deposit + attestation verified live; mint blocked on destination-wallet funding, paused**
+- [x] The bridge burns on Arc, attests, and mints on Base — verified with tx hashes both sides — mint `0x3c71a8a2...f02058` (`status 0x1`), Arc Gateway balance 32.000000 → 31.946500
 - [x] A wallet never deposited into Gateway fails with `gateway_wallet_not_deposited`, not a confusing error
-- [ ] The K-18 regression entry in `docs/decisions.md` is marked resolved — pending the live mint tx hash above
+- [x] The K-18 regression entry in `docs/decisions.md` is marked resolved
 - [x] `npm run verify` passes with Docker up
 
 **Claim discipline:**

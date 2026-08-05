@@ -33,3 +33,17 @@ Decisions made during the Arc build, per `docs/superpowers/plans/2026-08-03-phas
 **Consequence:** cross-chain funding uses **pre-funding per chain (Option A)** — an agent gets a separate wallet on each chain it needs, funded independently — not just-in-time bridging, until Phase 7 · Task 4 implements the real Gateway bridge (K-15).
 
 **Verified in Phase 2 · Task 1:** with `CIRCLE_TREASURY_PROVIDER=developer_controlled`, `bridgeWalletTopUp` returns the stub result exactly as described. Test: `apps/api/test/payments/circle-org-provider.test.ts`.
+
+**RESOLVED in Phase 7 · Task 4.** `bridgeWalletTopUp` is implemented via the Gateway just-in-time path (`gateway-bridge.ts`): sign a burn intent on Arc, get an attestation from Circle Gateway, mint on the destination chain. Cross-chain no longer depends solely on Option A pre-funding.
+
+Verified end to end with a real Arc → Base Sepolia bridge of 0.05 USDC through the production code path, both sides independently confirmed on-chain:
+
+```
+mint tx   0x3c71a8a2be8fa01f75211c07526382ea42bf93c6281e953c986957225ef02058
+receipt   status 0x1 (success), block 45089806, gas used 132,532
+to        0x0022222ABE238Cc2C7Bb1f21003F0a260052475B   (Gateway Minter)
+log       USDC Transfer 0x000...000 -> 0xD7E0...d551, 0.05 USDC   (a real mint)
+arc side  gateway balance 32.000000 -> 31.946500  (0.05 burn + 0.0035 fee)
+```
+
+Both halves reconcile exactly: 0.0535 USDC left the Arc Gateway balance, 0.05 USDC was minted from the zero address on Base, and the 0.0035 difference matches Circle's documented fee. See `docs/spike-results.md`'s "Phase 7 · Task 4 — mint verified" section for the earlier failed attempts and their real root cause.
