@@ -628,11 +628,17 @@ export async function revokeDelegation(
     );
     const delegation = locked.rows[0];
     if (delegation === undefined) throw new Error('agent_delegation_not_found');
-    if (delegation.status === 'revoked') return { onChainRevoked: delegation.payer_agent_id !== null };
+    if (delegation.status === 'revoked') return { onChainRevoked: delegation.payer_kind !== 'user' };
 
     // Permit2's lockdown() may ONLY be called by the allowance owner, so
     // for a user-owned payer this platform cannot submit it -- the user
-    // signs that transaction in their own wallet.
+    // signs that transaction in their own wallet. The platform DOES hold
+    // the key for the other two payer kinds: an agent wallet it
+    // provisioned, or the org treasury it custodies via Circle. Keying
+    // this off payer_agent_id alone would miss the treasury case --
+    // payer_agent_id is NULL for both a user wallet AND the treasury, so
+    // that check alone cannot tell them apart (see AgentDelegationRow's
+    // note on payer_kind existing for exactly this reason).
     //
     // The row is still marked revoked either way, and that alone stops
     // this control plane from issuing further drawdowns. But be precise
@@ -640,7 +646,7 @@ export async function revokeDelegation(
     // lands, the Permit2 allowance itself is still live. The caller learns
     // which case it got from onChainRevoked, and the UI must prompt for
     // the user's signature when it is false.
-    const platformControlsPayer = delegation.payer_agent_id !== null;
+    const platformControlsPayer = delegation.payer_kind !== 'user';
     if (platformControlsPayer) {
       await provider.executePermit2Transaction({
         mode: delegation.mode,
@@ -730,7 +736,9 @@ export type DelegationSummary = {
   readonly expiresAt: Date;
   readonly status: string;
   // false for a user-owned payer: revoking here stops this control plane,
-  // but only the owner can kill the on-chain allowance via lockdown().
+  // but only the owner can kill the on-chain allowance via lockdown(). True
+  // for both an agent wallet and the treasury -- the platform holds a key
+  // for both.
   readonly platformControlsPayer: boolean;
 };
 
@@ -760,7 +768,7 @@ export async function listDelegations(
       remainingUsdc: formatUsdc(remaining > 0n ? remaining : 0n),
       expiresAt: row.expires_at,
       status: row.status,
-      platformControlsPayer: row.payer_agent_id !== null,
+      platformControlsPayer: row.payer_kind !== 'user',
     };
   });
 }

@@ -81,8 +81,8 @@ describe('Permit2 delegation', () => {
       `INSERT INTO agent_delegations (
          id, org_id, payer_agent_id, payer_address, payee_agent_id, payee_address, mode, chain,
          token_address, ceiling_usdc, drawn_usdc, expires_at, permit_nonce, signature,
-         status, approved_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'test', 'arc', $7, $8, $9, $10, 0, '0xsig', $11, 'usr_1')`,
+         status, approved_by, payer_kind
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'test', 'arc', $7, $8, $9, $10, 0, '0xsig', $11, 'usr_1', $12)`,
       [
         delegationId, orgId,
         input.userOwnedPayer === true ? null : payerAgentId,
@@ -93,6 +93,7 @@ describe('Permit2 delegation', () => {
         input.ceilingUsdc, input.drawnUsdc ?? '0',
         input.expiresAt ?? new Date(Date.now() + 3_600_000),
         input.status ?? 'active',
+        input.userOwnedPayer === true ? 'user' : 'agent',
       ],
     );
 
@@ -349,6 +350,47 @@ describe('recordSignedDelegation', () => {
     expect(delegation.payer_agent_id).toBeNull();
     // The platform signs for the treasury; it is not a user-signed delegation.
     expect(provider.signPermit2Delegation).toHaveBeenCalled();
+  });
+
+  it('revokes a treasury-payer delegation on-chain, not just the local row', async () => {
+    // payer_agent_id is NULL for a treasury payer too (same as a
+    // user-owned wallet), so revokeDelegation must not use that column
+    // alone to decide whether it holds the key -- it does, via Circle,
+    // for the treasury. A silent skip here would leave the real Permit2
+    // allowance live after a graduation "revoke" reports success.
+    stubPermit2Nonce(0n);
+    const { orgId, payeeAgentId, payeeAddress } = await seedTreasuryOrg('revoke');
+    const executePermit2Transaction = vi.fn(() => Promise.resolve({ txHash: '0xtreasurylockdown' }));
+    const provider = fakeProvider({ executePermit2Transaction });
+
+    const delegation = await recordSignedDelegation(store.pool, provider, {
+      orgId,
+      payeeAgentId,
+      payeeAddress,
+      mode: 'test',
+      chain: 'arc',
+      ceilingUsdc: '10.00',
+      expiresAt: new Date(Date.now() + 86_400_000),
+      approvedBy: 'actor_test',
+      payerTreasury: true,
+      readPayerBalanceMicros: () => Promise.resolve(100_000_000n),
+    });
+
+    executePermit2Transaction.mockClear();
+    const result = await revokeDelegation(store.pool, provider, { delegationId: delegation.id });
+
+    expect(result.onChainRevoked).toBe(true);
+    const call = (executePermit2Transaction.mock.calls as unknown[][])[0]?.[0] as {
+      abiFunctionSignature?: string;
+      senderAddress?: string;
+    };
+    expect(call.abiFunctionSignature).toContain('lockdown');
+    expect(call.senderAddress).toBe(delegation.payer_address);
+
+    const row = await store.pool.query<{ status: string }>(
+      'SELECT status FROM agent_delegations WHERE id = $1', [delegation.id],
+    );
+    expect(row.rows[0]?.status).toBe('revoked');
   });
 
   it('approves Permit2 for total outstanding headroom, not just the new ceiling', async () => {
