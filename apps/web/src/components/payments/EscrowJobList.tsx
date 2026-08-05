@@ -67,7 +67,7 @@ export function EscrowJobList({ jobs, chain }: Props) {
       </thead>
       <tbody>
         {jobs.map((job) => (
-          <tr key={job.id}>
+          <tr id={job.id} key={job.id}>
             <td>{job.id}</td>
             <td>{STATE_LABELS[job.state]}</td>
             <td>{job.budgetUsdc} USDC</td>
