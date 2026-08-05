@@ -1,3 +1,4 @@
+import { decodeEventLog, parseAbi } from 'viem';
 import type { PaymentChain } from './types.js';
 
 // ERC-8183 escrow function signatures, in the `abiFunctionSignature` shape
@@ -56,4 +57,56 @@ export function escrowAddressFor(chain: PaymentChain): string {
 /** The one token that chain's escrow will accept. Throws if none exists. */
 export function escrowTokenAddressFor(chain: PaymentChain): string {
   return escrowDeploymentFor(chain).tokenAddress;
+}
+
+// Matches the vendored ERC8183.sol exactly: jobId/client/provider are
+// indexed (topics 1-3), evaluator/expiredAt/hook live in `data`. Getting
+// the indexed/non-indexed split wrong changes topic0 and nothing decodes.
+const jobCreatedAbi = parseAbi([
+  'event JobCreated(uint256 indexed jobId, address indexed client, address indexed provider, address evaluator, uint48 expiredAt, address hook)',
+]);
+
+/** One entry of a transaction receipt's `logs`, as any EVM provider returns it. */
+export type EscrowReceiptLog = {
+  readonly address: string;
+  readonly topics: readonly string[];
+  readonly data: string;
+};
+
+/**
+ * Extracts the chain-assigned job id from a createJob receipt.
+ *
+ * createJob returns uint256 on-chain, but the treasury provider only hands
+ * back a tx hash -- so the event is the ONLY way to learn the id, and
+ * without it an escrow_jobs row can never be linked to the chain.
+ *
+ * Only logs emitted by `escrowAddress` count. A receipt may carry logs from
+ * every contract the transaction touched, and reading an id off a different
+ * escrow would bind our row to a job we do not own. Returns undefined
+ * rather than guessing when no matching log is present.
+ */
+export function parseJobCreated(
+  logs: readonly EscrowReceiptLog[],
+  escrowAddress: string,
+): bigint | undefined {
+  // Receipts carry lowercase addresses; deployments.json is checksummed.
+  const target = escrowAddress.toLowerCase();
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== target) continue;
+    let decoded;
+    try {
+      decoded = decodeEventLog({
+        abi: jobCreatedAbi,
+        data: log.data as `0x${string}`,
+        topics: log.topics as [signature: `0x${string}`, ...args: `0x${string}`[]],
+      });
+    } catch {
+      // Some other event from the same contract -- topic0 does not match
+      // JobCreated, so viem refuses to decode it. Not an error here.
+      continue;
+    }
+    if (decoded.eventName !== 'JobCreated') continue;
+    return decoded.args.jobId;
+  }
+  return undefined;
 }
