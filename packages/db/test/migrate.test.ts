@@ -12,10 +12,22 @@ const POSTGRES_PASSWORD = 'agentops';
 const POSTGRES_DB = 'agentops_pmoa_test';
 
 describe('PMOA database migrations', () => {
-  let container: StartedTestContainer;
+  let container: StartedTestContainer | undefined;
   let pool: pg.Pool;
 
   beforeAll(async () => {
+    // Same escape hatch as apps/api/test/helpers/postgres.ts: point at a
+    // native Postgres and skip the container entirely. These tests assert
+    // on a FIRST run of every migration, so the schema must be empty --
+    // reset it rather than reusing whatever the last run left behind.
+    const databaseUrl = process.env.TEST_DATABASE_URL;
+    if (databaseUrl !== undefined && databaseUrl.length > 0) {
+      pool = new pg.Pool({ connectionString: databaseUrl });
+      await pool.query('DROP SCHEMA public CASCADE');
+      await pool.query('CREATE SCHEMA public');
+      return;
+    }
+
     container = await new GenericContainer('postgres:16-alpine')
       .withEnvironment({
         POSTGRES_USER,
@@ -74,6 +86,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0029_delegation_payer_address');
     expect(firstRun).toContain('0030_treasury_payer_and_org_ceiling');
     expect(firstRun).toContain('0031_changelog_sync');
+    expect(firstRun).toContain('0032_escrow_jobs');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -112,6 +125,7 @@ describe('PMOA database migrations', () => {
       '0029_delegation_payer_address',
       '0030_treasury_payer_and_org_ceiling',
       '0031_changelog_sync',
+      '0032_escrow_jobs',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(
@@ -162,6 +176,12 @@ describe('PMOA database migrations', () => {
       "SELECT to_regclass('public.policy_versions')::text AS exists",
     );
     expect(policyTable.rows[0]?.exists).toBe('policy_versions');
+
+    // Migration 0032: ERC-8183 escrow job records.
+    const escrowTable = await pool.query<{ exists: string }>(
+      "SELECT to_regclass('public.escrow_jobs')::text AS exists",
+    );
+    expect(escrowTable.rows[0]?.exists).toBe('escrow_jobs');
   });
 
   it('serializes concurrent migration runners with a PostgreSQL advisory lock', async () => {
