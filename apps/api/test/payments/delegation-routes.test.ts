@@ -247,4 +247,126 @@ describe('user-owned wallet delegation routes', () => {
     });
     expect(response.statusCode).toBe(400);
   });
+
+  // --- Treasury-funded delegations and the org ceiling --------------------
+
+  /** Gives the org a treasury wallet on Arc, which the routes below pay from. */
+  async function seedTreasuryWallet(orgId: string, label: string, address: string): Promise<void> {
+    await store.pool.query(
+      `INSERT INTO circle_chain_wallets
+         (id, org_id, wallet_set_id, mode, chain, circle_blockchain,
+          circle_wallet_id, address, account_type, metadata)
+       VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', $4, $5, 'eoa', '{}'::jsonb)`,
+      [`cwallet_dele_${label}`, orgId, `ws_dele_${label}`, `circlewallet_dele_${label}`, address],
+    );
+  }
+
+  it('creates a treasury delegation with no signature in the body', async () => {
+    // The visible payoff of the treasury model: no wallet connect, no
+    // approve, no signature, no chain switching -- just a form post.
+    const { orgId, agentId } = await setupOrgWithAgent('ea51');
+    await seedTreasuryWallet(orgId, 'ea51', '0x7ea50000000000000000000000000000000000c1');
+    signPermit2Delegation.mockClear();
+    executePermit2Transaction.mockClear();
+    // Two DIFFERENT reads share this RPC and must not share an answer:
+    // eth_getBalance (treasury solvency) and eth_call -> Permit2 allowance()
+    // (the nonce). Returning the balance for both parses 1000 USDC of wei as
+    // the nonce, which overflows the bigint permit_nonce column.
+    vi.stubEnv('ARC_RPC_URL', 'https://rpc.testnet.arc.network');
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation((_url, init) => {
+      const method = JSON.parse(String((init as { body?: unknown }).body)).method as string;
+      const result = method === 'eth_getBalance'
+        ? `0x${(1_000n * 10n ** 18n).toString(16)}`
+        // amount (uint160), expiration (uint48), nonce (uint48) -- nonce 0.
+        : `0x${'0'.repeat(192)}`;
+      return Promise.resolve(new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result })));
+    });
+
+    const response = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/delegations/treasury`,
+      payload: {
+        chain: 'arc',
+        ceiling_usdc: '5.00',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        payee_agent_id: agentId,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(201);
+    const { delegation } = response.json<{
+      delegation: { payer_address: string; payer_kind: string; payer_agent_id: string | null };
+    }>();
+    expect(delegation.payer_address).toBe('0x7ea50000000000000000000000000000000000c1');
+    expect(delegation.payer_kind).toBe('treasury');
+    expect(delegation.payer_agent_id).toBeNull();
+    // The platform DOES hold this key, so unlike the user path it signs.
+    expect(signPermit2Delegation).toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('rejects a treasury delegation that would exceed the org ceiling', async () => {
+    const { orgId, agentId } = await setupOrgWithAgent('cee1');
+    await seedTreasuryWallet(orgId, 'cee1', '0x7ea50000000000000000000000000000000000c2');
+    const ceiling = await api.inject({
+      method: 'PUT',
+      url: `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+      payload: { chain: 'arc', ceiling_usdc: '1.00' },
+    });
+    expect(ceiling.statusCode, ceiling.body).toBe(200);
+
+    const response = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/delegations/treasury`,
+      payload: {
+        chain: 'arc',
+        ceiling_usdc: '5.00',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        payee_agent_id: agentId,
+      },
+    });
+
+    // An expected state, not a fault -- 409 so the UI can say why.
+    expect(response.statusCode, response.body).toBe(409);
+    expect(response.json<{ error: string }>().error).toBe('org_delegation_ceiling_exceeded');
+  });
+
+  it('upserts the org ceiling and reports headroom against it', async () => {
+    const { orgId } = await setupOrgWithAgent('ccd2');
+    await seedTreasuryWallet(orgId, 'ccd2', '0x7ea50000000000000000000000000000000000c3');
+
+    const first = await api.inject({
+      method: 'PUT',
+      url: `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+      payload: { chain: 'arc', ceiling_usdc: '10.00' },
+    });
+    expect(first.statusCode, first.body).toBe(200);
+
+    // Same (org, mode, chain) -- an update, never a duplicate row.
+    const second = await api.inject({
+      method: 'PUT',
+      url: `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+      payload: { chain: 'arc', ceiling_usdc: '25.00' },
+    });
+    expect(second.statusCode, second.body).toBe(200);
+
+    const read = await api.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+    });
+    expect(read.statusCode, read.body).toBe(200);
+    const { ceilings } = read.json<{
+      ceilings: readonly {
+        chain: string;
+        ceiling_usdc: string | null;
+        outstanding_usdc: string;
+        treasury_address: string | null;
+      }[];
+    }>();
+    const arc = ceilings.find((c) => c.chain === 'arc');
+    expect(Number(arc?.ceiling_usdc)).toBe(25);
+    expect(Number(arc?.outstanding_usdc)).toBe(0);
+    expect(arc?.treasury_address).toBe('0x7ea50000000000000000000000000000000000c3');
+  });
 });

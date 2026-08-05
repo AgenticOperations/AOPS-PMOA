@@ -382,7 +382,7 @@ export async function recordSignedDelegation(
         client,
         { orgId: input.orgId, payerAddress, mode: input.mode, chain: input.chain, tokenAddress },
         ceilingMicros,
-        await readBalance(payerAddress, input.chain, input.mode),
+        () => readBalance(payerAddress, input.chain, input.mode),
       );
     }
 

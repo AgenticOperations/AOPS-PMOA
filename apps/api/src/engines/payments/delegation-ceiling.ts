@@ -53,15 +53,19 @@ export async function orgCeilingMicros(
 /**
  * Bounds a proposed new delegation. Called before any on-chain write.
  *
- * balanceMicros is injected rather than read here: Arc's public RPC was
- * measured failing ~56% of identical calls (spike S6), so the caller owns
- * the retry policy, and tests can stub it without a live chain.
+ * readBalanceMicros is injected AND lazy, for two different reasons. It is
+ * injected because Arc's public RPC was measured failing ~56% of identical
+ * calls (spike S6), so the caller owns the retry policy and tests can stub
+ * it without a live chain. It is lazy -- a thunk rather than a value --
+ * because the policy bound below is pure SQL: evaluating it first means a
+ * delegation that is over the org ceiling gets a clean 409 even when the
+ * chain is unreachable, instead of a 500 that hides the real reason.
  */
 export async function assertDelegationWithinCeilings(
   db: Db,
   scope: PayerScope,
   newCeilingMicros: bigint,
-  balanceMicros: bigint,
+  readBalanceMicros: () => Promise<bigint>,
 ): Promise<void> {
   const outstanding = await outstandingHeadroomMicros(db, scope);
   const total = outstanding + newCeilingMicros;
@@ -78,6 +82,7 @@ export async function assertDelegationWithinCeilings(
 
   // Solvency. A ceiling the treasury cannot cover is not a cap, it is a
   // deferred failure that lands on whichever agent happens to draw last.
+  const balanceMicros = await readBalanceMicros();
   if (total > balanceMicros) {
     throw conflict(
       'treasury_insufficient_for_ceiling',

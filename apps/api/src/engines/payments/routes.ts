@@ -47,17 +47,21 @@ import {
   verifyPaymentRail,
 } from './store.js';
 import { revokeAgent } from './agent-revocation.js';
-import { listAgentWalletFunding } from './agent-wallets.js';
+import { listAgentWalletFunding, nativeBalanceMicros } from './agent-wallets.js';
+import { outstandingHeadroomMicros } from './delegation-ceiling.js';
 import { setAllocation } from './allocations.js';
 import { payIntraFleet } from './intra-fleet.js';
 import { resolveAgentPayee } from './agent-payee.js';
 import {
   buildUserDelegationTypedData,
+  formatUsdc,
   listDelegations,
   recordSignedDelegation,
   revokeDelegation,
 } from './permit2.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
+import { usdcTokenAddress } from './circle-provider.js';
+import type { PaymentChain } from './types.js';
 import type { CircleConnectionController } from './circle-worker-client.js';
 import {
   PaidHttpError,
@@ -177,6 +181,24 @@ const recordDelegationSchema = z.object({
   // then revert on-chain with no useful error.
   nonce: z.string().trim().regex(/^\d+$/, 'Must be a decimal nonce.'),
 }).and(delegationTargetSchema);
+
+// No payer_address, no signature, no nonce: the treasury is a wallet the
+// platform holds the key for, so it signs the permit itself. That absence
+// is the whole point of this route.
+const treasuryDelegationSchema = z.object({}).and(delegationTargetSchema);
+
+const orgCeilingSchema = z.object({
+  chain: chainSchema,
+  ceiling_usdc: moneySchema,
+});
+
+type OrgCeilingRow = {
+  readonly org_id: string;
+  readonly mode: string;
+  readonly chain: PaymentChain;
+  readonly ceiling_usdc: string;
+  readonly updated_by: string;
+};
 
 const circleTreasurySchema = z.object({
   label: z.string().trim().min(1).max(120).default('Org treasury'),
@@ -912,6 +934,96 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       },
     });
     return reply.code(201).send({ delegation });
+  });
+
+  // --- Treasury-funded delegations and the org ceiling --------------------
+  //
+  // The org treasury is the single Permit2 payer: every agent draws from one
+  // shared pool against its own on-chain capped allowance. Isolation is by
+  // spender address (Permit2 keys allowance[owner][token][spender]), so each
+  // agent still needs its own wallet even though the money is pooled.
+  //
+  // Stated honestly: the treasury is CUSTODIAL. The platform holds the entity
+  // secret that signs for it. This ceiling constrains a compromised or
+  // misbehaving AGENT; it is not protection against a compromised platform.
+
+  app.post('/v1/orgs/:orgId/payments/delegations/treasury', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const body = parseBody(treasuryDelegationSchema, request);
+    const payee = await resolveDelegationPayee(deps.pool, params.orgId, mode, body);
+    const delegation = await recordSignedDelegation(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId,
+      payeeAgentId: payee.agentId,
+      payeeAddress: payee.address,
+      mode,
+      chain: body.chain,
+      tokenAddress: body.token_address,
+      ceilingUsdc: body.ceiling_usdc,
+      expiresAt: body.expires_at,
+      approvedBy: operator.actorId,
+      payerTreasury: true,
+      readPayerBalanceMicros: nativeBalanceMicros,
+    });
+    return reply.code(201).send({ delegation });
+  });
+
+  app.put('/v1/orgs/:orgId/payments/delegations/ceiling', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const body = parseBody(orgCeilingSchema, request);
+    // Per (org, mode, chain) -- a Permit2 allowance lives on ONE chain, so a
+    // single cross-chain number could never be enforced on-chain.
+    const result = await deps.pool.query<OrgCeilingRow>(
+      `INSERT INTO org_delegation_ceilings (org_id, mode, chain, ceiling_usdc, updated_by)
+       VALUES ($1, $2, $3, $4::numeric, $5)
+       ON CONFLICT (org_id, mode, chain)
+       DO UPDATE SET ceiling_usdc = EXCLUDED.ceiling_usdc,
+                     updated_by = EXCLUDED.updated_by,
+                     updated_at = now()
+       RETURNING org_id, mode, chain, ceiling_usdc::text, updated_by`,
+      [params.orgId, mode, body.chain, body.ceiling_usdc, operator.actorId],
+    );
+    return { ceiling: result.rows[0] };
+  });
+
+  // Reports all three numbers together, because any one alone is misleading:
+  // the configured cap is policy, outstanding headroom is what is already
+  // committed, and the treasury balance is what actually exists.
+  app.get('/v1/orgs/:orgId/payments/delegations/ceiling', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+
+    const treasuries = await deps.pool.query<{ chain: PaymentChain; address: string }>(
+      `SELECT chain, address FROM circle_chain_wallets
+        WHERE org_id = $1 AND mode = $2 AND status = 'active'`,
+      [params.orgId, mode],
+    );
+    const configured = await deps.pool.query<{ chain: PaymentChain; ceiling_usdc: string }>(
+      `SELECT chain, ceiling_usdc::text FROM org_delegation_ceilings
+        WHERE org_id = $1 AND mode = $2`,
+      [params.orgId, mode],
+    );
+
+    const ceilings = await Promise.all(treasuries.rows.map(async (treasury) => {
+      const outstanding = await outstandingHeadroomMicros(deps.pool, {
+        orgId: params.orgId,
+        payerAddress: treasury.address,
+        mode,
+        chain: treasury.chain,
+        tokenAddress: usdcTokenAddress(mode, treasury.chain),
+      });
+      return {
+        chain: treasury.chain,
+        treasury_address: treasury.address,
+        ceiling_usdc: configured.rows.find((row) => row.chain === treasury.chain)?.ceiling_usdc ?? null,
+        outstanding_usdc: formatUsdc(outstanding),
+      };
+    }));
+    return { ceilings };
   });
 
   app.get('/v1/orgs/:orgId/payments/delegations', async (request) => {
