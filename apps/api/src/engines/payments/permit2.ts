@@ -198,6 +198,9 @@ export type AgentDelegationRow = {
   readonly signature: string | null;
   readonly status: 'pending' | 'active' | 'exhausted' | 'expired' | 'revoked';
   readonly approved_by: string;
+  // Discriminates the three payer kinds. payer_agent_id IS NULL cannot do
+  // it alone: that is true for BOTH a user-owned wallet and the treasury.
+  readonly payer_kind: 'user' | 'agent' | 'treasury';
 };
 
 export type RecordSignedDelegationInput = {
@@ -207,6 +210,10 @@ export type RecordSignedDelegationInput = {
   // instead -- see the userSigned pair below.
   readonly payerAgentId?: string | undefined;
   readonly payeeAgentId?: string | undefined;
+  // Draws from the ORG TREASURY rather than an agent or a user wallet.
+  // Mutually exclusive with userSigned and payerAgentId: the treasury is a
+  // platform-controlled wallet, so the platform signs the permit itself.
+  readonly payerTreasury?: boolean | undefined;
   readonly payeeAddress: string;
   readonly mode: PaymentMode;
   readonly chain: PaymentChain;
@@ -304,11 +311,26 @@ export async function recordSignedDelegation(
   input: RecordSignedDelegationInput,
 ): Promise<AgentDelegationRow> {
   return withTransaction(pool, async (client) => {
-    // Either an agent wallet the platform controls, or a user-owned address
-    // it does not. Everything downstream works off payerAddress alone.
+    // Three payer kinds, resolved to one address. Everything downstream
+    // works off payerAddress alone; payerKind is recorded so just-in-time
+    // funding can tell a treasury delegation from a user-owned one --
+    // payer_agent_id IS NULL is true for BOTH and cannot discriminate.
     let payerAddress: string;
+    let payerKind: 'user' | 'agent' | 'treasury';
     if (input.userSigned !== undefined) {
       payerAddress = input.userSigned.payerAddress;
+      payerKind = 'user';
+    } else if (input.payerTreasury === true) {
+      const treasury = await client.query<{ address: string }>(
+        `SELECT address FROM circle_chain_wallets
+          WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+          LIMIT 1`,
+        [input.orgId, input.mode, input.chain],
+      );
+      const treasuryRow = treasury.rows[0];
+      if (treasuryRow === undefined) throw new Error('org_treasury_wallet_not_found');
+      payerAddress = treasuryRow.address;
+      payerKind = 'treasury';
     } else {
       if (input.payerAgentId === undefined) throw new Error('delegation_payer_required');
       const payer = await client.query<{ address: string }>(
@@ -320,6 +342,7 @@ export async function recordSignedDelegation(
       const payerRow = payer.rows[0];
       if (payerRow === undefined) throw new Error('agent_wallet_not_found');
       payerAddress = payerRow.address;
+      payerKind = 'agent';
     }
 
     const tokenAddress = input.tokenAddress ?? usdcTokenAddress(input.mode, input.chain);
@@ -427,15 +450,15 @@ export async function recordSignedDelegation(
       `INSERT INTO agent_delegations (
          id, org_id, payer_agent_id, payer_address, payee_agent_id, payee_address, mode, chain,
          token_address, ceiling_usdc, expires_at, permit_nonce, signature,
-         status, approved_by
+         status, approved_by, payer_kind
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::numeric, $11, $12, $13, 'active', $14)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::numeric, $11, $12, $13, 'active', $14, $15)
        RETURNING *`,
       [
-        prefixedId('dele'), input.orgId, input.payerAgentId ?? null, payerAddress,
+        prefixedId('dele'), input.orgId, payerKind === 'agent' ? input.payerAgentId : null, payerAddress,
         input.payeeAgentId ?? null,
         input.payeeAddress, input.mode, input.chain, tokenAddress,
-        input.ceilingUsdc, input.expiresAt, nonce, signature, input.approvedBy,
+        input.ceilingUsdc, input.expiresAt, nonce, signature, input.approvedBy, payerKind,
       ],
     );
     const row = inserted.rows[0];

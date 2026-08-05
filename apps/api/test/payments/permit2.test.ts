@@ -275,6 +275,81 @@ describe('recordSignedDelegation', () => {
     expect(permitArgs.abiFunctionSignature).toContain('permit');
   });
 
+  /**
+   * Seeds an org whose TREASURY holds the money: a circle_chain_wallets row
+   * (the org treasury) rather than an agent wallet for the payer. The payee
+   * is still a real agent wallet, because Permit2 keys its allowance by
+   * spender address -- that is where per-agent isolation actually comes from.
+   */
+  async function seedTreasuryOrg(suffix: string): Promise<{
+    readonly orgId: string;
+    readonly payeeAgentId: string;
+    readonly payeeAddress: string;
+    readonly treasuryAddress: string;
+  }> {
+    const orgId = `org_treas_${suffix}`;
+    const teamId = `team_treas_${suffix}`;
+    const payeeAgentId = `agt_treas_payee_${suffix}`;
+    // Addresses must be real hex -- viem's encodeFunctionData rejects
+    // anything else when reading the Permit2 nonce.
+    const hexSuffix = [...suffix].map((c) => c.charCodeAt(0).toString(16)).join('');
+    const payeeAddress = `0xbee0${hexSuffix}`.padEnd(42, '0').slice(0, 42);
+    const treasuryAddress = `0x7ea0${hexSuffix}`.padEnd(42, '0').slice(0, 42);
+    const walletSetId = `ws_treas_${suffix}`;
+
+    await store.pool.query("INSERT INTO orgs (id, display_name) VALUES ($1, 'Treasury Org')", [orgId]);
+    await store.pool.query('INSERT INTO teams (id, org_id, name) VALUES ($1, $2, $3)', [teamId, orgId, 'Default Team']);
+    await store.pool.query('INSERT INTO agents (id, org_id, team_id, name) VALUES ($1, $2, $3, $4)', [
+      payeeAgentId, orgId, teamId, 'Payee Agent',
+    ]);
+    await store.pool.query(
+      `INSERT INTO circle_wallet_sets (id, org_id, mode, circle_wallet_set_id, label, created_by)
+       VALUES ($1, $2, 'test', $3, 'Treasury wallet set', 'usr_1')`,
+      [walletSetId, orgId, `circle_${walletSetId}`],
+    );
+    await recordProvisionedWallet(store.pool, {
+      orgId, agentId: payeeAgentId, mode: 'test', chain: 'arc',
+      circleWalletId: `w_treas_payee_${suffix}`, address: payeeAddress,
+      refId: `ref_treas_${suffix}`, walletSetId, circleBlockchain: 'ARC-TESTNET',
+    });
+    // The org treasury lives in circle_chain_wallets, NOT agent_chain_wallets.
+    await store.pool.query(
+      `INSERT INTO circle_chain_wallets
+         (id, org_id, wallet_set_id, mode, chain, circle_blockchain,
+          circle_wallet_id, address, account_type, metadata)
+       VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', $4, $5, 'eoa', '{}'::jsonb)`,
+      [`cwallet_${suffix}`, orgId, walletSetId, `circlewallet_${suffix}`, treasuryAddress],
+    );
+
+    return { orgId, payeeAgentId, payeeAddress, treasuryAddress };
+  }
+
+  it('resolves the org treasury wallet as payer when payerTreasury is set', async () => {
+    stubPermit2Nonce(0n);
+    const { orgId, payeeAgentId, payeeAddress, treasuryAddress } = await seedTreasuryOrg('payer');
+    const provider = fakeProvider({
+      executePermit2Transaction: vi.fn(() => Promise.resolve({ txHash: '0xtreasurytx' })),
+    });
+
+    const delegation = await recordSignedDelegation(store.pool, provider, {
+      orgId,
+      payeeAgentId,
+      payeeAddress,
+      mode: 'test',
+      chain: 'arc',
+      ceilingUsdc: '10.00',
+      expiresAt: new Date(Date.now() + 86_400_000),
+      approvedBy: 'actor_test',
+      payerTreasury: true,
+    });
+
+    expect(delegation.payer_address).toBe(treasuryAddress);
+    expect(delegation.payer_kind).toBe('treasury');
+    expect(delegation.payer_agent_id).toBeNull();
+    // The platform signs for the treasury; it is not a user-signed delegation.
+    expect(provider.signPermit2Delegation).toHaveBeenCalled();
+  });
+
   it('records a user-signed delegation without ever signing or approving for them', async () => {
     // The non-custodial path: the operator's own wallet produced the
     // signature and sent approve() itself, so the platform must do neither.
