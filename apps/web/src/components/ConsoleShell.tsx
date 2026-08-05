@@ -11,22 +11,17 @@ type ConsoleShellProps = {
   readonly org: Org;
 };
 
-export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
-  const currentLabel =
-    active === 'overview'
-      ? 'Overview'
-      : active === 'agents'
-        ? 'Agents'
-        : active === 'controls'
-          ? 'Controls'
-          : active === 'operations'
-            ? 'Operations'
-            : active === 'payments'
-              ? 'Treasury'
-              : active === 'approvals'
-                ? 'Approvals'
-                : 'Settings';
+const ACTIVE_LABELS: Record<ConsoleShellProps['active'], string> = {
+  overview: 'Overview',
+  agents: 'Agents',
+  controls: 'Controls',
+  operations: 'Operations',
+  payments: 'Treasury',
+  approvals: 'Approvals',
+  settings: 'Settings',
+};
 
+export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
   return (
     <main className="console-shell">
       <ConsoleSidebarNav org={org} />
@@ -37,7 +32,7 @@ export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
             <ConsoleMobileNavigation org={org} />
             <span className="header-breadcrumb">Console</span>
             <span className="header-breadcrumb-divider">/</span>
-            <span className="header-breadcrumb-current">{currentLabel}</span>
+            <span className="header-breadcrumb-current">{ACTIVE_LABELS[active]}</span>
           </div>
           <div className="app-header-actions">
             <CommandPalette orgSlug={org.slug} />

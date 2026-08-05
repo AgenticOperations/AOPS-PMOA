@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Montserrat } from 'next/font/google';
+import { NavigationProgress } from '@/components/NavigationProgress';
 import './globals.css';
 import './agents.css';
 import './overview.css';
@@ -47,7 +48,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
-      <body>{children}</body>
+      <body>
+        <NavigationProgress />
+        {children}
+      </body>
     </html>
   );
 }
