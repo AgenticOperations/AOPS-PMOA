@@ -15,6 +15,6 @@ remappings = [
   "forge-std/=lib/forge-std/src/",
 ]
 
-[profile.default.rpc_endpoints]
+[rpc_endpoints]
 arc = "https://rpc.testnet.arc.network"
 base_sepolia = "https://sepolia.base.org"
