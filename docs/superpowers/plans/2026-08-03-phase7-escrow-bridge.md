@@ -60,7 +60,7 @@
 
 Same pattern as S4 gating Phase 6. One script, before any production code.
 
-- [ ] **Step 1: Write the probe**
+- [x] **Step 1: Write the probe**
 
 ```js
 // scripts/spikes/s8-erc8183-funding.mjs
@@ -84,7 +84,7 @@ console.log('jobs(1) [client, provider, evaluator, budget, state]:', job);
 console.log('client === evaluator?', job[0] === job[2]);
 ```
 
-- [ ] **Step 2: The decisive questions**
+- [x] **Step 2: The decisive questions**
 
 Reading state only proves deployment. Run a **real job lifecycle** on testnet with two agent wallets from Phase 3:
 
@@ -95,13 +95,15 @@ Reading state only proves deployment. Run a **real job lifecycle** on testnet wi
 5. Confirm `deliverable` appears **only in the event log**, not in `jobs()` state.
 6. **Re-verify the registry addresses** — D3 needs Identity `0x8004A818...`, and these appear only in tutorials. Confirm they hold code.
 
-- [ ] **Step 3: Record the verdict**
+- [x] **Step 3: Record the verdict**
 
 Write to `docs/spike-results.md`. If any of 1–4 fails:
 
 > **S8 fallback.** Escrow (D2) does not ship. Record why with the exact error. **Phase 8 · Task 1 (D3 ERC-8004 identity) still ships standalone** — identity registration does not depend on escrow. Phase 8 · Tasks 2–3 (payment-gated reputation, D4/D5) **fall with D2**, because reputation is written from the escrow completion hook and that is precisely what makes it earned. Do not ship ungated reputation as a substitute — the manifest is explicit that unearned ERC-8004 feedback is close to meaningless, and shipping it would be the overclaim Section J exists to prevent.
 
-- [ ] **Step 4: Commit**
+**Verdict recorded: FALLBACK.** Decisive question 2 fails on direct decoded on-chain evidence — the deployed `fund()` has no `expectedBudget` parameter (real selector `fund(uint256,bytes)` = `0xe25ba707`), so the front-running guard the plan assumed does not exist. Six real Arc testnet transactions confirm the mechanical lifecycle otherwise works end to end. Full evidence, tx hashes, and decoded calldata in `docs/spike-results.md`'s "S8" section. **Escrow (D2) does not ship in Phase 7 — Tasks 2 and 3 below are skipped per this step's own fallback rule.**
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add scripts/spikes/s8-erc8183-funding.mjs docs/spike-results.md
@@ -114,7 +116,9 @@ git commit -m "chore(spike): verify ERC-8183 escrow funding mechanics on Arc"
 
 **Gate:** S8 passed. If it did not, skip to Chunk 3.
 
-### Task 2: Escrow job records `[D2]`
+**S8 did not pass (see above) — Tasks 2 and 3 below are skipped per the plan's own fallback rule.** Neither the migration nor the lifecycle client ship. Left unchecked below for the record.
+
+### Task 2: Escrow job records `[D2]` — **SKIPPED, S8 fallback**
 
 - [ ] **Step 1: Write the migration**
 
@@ -173,7 +177,7 @@ git commit -m "feat(db): add ERC-8183 escrow job records"
 
 ---
 
-### Task 3: Escrow lifecycle client `[D2, K-5]`
+### Task 3: Escrow lifecycle client `[D2, K-5]` — **SKIPPED, S8 fallback**
 
 - [ ] **Step 1: Write the failing test**
 
@@ -260,7 +264,7 @@ Phase 2 · Task 1 accepted a deliberate regression: flipping to developer-contro
 
 Circle publishes a sample titled *"burns from Arc Testnet and mints on Base Sepolia"* — literally our scenario. Three calls, **no human, no private keys, no OTP**.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('just-in-time Gateway bridge', () => {
@@ -295,7 +299,7 @@ describe('just-in-time Gateway bridge', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails, then implement `gateway-bridge.ts`**
+- [x] **Step 2: Run to verify it fails, then implement `gateway-bridge.ts`**
 
 Three steps, per Circle's sample:
 1. **`signTypedData`** — Circle's MPC signs the EIP-712 `BurnIntent` on Arc. (This is also what proves MPC can produce EIP-712 signatures at all.)
@@ -306,13 +310,15 @@ Mint lands in **under 500ms** at the same address. Then wire it into `circle-pro
 
 **One-time prerequisite per wallet:** `approve` then `deposit(address,uint256)` into the Gateway contract. Circle frames this as *"wallet onboarding, not a per-call cost."* Implement it as a separate provisioning step, and make the missing-deposit case fail with a clear error rather than a confusing one.
 
-- [ ] **Step 3: Verify on testnet, update the decision record**
+- [ ] **Step 3: Verify on testnet, update the decision record** — **PARTIAL, paused**
 
 Run a real Arc→Base bridge. Record tx hashes both sides. Then amend the K-18 entry in `docs/decisions.md`:
 
 > **K-18 regression resolved** in Phase 7 · Task 4. `bridgeWalletTopUp` is implemented via the Gateway JIT path. Cross-chain no longer depends solely on Option A pre-funding.
 
-- [ ] **Step 4: Run the full gate and commit**
+**Real evidence gathered (see `docs/spike-results.md`'s "Phase 7 · Task 4 proof test" section for full detail):** a real `approve` + `deposit` into Gateway succeeded on Arc testnet ($0.20 from a funded agent wallet), confirmed via the public Gateway balances API. The burn-intent signing (real EIP-712 signature via Circle's MPC) and Gateway `/v1/transfer` attestation round-trip also succeeded for real, with a real fee response (0.0035 USDC). **The mint on Base Sepolia is not yet independently verified with a real tx hash.** First attempt failed on zero destination-wallet gas; after funding with 0.0001 ETH it still failed with Circle's own error code 155258 ("asset amount owned by the wallet is insufficient"), which is ~100x more ETH than the sampled gas price implies is needed — points to a platform-side minimum-balance floor, not a bug in this code (every step this code controls succeeded). Also discovered: Gateway reserves the burn amount against the depositor's balance as soon as an attestation issues, before the mint completes — three attempted mints consumed real balance from the $0.20 deposit down to $0.0395 even though none landed on-chain. **Paused here per explicit direction to move on** rather than continue requesting more testnet funding; the `docs/decisions.md` K-18 entry is left unresolved until a real mint tx hash lands in a future session.
+
+- [x] **Step 4: Run the full gate and commit**
 
 ```bash
 npm run verify
@@ -324,17 +330,17 @@ git commit -m "feat(payments): implement just-in-time Gateway bridge"
 
 ## Phase 7 Done Criteria
 
-- [ ] S8's verdict is recorded with evidence, and states whether D2 ships
-- [ ] (If S8 passed) `fund()` is **always** called with an expected budget; a mismatch reverts
-- [ ] Escrow `completed` settles the reservation; `rejected`/`expired` release it
-- [ ] `expired` is recorded distinctly from `rejected`, despite identical on-chain refund behavior
-- [ ] Submitted jobs approaching expiry are surfaced as evaluator-liveness risks
-- [ ] Escrow refuses sub-cent amounts
-- [ ] A full Mode 2 job ran on Arc testnet with recorded tx hashes
-- [ ] The bridge burns on Arc, attests, and mints on Base — verified with tx hashes both sides
-- [ ] A wallet never deposited into Gateway fails with `gateway_wallet_not_deposited`, not a confusing error
-- [ ] The K-18 regression entry in `docs/decisions.md` is marked resolved
-- [ ] `npm run verify` passes with Docker up
+- [x] S8's verdict is recorded with evidence, and states whether D2 ships — **FALLBACK, D2 does not ship**
+- [ ] ~~(If S8 passed) `fund()` is **always** called with an expected budget; a mismatch reverts~~ — N/A, S8 fallback
+- [ ] ~~Escrow `completed` settles the reservation; `rejected`/`expired` release it~~ — N/A, S8 fallback
+- [ ] ~~`expired` is recorded distinctly from `rejected`, despite identical on-chain refund behavior~~ — N/A, S8 fallback
+- [ ] ~~Submitted jobs approaching expiry are surfaced as evaluator-liveness risks~~ — N/A, S8 fallback
+- [ ] ~~Escrow refuses sub-cent amounts~~ — N/A, S8 fallback
+- [x] A full Mode 2 job ran on Arc testnet with recorded tx hashes — ran for S8's own verification (6 real txs); not shipped as production code since D2 doesn't ship
+- [ ] The bridge burns on Arc, attests, and mints on Base — verified with tx hashes both sides — **deposit + attestation verified live; mint blocked on destination-wallet funding, paused**
+- [x] A wallet never deposited into Gateway fails with `gateway_wallet_not_deposited`, not a confusing error
+- [ ] The K-18 regression entry in `docs/decisions.md` is marked resolved — pending the live mint tx hash above
+- [x] `npm run verify` passes with Docker up
 
 **Claim discipline:**
 - ✅ *"Escrow proves the funds exist and can't be silently withdrawn before the provider starts work."*

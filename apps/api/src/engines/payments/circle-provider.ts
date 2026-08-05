@@ -6,6 +6,13 @@ import type { Blockchain, ContractExecutionBlockchain, EvmBlockchain, TestnetBlo
 import { ExactEvmScheme } from '@x402/evm/exact/client';
 import { decodePaymentResponseHeader, encodePaymentSignatureHeader } from '@x402/core/http';
 import type { Network, PaymentPayload, PaymentRequirements } from '@x402/core/types';
+import { parseUsdcMicros } from './allocations.js';
+import {
+  bridgeWalletTopUp as gatewayBridgeWalletTopUp,
+  TESTNET_GATEWAY_MINTER,
+  type BurnIntentMessage,
+  type BurnIntentTypedData,
+} from './gateway-bridge.js';
 import {
   CircleAgentCliPaidRequestError,
   createCircleAgentCliExecutor,
@@ -1076,14 +1083,80 @@ export function createDeveloperControlledCircleTreasuryProvider(
   options: DeveloperControlledProviderOptions = {},
 ): CircleTreasuryProvider {
   return {
-    bridgeWalletTopUp: ({ amount, fromChain, mode, toChain }) => Promise.resolve({
-      amount,
-      errorReason: 'developer_controlled_bridge_topup_not_supported',
-      fromChain,
-      providerMode: mode,
-      success: false,
-      toChain,
-    }),
+    bridgeWalletTopUp: async ({ amount, fromAddress, fromChain, idempotencyKey, mode, toAddress, toChain }) => {
+      const env = readEnv(mode);
+      const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
+      const result = await gatewayBridgeWalletTopUp(
+        {
+          amount,
+          fromAddress,
+          fromChain,
+          toAddress,
+          toChain,
+          mode,
+        },
+        {
+          gatewayBalance: async ({ address, chain }) => {
+            const balance = await fetchGatewayBalanceFromApi({ address, chain, mode });
+            return parseUsdcMicros(balance.available);
+          },
+          signTypedData: async (typedData: BurnIntentTypedData) => {
+            const response = await client.signTypedData({
+              walletAddress: fromAddress,
+              blockchain: CONTRACT_EXECUTION_BLOCKCHAINS[mode][fromChain],
+              data: JSON.stringify(normalizeTypedDataForCircle(typedData)),
+              memo: 'agentOps Gateway just-in-time bridge burn intent',
+            });
+            const signature = response.data?.signature;
+            if (signature === undefined || signature.length === 0) throw new Error('circle_signature_missing');
+            return signature as `0x${string}`;
+          },
+          postTransfer: async (input: { readonly burnIntent: BurnIntentMessage; readonly signature: `0x${string}` }) => {
+            const response = await fetch(`${gatewayApiUrl(mode)}/transfer`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify([{ burnIntent: input.burnIntent, signature: input.signature }]),
+            });
+            const body = await response.json() as {
+              readonly attestation?: string;
+              readonly signature?: string;
+              readonly message?: string;
+            };
+            if (!response.ok || body.attestation === undefined || body.signature === undefined) {
+              throw new Error(body.message ?? `gateway_transfer_failed_${response.status}`);
+            }
+            return { attestation: body.attestation as `0x${string}`, signature: body.signature as `0x${string}` };
+          },
+          contractExecution: async ({ attestation, operatorSignature, toAddress: recipient, toChain: destinationChain }) => {
+            const mint = await client.createContractExecutionTransaction({
+              walletAddress: recipient,
+              contractAddress: TESTNET_GATEWAY_MINTER,
+              abiFunctionSignature: 'gatewayMint(bytes,bytes)',
+              abiParameters: [attestation, operatorSignature],
+              blockchain: CONTRACT_EXECUTION_BLOCKCHAINS[mode][destinationChain],
+              fee: circleFee(),
+              idempotencyKey: idempotencyKey ?? randomUUID(),
+              refId: `agentops-gateway-bridge-mint-${destinationChain}-${randomUUID()}`,
+            });
+            const mintId = mint.data?.id;
+            if (mintId === undefined || mintId.length === 0) throw new Error('circle_gateway_mint_transaction_missing');
+            await waitForCircleTransaction(client, mintId, 'circle_gateway_mint');
+            const confirmed = await client.getTransaction({ id: mintId });
+            const txHash = confirmed.data?.transaction?.txHash;
+            return { txHash: txHash ?? mintId };
+          },
+        },
+      );
+      return {
+        amount: result.amount,
+        fromChain: result.fromChain,
+        providerMode: result.providerMode,
+        success: result.success,
+        toChain: result.toChain,
+        ...(result.errorReason === undefined ? {} : { errorReason: result.errorReason }),
+        ...(result.transaction === undefined ? {} : { transaction: result.transaction }),
+      };
+    },
     health: (mode) => {
       const missing = missingConfig(mode);
       return {
