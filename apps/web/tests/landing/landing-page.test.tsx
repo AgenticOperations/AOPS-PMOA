@@ -72,7 +72,7 @@ describe('AOPS public landing page', () => {
     expect(within(footer).getByText('Testnet treasury')).toBeInTheDocument();
   });
 
-  it('provides production hooks for navigation, the hero signal, and treasury compatibility proof', async () => {
+  it('provides production hooks for navigation, the hero field, and treasury compatibility proof', async () => {
     const { container } = render(await HomePage());
     const navigation = container.querySelector('.aops-nav');
 
@@ -86,7 +86,13 @@ describe('AOPS public landing page', () => {
     fireEvent.scroll(window);
     expect(navigation).toHaveAttribute('data-scrolled', 'true');
 
-    expect(container.querySelectorAll('[data-signal-runner]')).toHaveLength(2);
+    // The hero renders a decorative wave field rather than a foreground graphic,
+    // so it must stay out of the accessibility tree.
+    const heroField = container.querySelector('.aops-hero .aops-waves');
+    expect(heroField).toBeInTheDocument();
+    expect(heroField).toHaveAttribute('aria-hidden', 'true');
+    expect(heroField?.querySelector('canvas')).toBeInTheDocument();
+
     expect(container.querySelector('[data-treasury-boundary]')).toBeInTheDocument();
     expect(container.querySelector('[data-chain-marquee]')).toBeInTheDocument();
     expect(container.querySelectorAll('[data-chain-marquee-track] > ul')).toHaveLength(2);
