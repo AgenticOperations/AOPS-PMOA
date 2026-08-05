@@ -22,7 +22,7 @@ const EXPECTED_REJECTIONS: Record<string, string> = {
   org_delegation_ceiling_exceeded:
     'This cap would push the org past its ceiling. Raise the ceiling, or revoke an unused delegation first.',
   treasury_insufficient_for_ceiling:
-    'The treasury does not hold enough USDC to cover this cap. Fund the treasury first.',
+    'The treasury wallet does not hold enough USDC to cover this cap. Copy the treasury address above and send USDC to it, then try again. Note that USDC moved into Circle Gateway does not count towards this.',
 };
 
 /**

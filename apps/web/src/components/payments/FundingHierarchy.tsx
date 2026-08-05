@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
 import { CHAIN_LABELS } from '@/lib/payments-format';
+import { CopyableAddress } from './CopyableAddress';
 import type { AgentWalletFundingRecord } from '@/lib/server/payments-client';
 import type { CircleChainWalletRecord } from '@/lib/payments-types';
 
@@ -14,26 +14,6 @@ function usdc(micros: string | null): string {
   if (micros === null) return '—';
   const value = BigInt(micros);
   return `${(value / 1_000_000n).toString()}.${(value % 1_000_000n).toString().padStart(6, '0').slice(0, 2)}`;
-}
-
-function CopyableAddress({ address }: { readonly address: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      className="funding-address"
-      title={address}
-      onClick={() => {
-        void navigator.clipboard.writeText(address).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-    >
-      <code>{address.slice(0, 10)}…{address.slice(-6)}</code>
-      <span>{copied ? 'Copied' : 'Copy'}</span>
-    </button>
-  );
 }
 
 /**

@@ -486,6 +486,10 @@ export type OrgCeilingRecord = {
   // null when the org has never set one: bounded only by treasury solvency.
   readonly ceiling_usdc: string | null;
   readonly outstanding_usdc: string;
+  // The treasury WALLET balance -- what solvency is judged on. Excludes
+  // Circle Gateway, which cannot back a Permit2 pull. null means the chain
+  // RPC was unreachable, which is not the same as a zero balance.
+  readonly treasury_balance_usdc: string | null;
 };
 
 export async function listOrgCeilings(orgId: string): Promise<readonly OrgCeilingRecord[]> {

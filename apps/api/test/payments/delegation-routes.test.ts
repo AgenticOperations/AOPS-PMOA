@@ -369,4 +369,57 @@ describe('user-owned wallet delegation routes', () => {
     expect(Number(arc?.outstanding_usdc)).toBe(0);
     expect(arc?.treasury_address).toBe('0x7ea50000000000000000000000000000000000c3');
   });
+
+  it('reports the treasury balance, the number solvency is actually judged on', async () => {
+    // Without this the console can show a ceiling and outstanding headroom
+    // while a delegation is refused for insolvency, with no number on screen
+    // explaining why.
+    const { orgId } = await setupOrgWithAgent('ba14');
+    await seedTreasuryWallet(orgId, 'ba14', '0x7ea50000000000000000000000000000000000c4');
+    vi.stubEnv('ARC_RPC_URL', 'https://rpc.testnet.arc.network');
+    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({
+        jsonrpc: '2.0', id: 1, result: `0x${(7n * 10n ** 18n).toString(16)}`,
+      })),
+    ));
+
+    const read = await api.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+    });
+    expect(read.statusCode, read.body).toBe(200);
+    const { ceilings } = read.json<{
+      ceilings: readonly { chain: string; treasury_balance_usdc: string | null }[];
+    }>();
+    expect(Number(ceilings.find((c) => c.chain === 'arc')?.treasury_balance_usdc)).toBe(7);
+
+    fetchSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
+  it('still returns the ceiling when the balance RPC is down, rather than failing the page', async () => {
+    // Arc's public RPC was measured failing ~56% of identical calls (spike
+    // S6). The ceiling and outstanding headroom are pure SQL and stay
+    // correct, so a dead RPC must degrade to an unknown balance, not a 500.
+    const { orgId } = await setupOrgWithAgent('dead');
+    await seedTreasuryWallet(orgId, 'dead', '0x7ea50000000000000000000000000000000000c5');
+    vi.stubEnv('ARC_RPC_URL', 'https://rpc.testnet.arc.network');
+    const fetchSpy = vi.spyOn(global, 'fetch')
+      .mockImplementation(() => Promise.reject(new Error('ECONNREFUSED')));
+
+    const read = await api.inject({
+      method: 'GET',
+      url: `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+    });
+    expect(read.statusCode, read.body).toBe(200);
+    const { ceilings } = read.json<{
+      ceilings: readonly { chain: string; treasury_balance_usdc: string | null; outstanding_usdc: string }[];
+    }>();
+    const arc = ceilings.find((c) => c.chain === 'arc');
+    expect(arc?.treasury_balance_usdc).toBeNull();
+    expect(Number(arc?.outstanding_usdc)).toBe(0);
+
+    fetchSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
 });

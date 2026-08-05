@@ -992,6 +992,12 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
   // Reports all three numbers together, because any one alone is misleading:
   // the configured cap is policy, outstanding headroom is what is already
   // committed, and the treasury balance is what actually exists.
+  //
+  // treasury_balance_usdc is the treasury WALLET's on-chain balance, which
+  // is exactly what assertDelegationWithinCeilings judges solvency on. It
+  // deliberately excludes anything sitting in Circle Gateway: Gateway funds
+  // cannot back a Permit2 pull, so counting them would let the console show
+  // an org as solvent right up until every delegation was refused.
   app.get('/v1/orgs/:orgId/payments/delegations/ceiling', async (request) => {
     const params = request.params as { readonly orgId: string };
     await requireOrgOperator(request, deps, params.orgId, 'viewer');
@@ -1016,11 +1022,20 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
         chain: treasury.chain,
         tokenAddress: usdcTokenAddress(mode, treasury.chain),
       });
+      // The ceiling and outstanding headroom above are pure SQL and always
+      // correct. The balance is a live chain read that fails often on Arc,
+      // so a dead RPC degrades to an unknown balance rather than taking the
+      // whole page down with it.
+      const balance = await nativeBalanceMicros(treasury.address, treasury.chain, mode)
+        .then(formatUsdc)
+        .catch(() => null);
+
       return {
         chain: treasury.chain,
         treasury_address: treasury.address,
         ceiling_usdc: configured.rows.find((row) => row.chain === treasury.chain)?.ceiling_usdc ?? null,
         outstanding_usdc: formatUsdc(outstanding),
+        treasury_balance_usdc: balance,
       };
     }));
     return { ceilings };

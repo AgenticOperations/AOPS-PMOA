@@ -19,7 +19,7 @@ const capability = {
 };
 
 describe('TreasuryActionTabs', () => {
-  it('keeps the Gateway deposit form out of the page until the operator opens it', () => {
+  it('keeps the Gateway transfer form out of the page until the operator opens it', () => {
     render(
       <TreasuryActionTabs
         activeWalletCount={1}
@@ -30,12 +30,12 @@ describe('TreasuryActionTabs', () => {
     );
 
     expect(screen.queryByLabelText('Chain')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }));
-    expect(screen.getByRole('dialog', { name: 'Deposit to Gateway' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Gateway' }));
+    expect(screen.getByRole('dialog', { name: 'Move USDC to Gateway' })).toBeInTheDocument();
     expect(screen.getByLabelText('Chain')).toHaveValue('base');
   });
 
-  it('keeps deposits unavailable while provider health cannot be verified', () => {
+  it('keeps the Gateway transfer unavailable while provider health cannot be verified', () => {
     render(
       <TreasuryActionTabs
         activeWalletCount={1}
@@ -45,6 +45,6 @@ describe('TreasuryActionTabs', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: 'Deposit' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move to Gateway' })).toBeDisabled();
   });
 });
