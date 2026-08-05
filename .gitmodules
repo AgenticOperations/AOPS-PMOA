@@ -1,0 +1,3 @@
+[submodule "packages/onchain/lib/base-contracts"]
+	path = packages/onchain/lib/base-contracts
+	url = https://github.com/erc-8183/base-contracts

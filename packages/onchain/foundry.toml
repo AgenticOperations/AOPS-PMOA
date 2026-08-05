@@ -10,6 +10,10 @@ optimizer_runs = 200
 via_ir = true
 # EIP-170. Fail the build rather than discover this at deploy time.
 bytecode_hash = "none"
+remappings = [
+  "erc8183/=lib/base-contracts/contracts/",
+  "forge-std/=lib/forge-std/src/",
+]
 
 [profile.default.rpc_endpoints]
 arc = "https://rpc.testnet.arc.network"
