@@ -2,7 +2,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
 import type { EscrowReceiptLog } from '../../src/engines/payments/escrow-contract.js';
-import { applyEscrowStateChange, createEscrowJob, fundEscrowJob } from '../../src/engines/payments/escrow.js';
+import {
+  applyEscrowStateChange,
+  createEscrowJob,
+  fundEscrowJob,
+  listEscrowLivenessRisks,
+} from '../../src/engines/payments/escrow.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 const ESCROW_ADDRESS = '0x31C050d9D20504c4E11b2A894051d8181B14e0F5';
@@ -433,6 +438,10 @@ describe('escrow lifecycle engine', () => {
   // Lifecycle transitions
   // ---------------------------------------------------------------------
 
+  function hoursFromNow(hours: number): Date {
+    return new Date(Date.now() + hours * 3_600_000);
+  }
+
   async function reservationStatus(reservationId: string | null): Promise<string | undefined> {
     const res = await store.pool.query<{ status: string }>(
       'SELECT status FROM payment_reservations WHERE id = $1', [reservationId],
@@ -576,5 +585,35 @@ describe('escrow lifecycle engine', () => {
     expect(executePermit2Transaction).not.toHaveBeenCalled();
     expect(await escrowStateOf(job.id)).toBe('submitted');
     expect(await reservationStatus(job.reservationId)).toBe('reserved');
+  });
+
+
+  // ---------------------------------------------------------------------
+  // Evaluator liveness
+  // ---------------------------------------------------------------------
+
+  it('flags submitted jobs approaching expiry', async () => {
+    // The sharpest ERC-8183 trap: after submit, an evaluator who goes silent
+    // lets claimRefund pay the CLIENT back for work that was delivered.
+    const fixture = await seedEscrowOrg('liveness', { providerInFleet: true });
+    const atRiskJob = await submitJobFor(fixture, { expiresAt: hoursFromNow(2) });
+    await submitJobFor(fixture, { expiresAt: hoursFromNow(40) }); // not at risk
+    await fundJobFor(fixture, { expiresAt: hoursFromNow(1) }); // not submitted, not the trap
+
+    const atRisk = await listEscrowLivenessRisks(store.pool, { orgId: fixture.orgId, withinHours: 6 });
+    expect(atRisk).toHaveLength(1);
+    expect(atRisk[0]?.escrowJobId).toBe(atRiskJob.id);
+    // Mode 2 means the client evaluates its own job. Callers must never
+    // present that as neutral arbitration, so the mode travels with the risk.
+    expect(atRisk[0]?.escrowMode).toBe(2);
+  });
+
+  it('scopes liveness risks to the org that asked', async () => {
+    const mine = await seedEscrowOrg('livenessmine', { providerInFleet: true });
+    const theirs = await seedEscrowOrg('livenesstheirs', { providerInFleet: true });
+    await submitJobFor(theirs, { expiresAt: hoursFromNow(2) });
+
+    const atRisk = await listEscrowLivenessRisks(store.pool, { orgId: mine.orgId, withinHours: 6 });
+    expect(atRisk).toHaveLength(0);
   });
 });

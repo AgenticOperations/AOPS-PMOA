@@ -710,3 +710,70 @@ export async function applyEscrowStateChange(
     return escrowJobFromRow(row);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Evaluator liveness
+// ---------------------------------------------------------------------------
+
+/** A submitted job whose evaluation window is closing. */
+export type EscrowLivenessRisk = {
+  readonly escrowJobId: string;
+  readonly onchainJobId: string | null;
+  readonly chain: PaymentChain;
+  readonly providerAddress: string;
+  readonly evaluatorAddress: string;
+  // 2 means the client evaluates its own job. It travels WITH the risk so no
+  // caller can present a self-evaluated job as neutral arbitration -- and
+  // because a mode-2 job at risk means the party that owes the money is the
+  // one who has gone quiet.
+  readonly escrowMode: number;
+  readonly budgetUsdc: string;
+  readonly expiresAt: Date;
+};
+
+export type ListEscrowLivenessRisksInput = {
+  readonly orgId: string;
+  readonly withinHours: number;
+};
+
+/**
+ * Submitted jobs running out of time for their evaluator to answer.
+ *
+ * The sharpest trap in ERC-8183: once work is submitted, an evaluator who
+ * simply goes silent costs the PROVIDER everything. claimRefund pays the
+ * budget back to the client after expiry, and the contract cannot tell that
+ * the work was delivered -- nothing on-chain distinguishes "rejected" from
+ * "never looked at". Only watching the window closing can.
+ *
+ * Funded-but-unsubmitted jobs are deliberately not risks: nothing was
+ * delivered, so a refund there costs the provider nothing.
+ *
+ * Shaped for `escrow_jobs_liveness_idx (state, expires_at) WHERE state =
+ * 'submitted'` -- the literal state predicate and the range on expires_at are
+ * what make that partial index usable rather than a full scan.
+ */
+export async function listEscrowLivenessRisks(
+  pool: pg.Pool,
+  input: ListEscrowLivenessRisksInput,
+): Promise<readonly EscrowLivenessRisk[]> {
+  const result = await pool.query<EscrowJobRow>(
+    `SELECT * FROM escrow_jobs
+      WHERE state = 'submitted'
+        AND expires_at <= now() + make_interval(secs => $2)
+        AND org_id = $1
+      ORDER BY expires_at ASC`,
+    // Seconds rather than hours so a fractional window stays exact; make_interval's
+    // `hours` argument is an integer and would reject one.
+    [input.orgId, input.withinHours * 3600],
+  );
+  return result.rows.map((row) => ({
+    escrowJobId: row.id,
+    onchainJobId: row.onchain_job_id,
+    chain: row.chain,
+    providerAddress: row.provider_address,
+    evaluatorAddress: row.evaluator_address,
+    escrowMode: row.escrow_mode,
+    budgetUsdc: row.budget_usdc,
+    expiresAt: row.expires_at,
+  }));
+}
