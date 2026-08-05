@@ -1,0 +1,21 @@
+{
+  "erc8183Commit": "142e669c1fd318486a4628395b629f033654dd06",
+  "arc-testnet": {
+    "chainId": 5042002,
+    "proxy": "0x31C050d9D20504c4E11b2A894051d8181B14e0F5",
+    "implementation": "0x22F24Fa7161d00e6Bd2529548A7508414Ac9A760",
+    "usdc": "0x3600000000000000000000000000000000000000",
+    "deployer": "0x8fA611219D47F143007ab02fcD2dcB2C73Bd3f95",
+    "deployTx": "0xd21934c25af1c36cb0e7926b5ec19e9a22e34b35ffbd1c797fe7680fcf14b0c2",
+    "allowTokenTx": "0xcaea39bcf49b25b7dfec78a429e9ee51db3716a590d56931ba8c480db471955e"
+  },
+  "base-sepolia": {
+    "chainId": 84532,
+    "proxy": "0x31C050d9D20504c4E11b2A894051d8181B14e0F5",
+    "implementation": "0x22F24Fa7161d00e6Bd2529548A7508414Ac9A760",
+    "usdc": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "deployer": "0x8fA611219D47F143007ab02fcD2dcB2C73Bd3f95",
+    "deployTx": "0xd69eaefb63355c3b6fa30fa51b528a032b3636b7ea25f9f4df04ddce31c30299",
+    "allowTokenTx": "0x495215f6dd0e28f12b303ca324fe4510622e647408d415a912e147443d23d908"
+  }
+}
