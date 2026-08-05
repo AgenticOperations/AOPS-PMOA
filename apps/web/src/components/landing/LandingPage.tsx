@@ -1,27 +1,9 @@
-import Link from 'next/link';
+import { ChainMarquee } from './ChainMarquee';
 import { ChainStory } from './ChainStory';
 import { ControlStory } from './ControlStory';
+import { Hero } from './Hero';
 import { LandingFooter } from './LandingFooter';
 import { LandingNavigation } from './LandingNavigation';
-
-function Hero() {
-  return (
-    <section className="aops-hero" id="top">
-      <div className="aops-boundary-signal" aria-hidden="true">
-        <span className="aops-signal-track aops-signal-in"><i data-signal-runner="incoming" /></span>
-        <b className="aops-signal-gate" />
-        <span className="aops-signal-track aops-signal-out"><i data-signal-runner="outgoing" /></span>
-      </div>
-      <div className="aops-wrap aops-hero-content">
-        <div>
-          <h1 aria-label="Let agents act. Keep authority.">Let agents act.<br /><span>Keep authority.</span></h1>
-          <p>Identity, policy, approvals, treasury, and evidence for every agent action.</p>
-          <Link className="aops-primary-link" href="/auth">Request access</Link>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function Manifesto() {
   return (
@@ -34,48 +16,6 @@ function Manifesto() {
             <div><strong>Boundaries before execution.</strong><p>Identity and policy are evaluated before an action reaches a tool, approval, or payment rail.</p></div>
             <div><strong>Evidence after the fact.</strong><p>Every relevant decision and outcome stays attributable to the agent, organization, and policy context.</p></div>
           </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ProductAssets() {
-  return (
-    <section className="aops-assets" aria-labelledby="aops-assets-title">
-      <div className="aops-wrap">
-        <div className="aops-section-head">
-          <h2 id="aops-assets-title">Controls that explain<br />the decision.</h2>
-          <p>The interface keeps high-signal detail visible without turning every workflow into a dashboard.</p>
-        </div>
-        <div className="aops-assets-grid">
-          <article className="aops-asset aops-policy-asset">
-            <div className="aops-asset-copy"><b>01 / Policy boundary</b><h3>Rules stay readable at the moment they matter.</h3></div>
-            <div className="aops-policy-visual">
-              <span>PAYMENT AUTHORIZATION</span>
-              <h4>Research operator</h4>
-              <dl><div><dt>Recipient scope</dt><dd>Approved services</dd></div><div><dt>Per request</dt><dd>500 USDC</dd></div><div><dt>Human review</dt><dd>Above 150 USDC</dd></div></dl>
-              <footer><span>Policy version 4</span><strong>Bound</strong></footer>
-            </div>
-          </article>
-          <article className="aops-asset aops-approval-asset">
-            <div className="aops-approval-visual">
-              <header><span>Review queue</span><b>01 pending</b></header>
-              <div><span>240 USDC</span><h4>Payment authorization</h4><p>Requested by Research operator for a policy-scoped service.</p></div>
-              <dl><div><dt>Threshold</dt><dd>150 USDC</dd></div><div><dt>Expires</dt><dd>11m 42s</dd></div></dl>
-              <footer><span>Decline</span><strong>Approve once</strong></footer>
-            </div>
-            <div className="aops-asset-copy"><b>02 / Human judgment</b><h3>Escalate the exception, not the whole workflow.</h3></div>
-          </article>
-          <article className="aops-asset aops-proof-asset">
-            <div className="aops-asset-copy"><b>03 / Canonical evidence</b><h3>One chain of events from actor to outcome.</h3><p>Policy, approval, liquidity, and settlement remain connected instead of becoming four unrelated logs.</p></div>
-            <div className="aops-proof-visual">
-              <div><i>01</i><span><strong>Identity</strong><small>Scoped agent resolved</small></span><code>28c…a17</code></div>
-              <div><i>02</i><span><strong>Decision</strong><small>Approval required</small></span><code>28d…c42</code></div>
-              <div><i>03</i><span><strong>Authority</strong><small>One-time approval</small></span><code>28f…b09</code></div>
-              <div><i>04</i><span><strong>Outcome</strong><small>Payment settled</small></span><code>291…d64</code></div>
-            </div>
-          </article>
         </div>
       </div>
     </section>
@@ -142,21 +82,26 @@ function WorkflowSection() {
     <section className="aops-workflow" id="workflow">
       <div className="aops-wrap">
         <div className="aops-section-head"><h2>Start with one agent.<br />Grow control with the system.</h2><p>AOPS does not require a giant automation rewrite. Add the policies, approvals, and treasury access that each job actually requires.</p></div>
-        <div className="aops-workflow-list">
-          {steps.map((step, index) => <article key={step[0]}><b>{String(index + 1).padStart(2, '0')}</b><div><h3>{step[0]}</h3><p>{step[1]}</p></div><span>{step[2]}</span></article>)}
+        {/* Hairline grid: cells sit on the rail colour and are separated by 1px gaps. */}
+        <div className="aops-workflow-grid">
+          {steps.map((step, index) => (
+            <article key={step[0]}>
+              <b aria-hidden="true">{String(index + 1).padStart(2, '0')}</b>
+              <span>{step[2]}</span>
+              <em>{String(index + 1).padStart(2, '0')}</em>
+              <h3>{step[0]}</h3>
+              <p>{step[1]}</p>
+              <i aria-hidden="true" />
+            </article>
+          ))}
         </div>
-      </div>
-    </section>
-  );
-}
-
-function ClosingSection() {
-  return (
-    <section className="aops-closing">
-      <div className="aops-wrap">
-        <span>Operational authority</span>
-        <h2>Agents can move faster<br />when the boundary is clear.</h2>
-        <p>Start with identity. Add policy, approvals, treasury, and evidence as the work demands.</p>
+        <div className="aops-workflow-rail">
+          <span>Runtime surfaces</span>
+          <code>policy.check</code>
+          <code>approval.request</code>
+          <code>treasury.authorize</code>
+          <code>evidence.export</code>
+        </div>
       </div>
     </section>
   );
@@ -168,14 +113,13 @@ export function LandingPage() {
       <LandingNavigation />
       <main className="aops-page-surface">
         <Hero />
+        <ChainMarquee />
         <Manifesto />
         <ControlStory />
-        <ProductAssets />
         <ChainStory />
         <DeveloperSection />
         <SecuritySection />
         <WorkflowSection />
-        <ClosingSection />
       </main>
       <LandingFooter />
     </div>

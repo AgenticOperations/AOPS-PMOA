@@ -1,26 +1,3 @@
-import Image from 'next/image';
-import { SUPPORTED_CHAIN_PRESENTATION } from '@/lib/chain-presentation';
-
-function ChainList({ duplicate = false }: { duplicate?: boolean }) {
-  return (
-    <ul aria-hidden={duplicate || undefined} aria-label={duplicate ? undefined : 'Supported networks'}>
-      {SUPPORTED_CHAIN_PRESENTATION.map((chain) => (
-        <li key={chain.id}>
-          <Image
-            alt=""
-            data-chain-logo
-            height={34}
-            src={chain.logo}
-            unoptimized
-            width={34}
-          />
-          <span>{chain.name}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export function ChainStory() {
   return (
     <section className="aops-chain-section" id="treasury">
@@ -77,19 +54,6 @@ export function ChainStory() {
             <span>One evidence trail</span>
             <p><b>Request</b><i /><b>Decision</b><i /><b>Settlement</b><i /><b>Proof</b></p>
           </footer>
-        </div>
-      </div>
-
-      <div
-        aria-label="Supported chain compatibility"
-        className="aops-chain-marquee"
-        data-chain-marquee
-        role="group"
-        tabIndex={0}
-      >
-        <div className="aops-chain-marquee-track" data-chain-marquee-track>
-          <ChainList />
-          <ChainList duplicate />
         </div>
       </div>
     </section>
