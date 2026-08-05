@@ -31,7 +31,7 @@ type ApiErrorBody = {
   readonly message?: string;
 };
 
-class PaymentsApiError extends Error {
+export class PaymentsApiError extends Error {
   readonly code: string | null;
   readonly status: number;
 
@@ -456,6 +456,51 @@ export type RecordDelegationRequest = DelegationTypedDataRequest & {
 export async function recordDelegation(orgId: string, body: RecordDelegationRequest): Promise<unknown> {
   return apiFetch(`/v1/orgs/${orgId}/payments/delegations`, {
     method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+// The treasury pays, so there is nothing for a wallet to sign: no payer
+// address, no signature, no nonce. That absence is the whole point.
+export type TreasuryDelegationRequest = {
+  readonly chain: PaymentChain;
+  readonly ceiling_usdc: string;
+  readonly expires_at: string;
+  readonly payee_agent_id?: string;
+  readonly payee_address?: string;
+};
+
+export async function createTreasuryDelegation(
+  orgId: string,
+  body: TreasuryDelegationRequest,
+): Promise<unknown> {
+  return apiFetch(`/v1/orgs/${orgId}/payments/delegations/treasury`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export type OrgCeilingRecord = {
+  readonly chain: string;
+  readonly treasury_address: string | null;
+  // null when the org has never set one: bounded only by treasury solvency.
+  readonly ceiling_usdc: string | null;
+  readonly outstanding_usdc: string;
+};
+
+export async function listOrgCeilings(orgId: string): Promise<readonly OrgCeilingRecord[]> {
+  const body = await apiFetch<{ readonly ceilings: readonly OrgCeilingRecord[] }>(
+    `/v1/orgs/${orgId}/payments/delegations/ceiling`,
+  );
+  return body.ceilings;
+}
+
+export async function setOrgCeiling(
+  orgId: string,
+  body: { readonly chain: PaymentChain; readonly ceiling_usdc: string },
+): Promise<unknown> {
+  return apiFetch(`/v1/orgs/${orgId}/payments/delegations/ceiling`, {
+    method: 'PUT',
     body: JSON.stringify(body),
   });
 }

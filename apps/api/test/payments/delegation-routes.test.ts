@@ -274,7 +274,7 @@ describe('user-owned wallet delegation routes', () => {
     // the nonce, which overflows the bigint permit_nonce column.
     vi.stubEnv('ARC_RPC_URL', 'https://rpc.testnet.arc.network');
     const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation((_url, init) => {
-      const method = JSON.parse(String((init as { body?: unknown }).body)).method as string;
+      const { method } = JSON.parse(String((init as { body?: unknown }).body)) as { method: string };
       const result = method === 'eth_getBalance'
         ? `0x${(1_000n * 10n ** 18n).toString(16)}`
         // amount (uint160), expiration (uint48), nonce (uint48) -- nonce 0.

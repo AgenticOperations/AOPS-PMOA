@@ -54,8 +54,8 @@ export function FundingHierarchy({ treasuryWallets, agentWallets }: Props) {
         <header className="mb-3">
           <h2 className="font-medium">1 · Org treasury</h2>
           <p className="text-sm text-muted-foreground">
-            Send test USDC here to fund the fleet. One address, shared across chains — send on
-            whichever chain your agents operate on.
+            Send test USDC here to fund the fleet. Each chain has its OWN treasury address — they
+            are created independently, so send to the row for the chain your agents operate on.
           </p>
         </header>
         {fundedChains.length === 0 ? (
@@ -86,8 +86,9 @@ export function FundingHierarchy({ treasuryWallets, agentWallets }: Props) {
         <header className="mb-3">
           <h2 className="font-medium">2 · Agent wallets</h2>
           <p className="text-sm text-muted-foreground">
-            Topped up from the treasury against each agent&apos;s allocation. This is the balance an
-            agent actually spends from.
+            Topped up from the treasury against each agent&apos;s delegation ceiling. This is the
+            balance an agent actually spends from. Unlike the treasury, an agent keeps one address
+            shared across chains.
           </p>
         </header>
         {agentWallets.length === 0 ? (
