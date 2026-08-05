@@ -5,9 +5,12 @@ import { prefixedId } from '../identity/ids.js';
 import { chainRpcUrl, findAgentWallet } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import {
+  ESCROW_COMPLETE_SIGNATURE,
   ESCROW_CREATE_JOB_SIGNATURE,
   ESCROW_FUND_SIGNATURE,
+  ESCROW_REJECT_SIGNATURE,
   ESCROW_SET_BUDGET_SIGNATURE,
+  ESCROW_SUBMIT_SIGNATURE,
   escrowAddressFor,
   escrowTokenAddressFor,
   parseJobCreated,
@@ -50,6 +53,12 @@ const NO_PROVIDER_AGENT_ID = '0';
 // No hook parameters. Every ERC-8183 call that takes `optParams` forwards it
 // to the job's hook, and jobs here are created with no hook at all.
 const NO_HOOK_PARAMS = '0x';
+
+// The zero bytes32. submit() carries a `deliverable` and complete()/reject()
+// a `reason`; the contract only emits either one, nothing on-chain resolves
+// them, and this platform runs no registry that could -- so zero means "none
+// given", the same reasoning as NO_PROVIDER_AGENT_ID.
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}`;
 
 const RECEIPT_MAX_ATTEMPTS = 6;
 const RECEIPT_RETRY_DELAY_MS = 400;
@@ -327,18 +336,19 @@ export async function createEscrowJob(
 }
 
 /**
- * The provider's wallet, when the provider is one of this org's own agents.
+ * The address, when it belongs to one of this org's own agents.
  *
- * ERC-8183 lets ONLY `job.provider` call setBudget, so this decides whether
- * the platform can set the budget itself or must leave it to an outside
- * party. Scoped by org: two orgs may legitimately transact with the same
- * address, and an unscoped lookup would let one act as the other's provider.
+ * ERC-8183 restricts every call to a named party -- only `job.provider` may
+ * setBudget or submit, only `job.evaluator` may complete or reject -- so this
+ * decides whether the platform holds the key that call needs or must leave it
+ * to an outside party. Scoped by org: two orgs may legitimately transact with
+ * the same address, and an unscoped lookup would let one act as the other.
  */
-async function fleetProviderWalletAddress(
+async function fleetWalletAddress(
   db: pg.PoolClient,
   input: {
     readonly orgId: string;
-    readonly providerAddress: string;
+    readonly address: string;
     readonly mode: PaymentMode;
     readonly chain: PaymentChain;
   },
@@ -347,7 +357,7 @@ async function fleetProviderWalletAddress(
     `SELECT address FROM agent_chain_wallets
       WHERE org_id = $1 AND lower(address) = lower($2) AND mode = $3 AND chain = $4 AND status = 'active'
       LIMIT 1`,
-    [input.orgId, input.providerAddress, input.mode, input.chain],
+    [input.orgId, input.address, input.mode, input.chain],
   );
   return result.rows[0]?.address ?? null;
 }
@@ -461,9 +471,9 @@ export async function fundEscrowJob(
     // budget out of band -- and that is precisely the case the guarded fund()
     // below exists for: if what the provider set differs from what we quoted,
     // expectedBudget makes the transaction revert rather than overpay.
-    const providerWallet = await fleetProviderWalletAddress(client, {
+    const providerWallet = await fleetWalletAddress(client, {
       orgId: job.org_id,
-      providerAddress: job.provider_address,
+      address: job.provider_address,
       mode: job.mode,
       chain: job.chain,
     });
@@ -517,6 +527,186 @@ export async function fundEscrowJob(
     );
     const row = updated.rows[0];
     if (row === undefined) throw new Error('escrow_job_update_failed');
+    return escrowJobFromRow(row);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle transitions
+// ---------------------------------------------------------------------------
+
+/**
+ * The ERC-8183 lifecycle this function may drive.
+ *
+ * `open -> funded` is deliberately absent: funding is not a state write but an
+ * approve-then-fund orchestration, and fundEscrowJob owns it. Everything not
+ * listed is refused -- the chain would revert it, and a local row the chain
+ * does not agree with is worse than an error.
+ */
+const ESCROW_TRANSITIONS: Partial<Record<EscrowState, readonly EscrowState[]>> = {
+  funded: ['submitted'],
+  submitted: ['completed', 'rejected', 'expired'],
+};
+
+function assertEscrowTransition(job: EscrowJobRow, next: EscrowState): void {
+  if ((ESCROW_TRANSITIONS[job.state] ?? []).includes(next)) return;
+  throw conflict(
+    'escrow_invalid_transition',
+    `escrow_invalid_transition: escrow job is ${job.state}, and ${next} is not reachable from there.`
+    + (next === 'funded' ? ' Funding is an approve-then-fund orchestration -- use fundEscrowJob.' : ''),
+  );
+}
+
+/**
+ * Drives the `payment_reservations` row this job's budget is held against.
+ *
+ * Escrow keeps no ledger of its own: `completed` settles the reservation,
+ * `rejected` and `expired` release it. Always called inside the SAME
+ * transaction as the state write, so the books and the mirror can never
+ * disagree. Guarded on 'reserved' so a second pass over the same job -- a
+ * reconcile after a local transition, say -- cannot flip an already-settled
+ * reservation into released.
+ */
+async function applyReservationOutcome(
+  db: pg.PoolClient,
+  job: EscrowJobRow,
+  next: EscrowState,
+): Promise<void> {
+  if (job.reservation_id === null) return;
+  if (next !== 'completed' && next !== 'rejected' && next !== 'expired') return;
+  await db.query(
+    `UPDATE payment_reservations
+        SET status = $3, updated_at = now()
+      WHERE id = $1 AND org_id = $2 AND status = 'reserved'`,
+    [job.reservation_id, job.org_id, next === 'completed' ? 'settled' : 'released'],
+  );
+}
+
+/**
+ * Sends the transition's on-chain call and returns its hash, or null when
+ * this platform is not the party that makes it.
+ */
+async function sendEscrowTransition(
+  db: pg.PoolClient,
+  provider: CircleTreasuryProvider,
+  job: EscrowJobRow,
+  onchainJobId: string,
+  input: ApplyEscrowStateChangeInput,
+): Promise<string | null> {
+  if (input.next === 'expired') {
+    // The chain expires a job through claimRefund, which anyone may call once
+    // the evaluation grace period is up. Automating that is out of scope for
+    // this piece, so expiry is RECORDED here rather than caused -- and it is
+    // recorded as its own state, never folded into `rejected`.
+    return null;
+  }
+
+  if (input.next === 'submitted') {
+    // ERC-8183 lets ONLY job.provider submit. When the provider is an outside
+    // party we hold no key for, it submits out of band and this call is just
+    // the mirror catching up -- exactly as setBudget is handled in funding.
+    const providerWallet = await fleetWalletAddress(db, {
+      orgId: job.org_id, address: job.provider_address, mode: job.mode, chain: job.chain,
+    });
+    if (providerWallet === null) return null;
+    const sent = await provider.executePermit2Transaction({
+      mode: job.mode,
+      chain: job.chain,
+      senderAddress: providerWallet,
+      abiFunctionSignature: ESCROW_SUBMIT_SIGNATURE,
+      abiParameters: [onchainJobId, input.deliverableHash ?? ZERO_BYTES32, NO_HOOK_PARAMS],
+      contractAddress: job.escrow_address,
+      // Kept short -- see permit2.ts's note on refId length.
+      refId: `agentops-escrow-submit-${crypto.randomUUID()}`,
+    });
+    return sent.txHash;
+  }
+
+  // complete() and reject() are the EVALUATOR's calls and no one else's.
+  // Scoped by org, so one org's job can never be resolved with another's key.
+  const evaluatorWallet = await fleetWalletAddress(db, {
+    orgId: job.org_id, address: job.evaluator_address, mode: job.mode, chain: job.chain,
+  });
+  if (evaluatorWallet === null) {
+    // An outside evaluator resolves the job itself. Writing the outcome anyway
+    // would claim a result the chain never recorded; reconciling against the
+    // chain is the only honest way to learn what it decided.
+    throw conflict(
+      'escrow_evaluator_wallet_not_held',
+      `escrow_evaluator_wallet_not_held: only ${job.evaluator_address} may ${input.next === 'completed' ? 'complete' : 'reject'} `
+      + 'this job, and this org holds no key for it. Reconcile against the chain instead.',
+    );
+  }
+  const sent = await provider.executePermit2Transaction({
+    mode: job.mode,
+    chain: job.chain,
+    senderAddress: evaluatorWallet,
+    abiFunctionSignature: input.next === 'completed' ? ESCROW_COMPLETE_SIGNATURE : ESCROW_REJECT_SIGNATURE,
+    abiParameters: [onchainJobId, ZERO_BYTES32, NO_HOOK_PARAMS],
+    contractAddress: job.escrow_address,
+    refId: `agentops-escrow-${input.next === 'completed' ? 'complete' : 'reject'}-${crypto.randomUUID()}`,
+  });
+  return sent.txHash;
+}
+
+export type ApplyEscrowStateChangeInput = {
+  readonly escrowJobId: string;
+  readonly next: EscrowState;
+  // The bytes32 a submit() carries. Opaque to this engine: recorded on the row
+  // and handed to the contract, never interpreted.
+  readonly deliverableHash?: string | undefined;
+};
+
+/**
+ * Moves an escrow job along the ERC-8183 lifecycle and moves the money with
+ * it.
+ *
+ * The on-chain call and the reservation outcome land in ONE database
+ * transaction. A reservation settled without its complete(), or a complete()
+ * whose settle was lost, is exactly the disagreement this engine exists to
+ * prevent -- so either both happen or neither does.
+ *
+ * `expired` is recorded as its own state even though the contract refunds it
+ * identically to `rejected`. "Delivered but never evaluated" is a different
+ * failure from "rejected", and our evidence has to tell them apart when the
+ * chain cannot.
+ */
+export async function applyEscrowStateChange(
+  pool: pg.Pool,
+  provider: CircleTreasuryProvider,
+  input: ApplyEscrowStateChangeInput,
+): Promise<EscrowJob> {
+  return withTransaction(pool, async (client) => {
+    const locked = await client.query<EscrowJobRow>(
+      'SELECT * FROM escrow_jobs WHERE id = $1 FOR UPDATE',
+      [input.escrowJobId],
+    );
+    const job = locked.rows[0];
+    if (job === undefined) throw new Error('escrow_job_not_found');
+    // Validated before anything is sent: an impossible transition must never
+    // cost gas to discover.
+    assertEscrowTransition(job, input.next);
+    if (job.onchain_job_id === null) throw new Error(`escrow_onchain_job_id_missing:${job.id}`);
+
+    const txHash = await sendEscrowTransition(client, provider, job, job.onchain_job_id, input);
+
+    const updated = await client.query<EscrowJobRow>(
+      `UPDATE escrow_jobs
+          SET state = $2,
+              deliverable_hash = COALESCE($4, deliverable_hash),
+              submit_tx_hash = CASE WHEN $2::text = 'submitted'
+                THEN COALESCE($3, submit_tx_hash) ELSE submit_tx_hash END,
+              terminal_tx_hash = CASE WHEN $2::text = 'submitted'
+                THEN terminal_tx_hash ELSE COALESCE($3, terminal_tx_hash) END,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [job.id, input.next, txHash, input.deliverableHash ?? null],
+    );
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('escrow_job_update_failed');
+
+    await applyReservationOutcome(client, job, input.next);
     return escrowJobFromRow(row);
   });
 }

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
 import type { EscrowReceiptLog } from '../../src/engines/payments/escrow-contract.js';
-import { createEscrowJob, fundEscrowJob } from '../../src/engines/payments/escrow.js';
+import { applyEscrowStateChange, createEscrowJob, fundEscrowJob } from '../../src/engines/payments/escrow.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 const ESCROW_ADDRESS = '0x31C050d9D20504c4E11b2A894051d8181B14e0F5';
@@ -30,6 +30,9 @@ function jobCreatedLog(jobId: bigint, address = ESCROW_ADDRESS): EscrowReceiptLo
     data: `0x${word('0x3333333333333333333333333333333333333333')}${word('68e7f100')}${word('0')}`,
   };
 }
+
+/** The bytes32 a submit() carries. Opaque to the engine; only recorded. */
+const DELIVERABLE_HASH = `0x${'ab'.repeat(32)}`;
 
 /** Every executePermit2Transaction call, tagged with the function it sent. */
 function recordingExecutor() {
@@ -424,5 +427,154 @@ describe('escrow lifecycle engine', () => {
       'SELECT count(*) FROM payment_reservations WHERE reason_code = $1', [`escrow_job:${job.id}`],
     );
     expect(Number(reservations.rows[0]?.count)).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------
+  // Lifecycle transitions
+  // ---------------------------------------------------------------------
+
+  async function reservationStatus(reservationId: string | null): Promise<string | undefined> {
+    const res = await store.pool.query<{ status: string }>(
+      'SELECT status FROM payment_reservations WHERE id = $1', [reservationId],
+    );
+    return res.rows[0]?.status;
+  }
+
+  async function escrowStateOf(escrowJobId: string): Promise<string | undefined> {
+    const row = await store.pool.query<{ state: string }>(
+      'SELECT state FROM escrow_jobs WHERE id = $1', [escrowJobId],
+    );
+    return row.rows[0]?.state;
+  }
+
+  /** Drives one org's fixture through create -> fund, so several jobs can share an org. */
+  async function fundJobFor(fixture: EscrowFixture, overrides: Record<string, unknown> = {}) {
+    const job = await createEscrowJob(store.pool, fakeProvider(), createInput(fixture, overrides));
+    return fundEscrowJob(store.pool, fakeProvider(), { escrowJobId: job.id });
+  }
+
+  /** ...and on to submitted. The provider must be in fleet for submit() to be sent. */
+  async function submitJobFor(fixture: EscrowFixture, overrides: Record<string, unknown> = {}) {
+    const funded = await fundJobFor(fixture, overrides);
+    return applyEscrowStateChange(store.pool, fakeProvider(), {
+      escrowJobId: funded.id, next: 'submitted', deliverableHash: DELIVERABLE_HASH,
+    });
+  }
+
+  async function fundedJob(suffix: string, options: { readonly providerInFleet?: boolean } = {}) {
+    const fixture = await seedEscrowOrg(suffix, options);
+    return { fixture, job: await fundJobFor(fixture) };
+  }
+
+  async function submittedJob(suffix: string, overrides: Record<string, unknown> = {}) {
+    const fixture = await seedEscrowOrg(suffix, { providerInFleet: true });
+    return { fixture, job: await submitJobFor(fixture, overrides) };
+  }
+
+  it('records the submission and the deliverable it was made against', async () => {
+    const { fixture, job } = await fundedJob('submitstep', { providerInFleet: true });
+    const executePermit2Transaction = recordingExecutor();
+    const submitted = await applyEscrowStateChange(
+      store.pool,
+      fakeProvider({ executePermit2Transaction }),
+      { escrowJobId: job.id, next: 'submitted', deliverableHash: DELIVERABLE_HASH },
+    );
+
+    expect(submitted.state).toBe('submitted');
+    expect(submitted.submitTxHash).toBe('0xsubmittx');
+    expect(submitted.deliverableHash).toBe(DELIVERABLE_HASH);
+    // Submitting does not resolve the money -- the reservation stays held.
+    expect(await reservationStatus(job.reservationId)).toBe('reserved');
+
+    const call = callsOf(executePermit2Transaction)[0];
+    expect(call?.abiFunctionSignature).toBe('submit(uint256,bytes32,bytes)');
+    // ERC-8183 lets ONLY job.provider submit.
+    expect(call?.senderAddress).toBe(fixture.providerAddress);
+    expect(call?.abiParameters[0]).toBe(job.onchainJobId);
+    expect(call?.abiParameters[1]).toBe(DELIVERABLE_HASH);
+  });
+
+  it('settles the reservation on complete', async () => {
+    const { fixture, job } = await submittedJob('complete');
+    const executePermit2Transaction = recordingExecutor();
+    const completed = await applyEscrowStateChange(
+      store.pool,
+      fakeProvider({ executePermit2Transaction }),
+      { escrowJobId: job.id, next: 'completed' },
+    );
+
+    expect(completed.state).toBe('completed');
+    expect(completed.terminalTxHash).toBe('0xcompletetx');
+    expect(await reservationStatus(job.reservationId)).toBe('settled');
+
+    const call = callsOf(executePermit2Transaction)[0];
+    expect(call?.abiFunctionSignature).toBe('complete(uint256,bytes32,bytes)');
+    // ERC-8183 lets ONLY job.evaluator complete. This is a mode-2 job, so the
+    // evaluator IS the client -- self-evaluated, not neutral arbitration.
+    expect(call?.senderAddress).toBe(fixture.clientAddress);
+  });
+
+  it('releases the reservation on reject', async () => {
+    const { job } = await submittedJob('reject');
+    const executePermit2Transaction = recordingExecutor();
+    const rejected = await applyEscrowStateChange(
+      store.pool,
+      fakeProvider({ executePermit2Transaction }),
+      { escrowJobId: job.id, next: 'rejected' },
+    );
+
+    expect(rejected.state).toBe('rejected');
+    expect(rejected.terminalTxHash).toBe('0xrejecttx');
+    expect(await reservationStatus(job.reservationId)).toBe('released');
+    expect(callsOf(executePermit2Transaction)[0]?.abiFunctionSignature).toBe('reject(uint256,bytes32,bytes)');
+  });
+
+  it('releases on expiry but records it distinctly from reject', async () => {
+    const { job } = await submittedJob('expire');
+    const executePermit2Transaction = recordingExecutor();
+    await applyEscrowStateChange(
+      store.pool,
+      fakeProvider({ executePermit2Transaction }),
+      { escrowJobId: job.id, next: 'expired' },
+    );
+
+    expect(await reservationStatus(job.reservationId)).toBe('released');
+    // The contract refunds identically, but our evidence must distinguish
+    // "delivered but unevaluated" from "failed".
+    expect(await escrowStateOf(job.id)).toBe('expired');
+    // claimRefund automation is out of scope: expiry is recorded, not sent.
+    expect(executePermit2Transaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses transitions that the lifecycle does not allow', async () => {
+    // open -> completed skips funding entirely; the chain would reject it and
+    // so must we, rather than writing a state the chain does not agree with.
+    const { job } = await openJob('badtransition');
+    const executePermit2Transaction = recordingExecutor();
+    await expect(
+      applyEscrowStateChange(store.pool, fakeProvider({ executePermit2Transaction }), {
+        escrowJobId: job.id, next: 'completed',
+      }),
+    ).rejects.toThrow(/escrow_invalid_transition/);
+    expect(executePermit2Transaction).not.toHaveBeenCalled();
+    expect(await escrowStateOf(job.id)).toBe('open');
+  });
+
+  it('refuses to complete a job whose evaluator key we do not hold', async () => {
+    // A mode-3 job evaluated by an outside address. We cannot send complete()
+    // as them, and writing `completed` anyway would claim an outcome the chain
+    // never recorded. Reconciliation is the only honest path for those.
+    const fixture = await seedEscrowOrg('outsideeval', { providerInFleet: true });
+    const job = await submitJobFor(fixture, { evaluatorAddress: hexAddress('e7a1', 'outsideeval') });
+    const executePermit2Transaction = recordingExecutor();
+
+    await expect(
+      applyEscrowStateChange(store.pool, fakeProvider({ executePermit2Transaction }), {
+        escrowJobId: job.id, next: 'completed',
+      }),
+    ).rejects.toThrow(/escrow_evaluator_wallet_not_held/);
+    expect(executePermit2Transaction).not.toHaveBeenCalled();
+    expect(await escrowStateOf(job.id)).toBe('submitted');
+    expect(await reservationStatus(job.reservationId)).toBe('reserved');
   });
 });
