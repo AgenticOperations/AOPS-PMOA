@@ -1,10 +1,13 @@
+import { createHash } from 'node:crypto';
 import type pg from 'pg';
-import { badRequest } from '../identity/errors.js';
+import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import { chainRpcUrl, findAgentWallet } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import {
   ESCROW_CREATE_JOB_SIGNATURE,
+  ESCROW_FUND_SIGNATURE,
+  ESCROW_SET_BUDGET_SIGNATURE,
   escrowAddressFor,
   escrowTokenAddressFor,
   parseJobCreated,
@@ -43,6 +46,10 @@ const NO_HOOK = '0x0000000000000000000000000000000000000000';
 // ERC-8004 provider agent id. This platform runs no ERC-8004 registry, so
 // there is no honest id to supply and 0 means "unregistered" on-chain.
 const NO_PROVIDER_AGENT_ID = '0';
+
+// No hook parameters. Every ERC-8183 call that takes `optParams` forwards it
+// to the job's hook, and jobs here are created with no hook at all.
+const NO_HOOK_PARAMS = '0x';
 
 const RECEIPT_MAX_ATTEMPTS = 6;
 const RECEIPT_RETRY_DELAY_MS = 400;
@@ -315,6 +322,201 @@ export async function createEscrowJob(
     );
     const row = inserted.rows[0];
     if (row === undefined) throw new Error('escrow_job_insert_failed');
+    return escrowJobFromRow(row);
+  });
+}
+
+/**
+ * The provider's wallet, when the provider is one of this org's own agents.
+ *
+ * ERC-8183 lets ONLY `job.provider` call setBudget, so this decides whether
+ * the platform can set the budget itself or must leave it to an outside
+ * party. Scoped by org: two orgs may legitimately transact with the same
+ * address, and an unscoped lookup would let one act as the other's provider.
+ */
+async function fleetProviderWalletAddress(
+  db: pg.PoolClient,
+  input: {
+    readonly orgId: string;
+    readonly providerAddress: string;
+    readonly mode: PaymentMode;
+    readonly chain: PaymentChain;
+  },
+): Promise<string | null> {
+  const result = await db.query<{ address: string }>(
+    `SELECT address FROM agent_chain_wallets
+      WHERE org_id = $1 AND lower(address) = lower($2) AND mode = $3 AND chain = $4 AND status = 'active'
+      LIMIT 1`,
+    [input.orgId, input.providerAddress, input.mode, input.chain],
+  );
+  return result.rows[0]?.address ?? null;
+}
+
+/**
+ * Creates the `payment_reservations` row that holds this budget against the
+ * org's books while the escrow does.
+ *
+ * Escrow deliberately drives the EXISTING reservation lifecycle rather than a
+ * parallel one -- `completed` later settles it, `rejected`/`expired` release
+ * it -- so escrowed money shows up in the same accounting as every other
+ * payment instead of hiding in a second ledger.
+ */
+async function reserveEscrowBudget(
+  db: pg.PoolClient,
+  job: EscrowJobRow,
+): Promise<string> {
+  const source = await db.query<{ id: string; rail: string }>(
+    `SELECT id, rail FROM payment_sources
+      WHERE org_id = $1 AND chain = $2 AND status = 'active'
+      ORDER BY rail ASC, created_at DESC
+      LIMIT 1`,
+    [job.org_id, job.chain],
+  );
+  const sourceRow = source.rows[0];
+  if (sourceRow === undefined) throw new Error(`escrow_payment_source_not_found:${job.chain}`);
+
+  const quote = {
+    escrowJobId: job.id,
+    chain: job.chain,
+    escrowAddress: job.escrow_address,
+    tokenAddress: job.token_address,
+    onchainJobId: job.onchain_job_id,
+    budgetUsdc: job.budget_usdc,
+    providerAddress: job.provider_address,
+    evaluatorAddress: job.evaluator_address,
+    escrowMode: job.escrow_mode,
+  };
+  const quoteJson = JSON.stringify(quote);
+  const reservationId = prefixedId('payres');
+
+  await db.query(
+    `INSERT INTO payment_reservations (
+       id, org_id, agent_id, source_id, amount_usdc, rail, status,
+       reason_code, quote_hash, quote, expires_at
+     )
+     VALUES ($1, $2, $3, $4, $5::numeric, $6, 'reserved', $7, $8, $9::jsonb, $10)`,
+    [
+      reservationId, job.org_id, job.client_agent_id, sourceRow.id, job.budget_usdc, sourceRow.rail,
+      // Same shape as the existing 'x402_attempt:<id>' reason codes, so a
+      // reservation can always be traced back to what created it.
+      `escrow_job:${job.id}`,
+      createHash('sha256').update(quoteJson).digest('hex'),
+      quoteJson,
+      // The escrow's own deadline. After it, the money is refundable and
+      // holding it reserved would misstate the org's headroom.
+      job.expires_at,
+    ],
+  );
+  return reservationId;
+}
+
+export type FundEscrowJobInput = {
+  readonly escrowJobId: string;
+};
+
+/**
+ * Funds an open escrow job and reserves the budget against the org's books.
+ *
+ * THE EXACT-APPROVAL RULE. The token allowance is set to the budget and
+ * nothing more -- never a margin, never max. An earlier overcharge was only
+ * possible because a client approved MORE than it had been quoted, which let
+ * a front-run raise the budget and take the difference. Combined with the
+ * guarded fund(), which reverts on BudgetMismatch/PaymentTokenMismatch, a
+ * raised budget now has no allowance to draw on and the transaction reverts
+ * instead of overpaying. Both defences, not either.
+ *
+ * The row is locked FOR UPDATE so two concurrent funds serialise and the
+ * second one sees `funded` rather than approving a second budget.
+ */
+export async function fundEscrowJob(
+  pool: pg.Pool,
+  provider: CircleTreasuryProvider,
+  input: FundEscrowJobInput,
+): Promise<EscrowJob> {
+  return withTransaction(pool, async (client) => {
+    const locked = await client.query<EscrowJobRow>(
+      'SELECT * FROM escrow_jobs WHERE id = $1 FOR UPDATE',
+      [input.escrowJobId],
+    );
+    const job = locked.rows[0];
+    if (job === undefined) throw new Error('escrow_job_not_found');
+    if (job.state !== 'open') {
+      // The chain would revert this with WrongStatus. Refusing here keeps us
+      // from spending gas to learn what the local mirror already knows.
+      throw conflict(
+        'escrow_invalid_transition',
+        `escrow_invalid_transition: escrow job is ${job.state}, and only an open job can be funded.`,
+      );
+    }
+    if (job.onchain_job_id === null) {
+      throw new Error(`escrow_onchain_job_id_missing:${job.id}`);
+    }
+
+    const budgetMicros = escrowBudgetMicros(job.budget_usdc);
+    const clientAddress = await clientWalletAddress(client, job.client_agent_id, job.mode, job.chain);
+
+    // ERC-8183 requires job.budget to be set before fund(), and only the
+    // PROVIDER may set it. When the provider is one of our own agents we hold
+    // that key and set it ourselves. When it is not, the provider sets its own
+    // budget out of band -- and that is precisely the case the guarded fund()
+    // below exists for: if what the provider set differs from what we quoted,
+    // expectedBudget makes the transaction revert rather than overpay.
+    const providerWallet = await fleetProviderWalletAddress(client, {
+      orgId: job.org_id,
+      providerAddress: job.provider_address,
+      mode: job.mode,
+      chain: job.chain,
+    });
+    if (providerWallet !== null) {
+      await provider.executePermit2Transaction({
+        mode: job.mode,
+        chain: job.chain,
+        senderAddress: providerWallet,
+        abiFunctionSignature: ESCROW_SET_BUDGET_SIGNATURE,
+        abiParameters: [job.onchain_job_id, job.token_address, budgetMicros.toString(), NO_HOOK_PARAMS],
+        contractAddress: job.escrow_address,
+        // Kept short -- see permit2.ts's note on refId length.
+        refId: `agentops-escrow-budget-${crypto.randomUUID()}`,
+      });
+    }
+
+    // fund() pulls the budget through the token's own transferFrom, so the
+    // approve MUST land first or it reverts with TRANSFER_FROM_FAILED.
+    // Targets the TOKEN and names the ESCROW as spender.
+    await provider.executePermit2Transaction({
+      mode: job.mode,
+      chain: job.chain,
+      senderAddress: clientAddress,
+      abiFunctionSignature: 'approve(address,uint256)',
+      abiParameters: [job.escrow_address, budgetMicros.toString()],
+      contractAddress: job.token_address,
+      refId: `agentops-escrow-approve-${crypto.randomUUID()}`,
+    });
+
+    // The GUARDED overload, always. expectedToken and expectedBudget are what
+    // make a front-run revert instead of succeed; the stale two-argument
+    // overload names neither and must never be used.
+    const funded = await provider.executePermit2Transaction({
+      mode: job.mode,
+      chain: job.chain,
+      senderAddress: clientAddress,
+      abiFunctionSignature: ESCROW_FUND_SIGNATURE,
+      abiParameters: [job.onchain_job_id, job.token_address, budgetMicros.toString(), NO_HOOK_PARAMS],
+      contractAddress: job.escrow_address,
+      refId: `agentops-escrow-fund-${crypto.randomUUID()}`,
+    });
+
+    const reservationId = await reserveEscrowBudget(client, job);
+
+    const updated = await client.query<EscrowJobRow>(
+      `UPDATE escrow_jobs
+          SET state = 'funded', fund_tx_hash = $2, reservation_id = $3, updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [job.id, funded.txHash, reservationId],
+    );
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('escrow_job_update_failed');
     return escrowJobFromRow(row);
   });
 }

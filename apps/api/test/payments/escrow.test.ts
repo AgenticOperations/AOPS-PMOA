@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
 import type { EscrowReceiptLog } from '../../src/engines/payments/escrow-contract.js';
-import { createEscrowJob } from '../../src/engines/payments/escrow.js';
+import { createEscrowJob, fundEscrowJob } from '../../src/engines/payments/escrow.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
 const ESCROW_ADDRESS = '0x31C050d9D20504c4E11b2A894051d8181B14e0F5';
@@ -261,5 +261,168 @@ describe('escrow lifecycle engine', () => {
     const fixture = await seedEscrowOrg('token');
     const job = await createEscrowJob(store.pool, fakeProvider(), createInput(fixture));
     expect(job.tokenAddress).toBe(ARC_USDC);
+  });
+
+  // ---------------------------------------------------------------------
+  // Funding
+  // ---------------------------------------------------------------------
+
+  /**
+   * An open job on Arc with a 0.02 USDC budget -- 20000 in the token's own
+   * 6-decimal base units, which is the exact number every funding assertion
+   * below turns on. Created through the engine, so the row under test is a
+   * real one rather than a hand-written fixture.
+   */
+  async function openJob(suffix: string, options: { readonly providerInFleet?: boolean } = {}) {
+    const fixture = await seedEscrowOrg(suffix, options);
+    const job = await createEscrowJob(store.pool, fakeProvider(), createInput(fixture));
+    return { fixture, job };
+  }
+
+  type ExecuteCall = {
+    readonly abiFunctionSignature: string;
+    readonly abiParameters: readonly unknown[];
+    readonly contractAddress?: string;
+    readonly senderAddress: string;
+  };
+
+  function callsOf(executor: ReturnType<typeof recordingExecutor>): readonly ExecuteCall[] {
+    return (executor.mock.calls as unknown[][]).map(([arg]) => arg as ExecuteCall);
+  }
+
+  it('approves the EXACT budget, never a margin', async () => {
+    const { job } = await openJob('approve');
+    const executePermit2Transaction = recordingExecutor();
+    await fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id });
+
+    const approve = callsOf(executePermit2Transaction)
+      .find((call) => call.abiFunctionSignature.startsWith('approve'));
+    // An earlier overcharge was only possible because the client approved
+    // MORE than it was quoted. Exact approval makes a front-run revert.
+    expect(approve?.abiParameters[1]).toBe('20000');
+    // Spent by the ESCROW, on the TOKEN -- approving the token contract
+    // itself would be a no-op the guard could never catch.
+    expect(approve?.abiParameters[0]).toBe(ESCROW_ADDRESS);
+    expect(approve?.contractAddress).toBe(ARC_USDC);
+  });
+
+  it('always funds through the guarded signature', async () => {
+    const { job } = await openJob('guarded');
+    const executePermit2Transaction = recordingExecutor();
+    await fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id });
+
+    const fund = callsOf(executePermit2Transaction).find((call) => call.abiFunctionSignature.startsWith('fund'));
+    expect(fund?.abiFunctionSignature).toBe('fund(uint256,address,uint256,bytes)');
+    // expectedToken and expectedBudget are the guard. Both must be passed,
+    // and expectedBudget must equal the quoted budget exactly.
+    expect(fund?.abiParameters[0]).toBe(job.onchainJobId);
+    expect(fund?.abiParameters[1]).toBe(ARC_USDC);
+    expect(fund?.abiParameters[2]).toBe('20000');
+    expect(fund?.contractAddress).toBe(ESCROW_ADDRESS);
+  });
+
+  it('approves before it funds', async () => {
+    // fund() pulls through the token's own transferFrom, so an approve that
+    // lands after it reverts with TRANSFER_FROM_FAILED.
+    const { job } = await openJob('order');
+    const executePermit2Transaction = recordingExecutor();
+    await fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id });
+
+    const signatures = callsOf(executePermit2Transaction).map((call) => call.abiFunctionSignature.split('(')[0]);
+    expect(signatures.indexOf('approve')).toBeLessThan(signatures.indexOf('fund'));
+  });
+
+  it('reserves against the payment reservation when funded', async () => {
+    const { fixture, job } = await openJob('reserve');
+    const funded = await fundEscrowJob(store.pool, fakeProvider(), { escrowJobId: job.id });
+
+    expect(funded.state).toBe('funded');
+    expect(funded.fundTxHash).toBe('0xfundtx');
+    expect(funded.reservationId).not.toBeNull();
+
+    const res = await store.pool.query<{
+      status: string; amount_usdc: string; agent_id: string; source_id: string; reason_code: string;
+    }>(
+      'SELECT status, amount_usdc, agent_id, source_id, reason_code FROM payment_reservations WHERE id = $1',
+      [funded.reservationId],
+    );
+    expect(res.rows[0]?.status).toBe('reserved');
+    expect(Number(res.rows[0]?.amount_usdc)).toBe(0.02);
+    expect(res.rows[0]?.agent_id).toBe(fixture.clientAgentId);
+    expect(res.rows[0]?.source_id).toBe(fixture.sourceId);
+    // Mirrors the 'x402_attempt:<id>' convention already in payment_reservations.
+    expect(res.rows[0]?.reason_code).toBe(`escrow_job:${job.id}`);
+  });
+
+  it('refuses to fund a job that is not open', async () => {
+    const { job } = await openJob('double');
+    await fundEscrowJob(store.pool, fakeProvider(), { escrowJobId: job.id });
+
+    // The chain would revert this with WrongStatus, and so must we rather
+    // than approving a second budget against an already-funded job.
+    const executePermit2Transaction = recordingExecutor();
+    await expect(
+      fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id }),
+    ).rejects.toThrow(/escrow_invalid_transition/);
+    expect(executePermit2Transaction).not.toHaveBeenCalled();
+
+    const rows = await store.pool.query<{ count: string }>(
+      'SELECT count(*) FROM payment_reservations WHERE reason_code = $1', [`escrow_job:${job.id}`],
+    );
+    expect(Number(rows.rows[0]?.count)).toBe(1);
+  });
+
+  it('sets the budget from the provider wallet when the provider is one of ours', async () => {
+    // ERC-8183 lets ONLY job.provider call setBudget, and fund() reverts with
+    // BudgetMismatch while job.budget is still 0. When the provider is a
+    // fleet agent we hold the key for, we can set it ourselves.
+    const { fixture, job } = await openJob('setbudget', { providerInFleet: true });
+    const executePermit2Transaction = recordingExecutor();
+    await fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id });
+
+    const calls = callsOf(executePermit2Transaction);
+    const setBudget = calls.find((call) => call.abiFunctionSignature.startsWith('setBudget'));
+    expect(setBudget?.abiFunctionSignature).toBe('setBudget(uint256,address,uint256,bytes)');
+    expect(setBudget?.senderAddress).toBe(fixture.providerAddress);
+    expect(setBudget?.abiParameters[0]).toBe(job.onchainJobId);
+    expect(setBudget?.abiParameters[1]).toBe(ARC_USDC);
+    // The same exact number fund() will then assert against.
+    expect(setBudget?.abiParameters[2]).toBe('20000');
+    const names = calls.map((call) => call.abiFunctionSignature.split('(')[0]);
+    expect(names.indexOf('setBudget')).toBeLessThan(names.indexOf('fund'));
+  });
+
+  it('leaves the budget to an outside provider and lets the guard catch a mismatch', async () => {
+    // The platform holds no key for an off-fleet provider, so it cannot set
+    // the budget -- the provider does, out of band. That is exactly the case
+    // the guarded fund() protects: if the provider set a different budget,
+    // expectedBudget makes the transaction revert instead of overpaying.
+    const { job } = await openJob('outside', { providerInFleet: false });
+    const executePermit2Transaction = recordingExecutor();
+    await fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id });
+
+    const names = callsOf(executePermit2Transaction).map((call) => call.abiFunctionSignature.split('(')[0]);
+    expect(names).toEqual(['approve', 'fund']);
+  });
+
+  it('leaves nothing half-written when the fund call fails', async () => {
+    const { job } = await openJob('fundfail');
+    const executePermit2Transaction = vi.fn((input: { readonly abiFunctionSignature: string }) =>
+      input.abiFunctionSignature.startsWith('fund')
+        ? Promise.reject(new Error('circle_permit2_transaction_failed'))
+        : Promise.resolve({ txHash: '0xapprovetx' }));
+
+    await expect(
+      fundEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), { escrowJobId: job.id }),
+    ).rejects.toThrow('circle_permit2_transaction_failed');
+
+    const row = await store.pool.query<{ state: string; reservation_id: string | null }>(
+      'SELECT state, reservation_id FROM escrow_jobs WHERE id = $1', [job.id],
+    );
+    expect(row.rows[0]).toEqual({ state: 'open', reservation_id: null });
+    const reservations = await store.pool.query<{ count: string }>(
+      'SELECT count(*) FROM payment_reservations WHERE reason_code = $1', [`escrow_job:${job.id}`],
+    );
+    expect(Number(reservations.rows[0]?.count)).toBe(0);
   });
 });
