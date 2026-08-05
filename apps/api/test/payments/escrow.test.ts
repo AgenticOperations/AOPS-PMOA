@@ -7,6 +7,7 @@ import {
   createEscrowJob,
   fundEscrowJob,
   listEscrowLivenessRisks,
+  reconcileEscrowJob,
 } from '../../src/engines/payments/escrow.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
@@ -38,6 +39,42 @@ function jobCreatedLog(jobId: bigint, address = ESCROW_ADDRESS): EscrowReceiptLo
 
 /** The bytes32 a submit() carries. Opaque to the engine; only recorded. */
 const DELIVERABLE_HASH = `0x${'ab'.repeat(32)}`;
+
+// ERC-8183 JobStatus, the enum getJob() returns in the struct's second field.
+const STATUS_SUBMITTED = 2;
+const STATUS_COMPLETED = 3;
+const STATUS_REJECTED = 4;
+
+/**
+ * A real `getJob(uint256)` return payload, encoded by hand rather than
+ * round-tripped through viem, so the decoder is checked against an
+ * independent encoding of the struct's field ORDER -- the one thing a
+ * round-trip could never catch.
+ *
+ * The Job struct holds a dynamic `string description`, so the whole tuple is
+ * encoded dynamically: one head word pointing at the tuple, thirteen field
+ * words, then the string.
+ */
+function getJobReturnData(job: { readonly status: number; readonly budgetMicros: bigint }): string {
+  const words = [
+    word('20'), // offset to the tuple
+    word('0x1111111111111111111111111111111111111111'), // client
+    word(job.status.toString(16)), // status
+    word('0x2222222222222222222222222222222222222222'), // provider
+    word('68e7f100'), // expiredAt
+    word('0x3333333333333333333333333333333333333333'), // evaluator
+    word('0'), // submittedAt
+    word(job.budgetMicros.toString(16)), // budget
+    word('0'), // hook
+    word(ARC_USDC), // paymentToken
+    word('0'), // providerAgentId
+    word('1a0'), // offset to `description`, relative to the tuple (13 words)
+    word('0'), // settledAmount
+    word('0'), // payoutReceiver
+    word('0'), // description length -- empty
+  ];
+  return `0x${words.join('')}`;
+}
 
 /** Every executePermit2Transaction call, tagged with the function it sent. */
 function recordingExecutor() {
@@ -569,6 +606,21 @@ describe('escrow lifecycle engine', () => {
     expect(await escrowStateOf(job.id)).toBe('open');
   });
 
+  it('refuses to record a submission we cannot send', async () => {
+    // An off-fleet provider submits out of band. Writing `submitted` anyway
+    // would put the row a step ahead of the chain on nothing but a guess.
+    const { job } = await fundedJob('outsideprovider', { providerInFleet: false });
+    const executePermit2Transaction = recordingExecutor();
+
+    await expect(
+      applyEscrowStateChange(store.pool, fakeProvider({ executePermit2Transaction }), {
+        escrowJobId: job.id, next: 'submitted', deliverableHash: DELIVERABLE_HASH,
+      }),
+    ).rejects.toThrow(/escrow_provider_wallet_not_held/);
+    expect(executePermit2Transaction).not.toHaveBeenCalled();
+    expect(await escrowStateOf(job.id)).toBe('funded');
+  });
+
   it('refuses to complete a job whose evaluator key we do not hold', async () => {
     // A mode-3 job evaluated by an outside address. We cannot send complete()
     // as them, and writing `completed` anyway would claim an outcome the chain
@@ -615,5 +667,58 @@ describe('escrow lifecycle engine', () => {
 
     const atRisk = await listEscrowLivenessRisks(store.pool, { orgId: mine.orgId, withinHours: 6 });
     expect(atRisk).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------
+  // Reconciliation against the chain
+  // ---------------------------------------------------------------------
+
+  it('corrects the local row from the chain, never the other way round', async () => {
+    // The evaluator rejected out of band. The chain moved; our mirror did not.
+    const { job } = await submittedJob('reconcilestate');
+    const result = await reconcileEscrowJob(store.pool, {
+      escrowJobId: job.id,
+      readJobCallData: () => Promise.resolve(getJobReturnData({ status: STATUS_REJECTED, budgetMicros: 20_000n })),
+    });
+
+    expect(result.job.state).toBe('rejected');
+    expect(await escrowStateOf(job.id)).toBe('rejected');
+    expect(result.drift).toEqual([{ field: 'state', local: 'submitted', onchain: 'rejected' }]);
+  });
+
+  it('drives the reservation the same way a local transition would', async () => {
+    const { job } = await submittedJob('reconcilesettle');
+    await reconcileEscrowJob(store.pool, {
+      escrowJobId: job.id,
+      readJobCallData: () => Promise.resolve(getJobReturnData({ status: STATUS_COMPLETED, budgetMicros: 20_000n })),
+    });
+
+    // Reconciling into a terminal state must settle exactly as complete()
+    // does, or the two paths leave the books in different places.
+    expect(await reservationStatus(job.reservationId)).toBe('settled');
+  });
+
+  it('reports a budget raised on-chain behind our back', async () => {
+    const { job } = await submittedJob('reconcilebudget');
+    const result = await reconcileEscrowJob(store.pool, {
+      escrowJobId: job.id,
+      readJobCallData: () => Promise.resolve(getJobReturnData({ status: STATUS_SUBMITTED, budgetMicros: 50_000n })),
+    });
+
+    expect(result.drift).toEqual([{ field: 'budgetUsdc', local: '0.020000', onchain: '0.050000' }]);
+    expect(result.job.budgetUsdc).toBe('0.050000');
+    expect(result.job.state).toBe('submitted');
+  });
+
+  it('reports no drift and writes nothing when the chain agrees', async () => {
+    const { job } = await submittedJob('reconcileagrees');
+    const result = await reconcileEscrowJob(store.pool, {
+      escrowJobId: job.id,
+      readJobCallData: () => Promise.resolve(getJobReturnData({ status: STATUS_SUBMITTED, budgetMicros: 20_000n })),
+    });
+
+    expect(result.drift).toEqual([]);
+    expect(result.job.state).toBe('submitted');
+    expect(await reservationStatus(job.reservationId)).toBe('reserved');
   });
 });

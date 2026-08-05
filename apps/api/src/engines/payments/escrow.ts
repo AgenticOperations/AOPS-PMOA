@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
+import { decodeFunctionResult, encodeFunctionData, parseAbi } from 'viem';
 import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import { chainRpcUrl, findAgentWallet } from './agent-wallets.js';
@@ -582,9 +583,27 @@ async function applyReservationOutcome(
   );
 }
 
+// ERC-8183 restricts each of these calls to one named party. `notHeldCode` is
+// spelled out in full rather than built from `role`, so every error code this
+// module can raise is greppable.
+const ESCROW_CALLS = {
+  submitted: {
+    role: 'provider', verb: 'submit', signature: ESCROW_SUBMIT_SIGNATURE,
+    notHeldCode: 'escrow_provider_wallet_not_held',
+  },
+  completed: {
+    role: 'evaluator', verb: 'complete', signature: ESCROW_COMPLETE_SIGNATURE,
+    notHeldCode: 'escrow_evaluator_wallet_not_held',
+  },
+  rejected: {
+    role: 'evaluator', verb: 'reject', signature: ESCROW_REJECT_SIGNATURE,
+    notHeldCode: 'escrow_evaluator_wallet_not_held',
+  },
+} as const;
+
 /**
- * Sends the transition's on-chain call and returns its hash, or null when
- * this platform is not the party that makes it.
+ * Sends the transition's on-chain call and returns its hash, or null when the
+ * transition has no call to make.
  */
 async function sendEscrowTransition(
   db: pg.PoolClient,
@@ -601,50 +620,44 @@ async function sendEscrowTransition(
     return null;
   }
 
-  if (input.next === 'submitted') {
-    // ERC-8183 lets ONLY job.provider submit. When the provider is an outside
-    // party we hold no key for, it submits out of band and this call is just
-    // the mirror catching up -- exactly as setBudget is handled in funding.
-    const providerWallet = await fleetWalletAddress(db, {
-      orgId: job.org_id, address: job.provider_address, mode: job.mode, chain: job.chain,
-    });
-    if (providerWallet === null) return null;
-    const sent = await provider.executePermit2Transaction({
-      mode: job.mode,
-      chain: job.chain,
-      senderAddress: providerWallet,
-      abiFunctionSignature: ESCROW_SUBMIT_SIGNATURE,
-      abiParameters: [onchainJobId, input.deliverableHash ?? ZERO_BYTES32, NO_HOOK_PARAMS],
-      contractAddress: job.escrow_address,
-      // Kept short -- see permit2.ts's note on refId length.
-      refId: `agentops-escrow-submit-${crypto.randomUUID()}`,
-    });
-    return sent.txHash;
-  }
+  const call = ESCROW_CALLS[input.next as keyof typeof ESCROW_CALLS];
+  // Unreachable: assertEscrowTransition has already refused every other
+  // target. Kept so a new lifecycle state cannot silently send nothing.
+  if (call === undefined) throw new Error(`escrow_no_call_for_state:${input.next}`);
 
-  // complete() and reject() are the EVALUATOR's calls and no one else's.
+  // Only job.provider may submit; only job.evaluator may complete or reject.
   // Scoped by org, so one org's job can never be resolved with another's key.
-  const evaluatorWallet = await fleetWalletAddress(db, {
-    orgId: job.org_id, address: job.evaluator_address, mode: job.mode, chain: job.chain,
+  const actorAddress = call.role === 'provider' ? job.provider_address : job.evaluator_address;
+  const wallet = await fleetWalletAddress(db, {
+    orgId: job.org_id, address: actorAddress, mode: job.mode, chain: job.chain,
   });
-  if (evaluatorWallet === null) {
-    // An outside evaluator resolves the job itself. Writing the outcome anyway
-    // would claim a result the chain never recorded; reconciling against the
-    // chain is the only honest way to learn what it decided.
+  if (wallet === null) {
+    // An outside party makes this call itself, out of band. Recording the new
+    // state anyway would claim something the chain never confirmed -- and for
+    // complete/reject it would move the org's books on that claim. Reconciling
+    // against the chain is the only honest way to learn what actually happened.
     throw conflict(
-      'escrow_evaluator_wallet_not_held',
-      `escrow_evaluator_wallet_not_held: only ${job.evaluator_address} may ${input.next === 'completed' ? 'complete' : 'reject'} `
-      + 'this job, and this org holds no key for it. Reconcile against the chain instead.',
+      call.notHeldCode,
+      `${call.notHeldCode}: only ${actorAddress} may ${call.verb} this job, and this org holds no key `
+      + 'for it. Reconcile against the chain instead.',
     );
   }
+
   const sent = await provider.executePermit2Transaction({
     mode: job.mode,
     chain: job.chain,
-    senderAddress: evaluatorWallet,
-    abiFunctionSignature: input.next === 'completed' ? ESCROW_COMPLETE_SIGNATURE : ESCROW_REJECT_SIGNATURE,
-    abiParameters: [onchainJobId, ZERO_BYTES32, NO_HOOK_PARAMS],
+    senderAddress: wallet,
+    abiFunctionSignature: call.signature,
+    // submit()'s bytes32 is the deliverable; complete()/reject()'s is a
+    // `reason` this platform has nothing honest to put in.
+    abiParameters: [
+      onchainJobId,
+      call.role === 'provider' ? input.deliverableHash ?? ZERO_BYTES32 : ZERO_BYTES32,
+      NO_HOOK_PARAMS,
+    ],
     contractAddress: job.escrow_address,
-    refId: `agentops-escrow-${input.next === 'completed' ? 'complete' : 'reject'}-${crypto.randomUUID()}`,
+    // Kept short -- see permit2.ts's note on refId length.
+    refId: `agentops-escrow-${call.verb}-${crypto.randomUUID()}`,
   });
   return sent.txHash;
 }
@@ -776,4 +789,184 @@ export async function listEscrowLivenessRisks(
     budgetUsdc: row.budget_usdc,
     expiresAt: row.expires_at,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation against the chain
+// ---------------------------------------------------------------------------
+
+// getJob(uint256) -- selector 0xbf22c457, the same one
+// ESCROW_GET_JOB_SIGNATURE names. The struct is spelled out field for field
+// in its on-chain DECLARATION order, because an ABI tuple is positional: two
+// fields of the same width swapped here decode silently into each other and
+// nothing complains.
+const escrowGetJobAbi = parseAbi([
+  'function getJob(uint256 jobId) view returns ((address client, uint8 status, address provider, uint48 expiredAt, address evaluator, uint48 submittedAt, uint256 budget, address hook, address paymentToken, uint256 providerAgentId, string description, uint256 settledAmount, address payoutReceiver) job)',
+]);
+
+// ERC-8183's JobStatus enum, in its declared order. getJob returns the
+// ordinal, and the enum is what our own `state` column mirrors.
+const ESCROW_STATE_BY_STATUS: readonly EscrowState[] = [
+  'open', 'funded', 'submitted', 'completed', 'rejected', 'expired',
+];
+
+const GET_JOB_MAX_ATTEMPTS = 6;
+const GET_JOB_RETRY_DELAY_MS = 400;
+
+/** What the chain says about a job. The authoritative version of our row. */
+export type OnchainEscrowJob = {
+  readonly state: EscrowState;
+  readonly budgetMicros: bigint;
+};
+
+function decodeEscrowJob(callData: string): OnchainEscrowJob {
+  const job = decodeFunctionResult({
+    abi: escrowGetJobAbi,
+    functionName: 'getJob',
+    data: callData as `0x${string}`,
+  });
+  const state = ESCROW_STATE_BY_STATUS[job.status];
+  // A status outside the enum means the deployed contract is not the one this
+  // module was written against. Guessing a state from it would be worse than
+  // refusing to reconcile at all.
+  if (state === undefined) throw new Error(`escrow_unknown_onchain_status:${job.status}`);
+  return { state, budgetMicros: job.budget };
+}
+
+/** Reads raw `getJob` return data. Injected so tests can supply a fixture. */
+export type ReadJobCallData = (input: {
+  readonly onchainJobId: string;
+  readonly escrowAddress: string;
+  readonly chain: PaymentChain;
+}) => Promise<string>;
+
+/**
+ * The default job reader: a plain eth_call of getJob(uint256).
+ *
+ * Retried with backoff for the same reason the receipt reader is (Arc's
+ * public RPC was measured failing ~56% of identical calls, spike S6). A read
+ * that merely failed must never be mistaken for a job the chain disagrees
+ * about -- this function throws rather than returning anything reconcilable.
+ */
+export const readJobCallDataViaRpc: ReadJobCallData = async ({ onchainJobId, escrowAddress, chain }) => {
+  const rpcUrl = chainRpcUrl(chain);
+  if (rpcUrl === undefined || rpcUrl.length === 0) {
+    throw new Error(`escrow_get_job_rpc_not_configured:${chain}`);
+  }
+  const data = encodeFunctionData({
+    abi: escrowGetJobAbi,
+    functionName: 'getJob',
+    args: [BigInt(onchainJobId)],
+  });
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= GET_JOB_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'eth_call',
+          params: [{ to: escrowAddress, data }, 'latest'],
+        }),
+      });
+      const body = await response.json() as { readonly result?: string; readonly error?: { readonly message?: string } };
+      if (body.error !== undefined) throw new Error(body.error.message ?? 'eth_call_rpc_error');
+      if (body.result === undefined) throw new Error('eth_call_empty_response');
+      return body.result;
+    } catch (error) {
+      lastError = error;
+      if (attempt < GET_JOB_MAX_ATTEMPTS) await sleep(GET_JOB_RETRY_DELAY_MS);
+    }
+  }
+  throw new Error(`escrow_get_job_unavailable:${lastError instanceof Error ? lastError.message : 'unknown'}`);
+};
+
+/** One field on which the local mirror and the chain disagreed. */
+export type EscrowDrift = {
+  readonly field: 'state' | 'budgetUsdc';
+  readonly local: string;
+  readonly onchain: string;
+};
+
+export type ReconcileEscrowJobInput = {
+  readonly escrowJobId: string;
+  readonly readJobCallData?: ReadJobCallData | undefined;
+};
+
+export type ReconcileEscrowJobResult = {
+  readonly job: EscrowJob;
+  readonly drift: readonly EscrowDrift[];
+};
+
+/**
+ * Corrects one job's row from the chain, and reports what had drifted.
+ *
+ * The row is a MIRROR. Anything a third party does on-chain -- an outside
+ * provider's setBudget, an outside evaluator's reject -- is invisible to us
+ * until we look, and when the two disagree the chain is right by definition.
+ * So this function only ever writes local <- chain, and returns the drift as
+ * evidence rather than swallowing it.
+ *
+ * It sends nothing: reconciling is a read plus a local correction, never an
+ * attempt to make the chain agree with us.
+ *
+ * The correction runs through the SAME reservation logic a local transition
+ * does, so a job that reached a terminal state without us settles or releases
+ * exactly as it would have had we driven it ourselves.
+ */
+export async function reconcileEscrowJob(
+  pool: pg.Pool,
+  input: ReconcileEscrowJobInput,
+): Promise<ReconcileEscrowJobResult> {
+  const readJobCallData = input.readJobCallData ?? readJobCallDataViaRpc;
+
+  return withTransaction(pool, async (client) => {
+    const locked = await client.query<EscrowJobRow>(
+      'SELECT * FROM escrow_jobs WHERE id = $1 FOR UPDATE',
+      [input.escrowJobId],
+    );
+    const job = locked.rows[0];
+    if (job === undefined) throw new Error('escrow_job_not_found');
+    if (job.onchain_job_id === null) throw new Error(`escrow_onchain_job_id_missing:${job.id}`);
+
+    const onchain = decodeEscrowJob(await readJobCallData({
+      onchainJobId: job.onchain_job_id,
+      escrowAddress: job.escrow_address,
+      chain: job.chain,
+    }));
+
+    const drift: EscrowDrift[] = [];
+    if (onchain.state !== job.state) {
+      drift.push({ field: 'state', local: job.state, onchain: onchain.state });
+    }
+    // A zero on-chain budget is not drift: only the provider may setBudget, so
+    // until it does the chain genuinely holds 0 while our row holds what we
+    // quoted. A NON-zero mismatch is the case worth surfacing -- it is a
+    // budget moved behind our back, which is what the guarded fund() defends
+    // against and what this report makes visible after the fact.
+    const budgetDrifted = onchain.budgetMicros > 0n
+      && onchain.budgetMicros !== parseUsdcMicros(job.budget_usdc);
+    if (budgetDrifted) {
+      drift.push({ field: 'budgetUsdc', local: job.budget_usdc, onchain: formatUsdc(onchain.budgetMicros) });
+    }
+    if (drift.length === 0) return { job: escrowJobFromRow(job), drift };
+
+    const updated = await client.query<EscrowJobRow>(
+      `UPDATE escrow_jobs
+          SET state = $2,
+              budget_usdc = COALESCE($3::numeric, budget_usdc),
+              updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [job.id, onchain.state, budgetDrifted ? formatUsdc(onchain.budgetMicros) : null],
+    );
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('escrow_job_update_failed');
+
+    // Same transaction, same helper applyEscrowStateChange uses: a job the
+    // chain finished without us must land on the books identically.
+    await applyReservationOutcome(client, job, onchain.state);
+    return { job: escrowJobFromRow(row), drift };
+  });
 }
