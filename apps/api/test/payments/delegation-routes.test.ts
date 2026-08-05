@@ -370,6 +370,39 @@ describe('user-owned wallet delegation routes', () => {
     expect(arc?.treasury_address).toBe('0x7ea50000000000000000000000000000000000c3');
   });
 
+  it('explains that the agent has no wallet on this chain instead of a bare 500', async () => {
+    // An agent only gets a wallet once payment access is granted with a
+    // dedicated wallet AND the circle-worker has provisioned it to 'active'.
+    // Picking such an agent is an ordinary, expected state -- the operator
+    // needs to be told which chain and what to do, not handed a stack trace.
+    const { orgId } = await setupOrgWithAgent('nowa');
+    await seedTreasuryWallet(orgId, 'nowa', '0x7ea50000000000000000000000000000000000c6');
+    // A second agent, deliberately never given a wallet.
+    const bare = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents`,
+      payload: { name: 'Walletless agent' },
+    });
+    expect(bare.statusCode, bare.body).toBe(201);
+    const bareAgentId = bare.json<{ agent: { id: string } }>().agent.id;
+
+    const response = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/delegations/treasury`,
+      payload: {
+        chain: 'arc',
+        ceiling_usdc: '1.00',
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        payee_agent_id: bareAgentId,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(409);
+    const body = response.json<{ error: string; message: string }>();
+    expect(body.error).toBe('agent_wallet_not_found');
+    expect(body.message).toContain('arc');
+  });
+
   it('reports the treasury balance, the number solvency is actually judged on', async () => {
     // Without this the console can show a ceiling and outstanding headroom
     // while a delegation is refused for insolvency, with no number on screen

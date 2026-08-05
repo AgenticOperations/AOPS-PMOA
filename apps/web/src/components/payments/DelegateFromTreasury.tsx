@@ -1,16 +1,32 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import type { SupportedChainKey } from '@/lib/wallet-chains';
+
+const CHAIN_LABELS: Record<SupportedChainKey, string> = {
+  arc: 'Arc testnet',
+  base: 'Base Sepolia',
+};
 
 type Agent = {
   readonly id: string;
   readonly name: string;
 };
 
+// Which (agent, chain) pairs actually have a provisioned wallet. A Permit2
+// delegation names the agent's wallet as spender, so an agent without one on
+// the selected chain cannot be a payee at all.
+type AgentWallet = {
+  readonly agentId: string;
+  readonly chain: string;
+  readonly status: string;
+};
+
 type Props = {
   readonly orgSlug: string;
   readonly agents: readonly Agent[];
+  readonly agentWallets: readonly AgentWallet[];
 };
 
 type Step = 'idle' | 'submitting' | 'done';
@@ -19,6 +35,8 @@ type Step = 'idle' | 'submitting' | 'done';
 // wording instead of a generic failure. An operator who hits one has
 // something specific to do about it.
 const EXPECTED_REJECTIONS: Record<string, string> = {
+  agent_wallet_not_found:
+    'This agent has no wallet on the selected chain yet. Grant it payment access with a dedicated wallet on that chain, then wait for provisioning to finish.',
   org_delegation_ceiling_exceeded:
     'This cap would push the org past its ceiling. Raise the ceiling, or revoke an unused delegation first.',
   treasury_insufficient_for_ceiling:
@@ -35,12 +53,28 @@ const EXPECTED_REJECTIONS: Record<string, string> = {
  * the key. The cap below constrains a compromised or misbehaving AGENT; it
  * is not protection against a compromised platform.
  */
-export function DelegateFromTreasury({ orgSlug, agents }: Props) {
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? '');
+export function DelegateFromTreasury({ orgSlug, agents, agentWallets }: Props) {
   const [chainKey, setChainKey] = useState<SupportedChainKey>('arc');
   const [ceiling, setCeiling] = useState('5.00');
   const [step, setStep] = useState<Step>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  // Only agents with an ACTIVE wallet on the selected chain can be a payee --
+  // 'provisioning' is not enough, the API requires active. Offering the rest
+  // just produces agent_wallet_not_found after the operator has filled the
+  // form in.
+  const eligible = agents.filter((agent) => agentWallets.some(
+    (wallet) => wallet.agentId === agent.id
+      && wallet.chain === chainKey
+      && wallet.status === 'active',
+  ));
+
+  // Not derived state in a ref: when the chain changes the selection may no
+  // longer be eligible, so fall back to the first one that is.
+  const [preferredAgentId, setPreferredAgentId] = useState('');
+  const agentId = eligible.some((agent) => agent.id === preferredAgentId)
+    ? preferredAgentId
+    : eligible[0]?.id ?? '';
 
   async function handleDelegate() {
     setError(null);
@@ -82,13 +116,33 @@ export function DelegateFromTreasury({ orgSlug, agents }: Props) {
           Agent
           <select
             value={agentId}
-            onChange={(event) => setAgentId(event.target.value)}
+            onChange={(event) => setPreferredAgentId(event.target.value)}
             className="rounded-md border px-2 py-1"
+            disabled={eligible.length === 0}
           >
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>{agent.name}</option>
-            ))}
+            {eligible.length === 0
+              ? <option value="">No agent has a wallet on this chain</option>
+              : eligible.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
+              ))}
           </select>
+          {eligible.length === 0 ? (
+            <span className="text-xs text-amber-600">
+              A delegation names the agent&apos;s wallet as the spender, so the agent needs one on
+              this chain first. Grant payment access with a dedicated wallet on a{' '}
+              {CHAIN_LABELS[chainKey]} rail from{' '}
+              <Link className="underline" href={`/app/${orgSlug}/payments/agent-access`}>
+                Agent access
+              </Link>
+              , then wait for provisioning to finish.
+            </span>
+          ) : agents.length > eligible.length ? (
+            <span className="text-xs text-muted-foreground">
+              {agents.length - eligible.length} other agent
+              {agents.length - eligible.length === 1 ? ' is' : 's are'} hidden — no wallet on{' '}
+              {CHAIN_LABELS[chainKey]} yet.
+            </span>
+          ) : null}
         </label>
 
         <label className="grid gap-1 text-sm">

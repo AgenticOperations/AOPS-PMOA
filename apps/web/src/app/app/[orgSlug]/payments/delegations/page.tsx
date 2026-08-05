@@ -4,7 +4,7 @@ import { DelegateFromTreasury } from '@/components/payments/DelegateFromTreasury
 import { OrgCeilingForm } from '@/components/payments/OrgCeilingForm';
 import { DelegationList } from '@/components/wallet/DelegationList';
 import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
-import { listDelegations, listOrgCeilings } from '@/lib/server/payments-client';
+import { listAgentWalletFunding, listDelegations, listOrgCeilings } from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,13 +21,16 @@ export default async function PaymentsDelegationsPage({ params }: DelegationsPag
     redirect('/auth');
   }
 
-  const [agents, delegations, ceilings] = await Promise.all([
+  const [agents, delegations, ceilings, agentWallets] = await Promise.all([
     listAgents(org.id),
     // A brand-new org has no delegations and the API may not be reachable in
     // every environment -- an empty list is a fine starting state, and the
     // delegate flow below still works.
     listDelegations(org.id).catch(() => []),
     listOrgCeilings(org.id).catch(() => []),
+    // Decides which agents can be a payee at all: a delegation names the
+    // agent's wallet as Permit2 spender, so one has to exist on the chain.
+    listAgentWalletFunding(org.id).catch(() => []),
   ]);
 
   return (
@@ -53,6 +56,11 @@ export default async function PaymentsDelegationsPage({ params }: DelegationsPag
         <OrgCeilingForm ceilings={ceilings} orgSlug={org.slug} />
 
         <DelegateFromTreasury
+          agentWallets={agentWallets.map((wallet) => ({
+            agentId: wallet.agentId,
+            chain: wallet.chain,
+            status: wallet.status,
+          }))}
           agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
           orgSlug={org.slug}
         />

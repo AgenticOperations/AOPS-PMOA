@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
@@ -38,7 +39,17 @@ export async function resolveAgentPayee(
     [input.agentId, input.mode, input.chain],
   );
   const walletRow = wallet.rows[0];
-  if (walletRow === undefined) throw new Error('agent_wallet_not_found');
+  // An expected state, not a fault: an agent only has a wallet once payment
+  // access was granted with a dedicated wallet for a rail on THIS chain, and
+  // the circle-worker finished provisioning it to 'active'. A bare Error
+  // here surfaced as a 500 with no indication of which of those steps was
+  // missing, or that the chain is the part that has to match.
+  if (walletRow === undefined) {
+    throw conflict(
+      'agent_wallet_not_found',
+      `This agent has no active wallet on ${input.chain}. Grant it payment access with a dedicated wallet on a ${input.chain} rail, and wait for provisioning to finish, then try again.`,
+    );
+  }
 
   await pool.query(
     `INSERT INTO payment_destination_allowlist (id, org_id, chain, address, label, source, created_by)
