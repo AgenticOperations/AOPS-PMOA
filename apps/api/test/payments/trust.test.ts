@@ -72,8 +72,8 @@ describe('escrow trust graduation', () => {
     readonly treasuryAddress: string;
   };
 
-  /** An org with a client agent and a funded treasury wallet on Arc. */
-  async function seedTrustOrg(suffix: string): Promise<TrustFixture> {
+  /** An org with a client agent and, by default, a funded treasury wallet on Arc. */
+  async function seedTrustOrg(suffix: string, options: { readonly withTreasury?: boolean } = {}): Promise<TrustFixture> {
     const orgId = `org_trust_${suffix}`;
     const teamId = `team_trust_${suffix}`;
     const clientAgentId = `agt_trust_client_${suffix}`;
@@ -85,18 +85,20 @@ describe('escrow trust graduation', () => {
     await store.pool.query('INSERT INTO agents (id, org_id, team_id, name) VALUES ($1, $2, $3, $4)', [
       clientAgentId, orgId, teamId, 'Client Agent',
     ]);
-    await store.pool.query(
-      `INSERT INTO circle_wallet_sets (id, org_id, mode, circle_wallet_set_id, label, created_by)
-       VALUES ($1, $2, 'test', $3, 'Trust wallet set', 'usr_1')`,
-      [walletSetId, orgId, `circle_${walletSetId}`],
-    );
-    await store.pool.query(
-      `INSERT INTO circle_chain_wallets
-         (id, org_id, wallet_set_id, mode, chain, circle_blockchain,
-          circle_wallet_id, address, account_type, metadata)
-       VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', $4, $5, 'eoa', '{}'::jsonb)`,
-      [`cwallet_trust_${suffix}`, orgId, walletSetId, `circlewallet_trust_${suffix}`, treasuryAddress],
-    );
+    if (options.withTreasury !== false) {
+      await store.pool.query(
+        `INSERT INTO circle_wallet_sets (id, org_id, mode, circle_wallet_set_id, label, created_by)
+         VALUES ($1, $2, 'test', $3, 'Trust wallet set', 'usr_1')`,
+        [walletSetId, orgId, `circle_${walletSetId}`],
+      );
+      await store.pool.query(
+        `INSERT INTO circle_chain_wallets
+           (id, org_id, wallet_set_id, mode, chain, circle_blockchain,
+            circle_wallet_id, address, account_type, metadata)
+         VALUES ($1, $2, $3, 'test', 'arc', 'ARC-TESTNET', $4, $5, 'eoa', '{}'::jsonb)`,
+        [`cwallet_trust_${suffix}`, orgId, walletSetId, `circlewallet_trust_${suffix}`, treasuryAddress],
+      );
+    }
 
     return { orgId, clientAgentId, treasuryAddress };
   }
@@ -285,6 +287,28 @@ describe('escrow trust graduation', () => {
       );
       expect(Number(delegations.rows[0]?.count)).toBe(1);
       unstub();
+    });
+
+    it('rolls the allowlist insert back when the delegation fails', async () => {
+      // A checkmark with no delegation behind it is a lie the console would
+      // display. No treasury wallet at all is the simplest way to make
+      // recordSignedDelegation fail deterministically, and it fails before
+      // any RPC or provider call -- no stubbing needed.
+      const fixture = await seedTrustOrg('rollback', { withTreasury: false });
+      const provider = hexAddress('9e57', 'rollback');
+      await seedEscrowJob(fixture, { providerAddress: provider, state: 'completed', budgetUsdc: '5.00' });
+
+      await expect(trustExternalAgent(store.pool, fakeProvider(), {
+        orgId: fixture.orgId, chain: 'arc', mode: 'test', address: provider,
+        label: 'Marketplace agent A', ceilingUsdc: '10.00',
+        expiresAt: new Date(Date.now() + 30 * 86_400_000), approvedBy: 'user_42',
+      })).rejects.toThrow(/org_treasury_wallet_not_found/);
+
+      const allowlist = await store.pool.query<{ count: string }>(
+        'SELECT count(*) FROM payment_destination_allowlist WHERE org_id = $1 AND lower(address) = lower($2)',
+        [fixture.orgId, provider],
+      );
+      expect(Number(allowlist.rows[0]?.count)).toBe(0);
     });
   });
 
