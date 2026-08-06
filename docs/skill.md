@@ -94,6 +94,33 @@ attempt needs a new key.
 If this also comes back `approval required`, go to step 5 — the payment
 has not been made yet.
 
+## 4b. Pay another agent in your own fleet
+
+If the resource you need is served by another agent in the same fleet
+(rather than an external merchant), call `agentops.payment_intra_fleet`
+instead of `agentops.payment_x402`:
+
+```json
+{
+  "name": "agentops.payment_intra_fleet",
+  "arguments": {
+    "payee_agent_id": "agt_data_fetcher",
+    "chain": "arc",
+    "url": "https://data-fetcher.internal/report"
+  }
+}
+```
+
+This settles by drawing down your agent's standing Permit2 delegation to
+the payee (signed automatically on first use, reused after) rather than
+Circle's x402 settlement rails — the 402 price-discovery step still
+happens against `url`, only the settlement mechanism differs. It is
+bounded by your delegation ceiling and the org treasury's solvency, not
+by a policy check. **It has no idempotency key** — unlike
+`agentops.payment_x402`, retrying it after a timeout or crash risks
+paying twice. If a call's outcome is unknown, check with the operator or
+inspect the activity feed before calling again.
+
 ## 5. Wait for and consume an approval
 
 Poll status (a human has to act; wait at least 2 seconds between polls,

@@ -35,7 +35,7 @@ taking onto Arc next.
 - **Approvals:** expiring approval requests, one-time approve/deny decisions, and one-time consumption tied to the original decision.
 - **Operations:** managed tool catalog, rate limits, runtime decisions, and auditable control changes.
 - **Treasury:** organization-scoped Circle Agent Wallet sessions, five testnet chain wallets, exact and Gateway x402 rails, payment access and budgets, provider jobs, liquidity preparation, balances, and evidence.
-- **MCP:** a hosted Streamable HTTP service for remote agents plus a supported local stdio adapter, both exposing the same eight-tool runtime contract.
+- **MCP:** a hosted Streamable HTTP service for remote agents plus a supported local stdio adapter, both exposing the same nine-tool runtime contract.
 - **Evidence:** classified, tenant-fenced, hash-chained audit events for operator and runtime actions.
 
 ## Architecture

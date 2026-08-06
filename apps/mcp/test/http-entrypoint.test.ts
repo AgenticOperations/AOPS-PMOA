@@ -209,6 +209,7 @@ function fakeRuntimeClient(): AgentOpsRuntimeClient {
     onboard: () => Promise.resolve({ tenant: 'test' }),
     operationCheck: () => Promise.resolve({}),
     operationRecord: () => Promise.resolve({}),
+    paymentIntraFleet: () => Promise.resolve({}),
     paymentX402: () => Promise.resolve({}),
   };
 }

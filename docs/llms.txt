@@ -42,12 +42,18 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
    `approved`, call `agentops.approval_consume` immediately before you
    act — consuming is one-time and must happen right before, not stored
    for later).
-4. **Do the governed thing.** For a payment, call `agentops.payment_x402`
-   directly — it applies policy and payment controls itself and executes
-   the payment; you do not need a separate policy_check first for that
-   one call; it is documented in the contract as combining both. For a
-   plain external HTTP/API request or a tool call, do the request only
-   after policy_check clears it.
+4. **Do the governed thing.** For a payment to an external merchant, call
+   `agentops.payment_x402` directly — it applies policy and payment
+   controls itself and executes the payment; you do not need a separate
+   policy_check first for that one call; it is documented in the contract
+   as combining both. To pay **another agent in your own fleet** for a
+   resource it serves, call `agentops.payment_intra_fleet` instead — it
+   settles by drawing down your standing Permit2 delegation rather than
+   Circle's x402 rails, is bounded by your delegation ceiling and treasury
+   solvency rather than a policy check, and is **not idempotency-key
+   safe**: do not retry it blindly after a timeout or crash, confirm the
+   payment did not already land first. For a plain external HTTP/API
+   request or a tool call, do the request only after policy_check clears it.
 5. **Record what happened, if not already implied.** `agentops.activity_record`
    and `agentops.operation_record` let you log completed non-financial
    actions for operator visibility when you took an action that wasn't
@@ -57,7 +63,8 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
 
 - `agentops.onboard` — the runtime contract. Call first, no arguments.
 - `agentops.policy_check` — evaluate an action against policy before doing it.
-- `agentops.payment_x402` — execute a governed x402 USDC payment.
+- `agentops.payment_x402` — execute a governed x402 USDC payment to an external merchant.
+- `agentops.payment_intra_fleet` — pay another agent in your fleet via a Permit2 drawdown; not idempotency-key safe.
 - `agentops.approval_status` — poll a pending human approval by id.
 - `agentops.approval_consume` — consume an approved one-time approval, immediately before acting on it.
 - `agentops.operation_check` — evaluate a non-financial action (tool call, external request) before doing it.
@@ -76,6 +83,9 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
   or read the resource without payment first if you need to know terms.
 - Do not hardcode the action catalog from this file or any other static
   doc — always read it from `agentops.onboard`'s live response.
+- Do not retry `agentops.payment_intra_fleet` after a timeout or crash
+  without first checking whether the payment already landed — unlike
+  `agentops.payment_x402`, it has no idempotency key.
 
 ## Further reading (for the operator setting you up, not for you at runtime)
 

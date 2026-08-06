@@ -13,6 +13,7 @@ function fakeClient(): AgentOpsRuntimeClient {
     onboard: () => Promise.resolve({}),
     operationCheck: () => Promise.resolve({}),
     operationRecord: () => Promise.resolve({}),
+    paymentIntraFleet: () => Promise.resolve({}),
     paymentX402: () => Promise.resolve({}),
   };
 }
@@ -34,6 +35,7 @@ describe('agentOps MCP server', () => {
         'agentops.onboard',
         'agentops.policy_check',
         'agentops.payment_x402',
+        'agentops.payment_intra_fleet',
         'agentops.approval_status',
         'agentops.approval_consume',
         'agentops.activity_record',

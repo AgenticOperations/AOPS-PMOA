@@ -11,9 +11,10 @@ What this proves, and what it does not:
   - PROVEN: a real google-adk McpToolset connects to our real running MCP
     server, completes the MCP handshake, lists our real tool surface
     (agentops.onboard, agentops.policy_check, agentops.payment_x402,
-    agentops.approval_status, agentops.approval_consume, ...), and invokes
-    one tool end to end against a real agentOps org/agent/connection --
-    with a real result coming back.
+    agentops.payment_intra_fleet, agentops.approval_status,
+    agentops.approval_consume, ...), and invokes one tool end to end
+    against a real agentOps org/agent/connection -- with a real result
+    coming back.
   - NOT ATTEMPTED: wrapping this toolset in a full `LlmAgent` reasoning
     loop. That needs a live Gemini API key, which is a deployment-time
     credential, not a binding-correctness concern -- the binding this task

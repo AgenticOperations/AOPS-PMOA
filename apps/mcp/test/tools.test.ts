@@ -29,6 +29,14 @@ function fakeClient(overrides: Partial<AgentOpsRuntimeClient> = {}): AgentOpsRun
       },
     }),
     operationRecord: () => Promise.resolve({ activity: { id: 'act_op_1', summary: 'operation recorded' } }),
+    paymentIntraFleet: () => Promise.resolve({
+      payment: {
+        status: 200,
+        body: { value: 'served' },
+        txHash: '0xintrafleet1',
+        amountUsdc: '0.01',
+      },
+    }),
     paymentX402: () => Promise.resolve({
       payment: {
         id: null,
@@ -74,6 +82,7 @@ describe('agentOps MCP tools', () => {
       'agentops.onboard',
       'agentops.policy_check',
       'agentops.payment_x402',
+      'agentops.payment_intra_fleet',
       'agentops.approval_status',
       'agentops.approval_consume',
       'agentops.activity_record',
@@ -186,6 +195,53 @@ describe('agentOps MCP tools', () => {
 
     expect(result.isError).toBe(false);
     expect(calls).toEqual([args]);
+  });
+
+  it('pays a fleet agent through the intra-fleet payment tool', async () => {
+    const calls: unknown[] = [];
+    const tools = createAgentOpsTools(fakeClient({
+      paymentIntraFleet: (input) => {
+        calls.push(input);
+        return fakeClient().paymentIntraFleet(input);
+      },
+    }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_intra_fleet');
+    if (tool === undefined) throw new Error('payment_intra_fleet tool missing');
+
+    const result = await tool.execute({
+      payee_agent_id: 'agt_data_fetcher',
+      chain: 'arc',
+      url: 'https://data-fetcher.internal/report',
+    });
+
+    expect(result.isError).toBe(false);
+    expect(calls).toEqual([{
+      payee_agent_id: 'agt_data_fetcher',
+      chain: 'arc',
+      url: 'https://data-fetcher.internal/report',
+    }]);
+    expect(result.structuredContent).toMatchObject({ payment: { txHash: '0xintrafleet1' } });
+  });
+
+  it('rejects an unsupported chain before calling the runtime API for intra-fleet payment', async () => {
+    const calls: unknown[] = [];
+    const tools = createAgentOpsTools(fakeClient({
+      paymentIntraFleet: (input) => {
+        calls.push(input);
+        return fakeClient().paymentIntraFleet(input);
+      },
+    }));
+    const tool = tools.find((candidate) => candidate.name === 'agentops.payment_intra_fleet');
+    if (tool === undefined) throw new Error('payment_intra_fleet tool missing');
+
+    const result = await tool.execute({
+      payee_agent_id: 'agt_data_fetcher',
+      chain: 'solana',
+      url: 'https://data-fetcher.internal/report',
+    });
+
+    expect(calls).toEqual([]);
+    expect(result.isError).toBe(true);
   });
 
   it('rejects a 161-character x402 idempotency key before calling the runtime API', async () => {

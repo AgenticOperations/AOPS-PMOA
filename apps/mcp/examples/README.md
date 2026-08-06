@@ -43,7 +43,8 @@ python3 examples/adk_agent_example.py http://127.0.0.1:18582/mcp <credential-fro
 
 - **Proven**: a real `google-adk` `McpToolset` completes the MCP handshake
   against our real server, lists our real tools (`agentops.onboard`,
-  `agentops.policy_check`, `agentops.payment_x402`, `agentops.approval_status`,
+  `agentops.policy_check`, `agentops.payment_x402`,
+  `agentops.payment_intra_fleet`, `agentops.approval_status`,
   `agentops.approval_consume`, `agentops.operation_check`,
   `agentops.operation_record`, `agentops.activity_record`), and invokes
   `agentops.onboard` end to end — a real result comes back from a real

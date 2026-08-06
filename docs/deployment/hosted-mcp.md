@@ -12,11 +12,13 @@ Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Project
 
 ## Product Contract
 
-The hosted MCP service is a stateless Streamable HTTP boundary for remote agents. It exposes the canonical eight-tool AOPS contract at `POST /mcp` and resolves every request from the supplied agent bearer credential through the runtime API. There is no shared process credential and no tenant state is reused between requests.
+The hosted MCP service is a stateless Streamable HTTP boundary for remote agents. It exposes the canonical nine-tool AOPS contract at `POST /mcp` and resolves every request from the supplied agent bearer credential through the runtime API. There is no shared process credential and no tenant state is reused between requests.
 
 The local product endpoint is `http://127.0.0.1:8070/mcp`. Production must publish an HTTPS URL with the exact `/mcp` path and a reverse proxy that preserves `Authorization`, `Origin`, `Host`, `Content-Type`, and `Accept` headers.
 
 Paid HTTP is exposed through `agentops.payment_x402`. The hosted MCP forwards the agent's bounded request and idempotency key to the runtime API; the API remains the policy, approval, accounting, recovery, and payment authority. MCP returns the exact bounded merchant response and never acts as a general-purpose proxy.
+
+Agent-to-agent payment within a fleet is exposed through `agentops.payment_intra_fleet`, settled via the payer's standing Permit2 delegation rather than Circle's x402 rails. It is bounded by the delegation ceiling and treasury solvency rather than by a policy decision, and — unlike `agentops.payment_x402` — carries no idempotency key, so a client-side crash-and-retry can double-pay; this is documented in `docs/skill.md` and `docs/llms.txt` for agents to follow.
 
 ## Start And Health
 
@@ -75,7 +77,7 @@ curl --fail https://console.example.com/
 5. Add the supplied governance instruction to the agent's operating prompt.
 6. Run **Verify MCP connection** before closing the reveal drawer.
 
-The verifier initializes MCP, completes the initialized notification, discovers all eight tools, and calls `agentops.onboard`. A successful check shows the resolved agent, connection ID, tool count, and contract version.
+The verifier initializes MCP, completes the initialized notification, discovers all nine tools, and calls `agentops.onboard`. A successful check shows the resolved agent, connection ID, tool count, and contract version.
 
 For Codex, keep the secret in the host environment:
 

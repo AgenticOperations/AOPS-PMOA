@@ -141,6 +141,44 @@ describe('RuntimeApiClient', () => {
     expect(firstCall.init?.body).toBe(JSON.stringify(input));
   });
 
+  it('forwards an intra-fleet payment to the runtime API and returns the draw result', async () => {
+    const calls: FetchCall[] = [];
+    const canonicalResult = {
+      payment: {
+        status: 200,
+        body: { value: 'real-data-payload' },
+        txHash: '0xintrafleetdraw',
+        amountUsdc: '0.01',
+      },
+    };
+    vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ input, init });
+      return Promise.resolve(jsonResponse(canonicalResult));
+    });
+    const client = new RuntimeApiClient({
+      apiBaseUrl: 'http://localhost:8080/',
+      credential: 'agent_secret_value',
+      timeoutMs: 5000,
+    });
+    const input = {
+      payee_agent_id: 'agt_data_fetcher',
+      chain: 'arc' as const,
+      url: 'https://data-fetcher.internal/report',
+    };
+
+    await expect(client.paymentIntraFleet(input)).resolves.toEqual(canonicalResult);
+
+    expect(calls).toHaveLength(1);
+    const firstCall = calls[0];
+    if (firstCall === undefined) throw new Error('Expected fetch call.');
+    expect(inputUrl(firstCall.input)).toBe('http://localhost:8080/v1/runtime/payments/intra-fleet');
+    expect(firstCall.init?.method).toBe('POST');
+    expect(firstCall.init?.headers).toMatchObject({
+      authorization: 'Bearer agent_secret_value',
+    });
+    expect(firstCall.init?.body).toBe(JSON.stringify(input));
+  });
+
   it('reports backend errors without leaking the runtime credential', async () => {
     vi.stubGlobal('fetch', () => Promise.resolve(jsonResponse({ message: 'Connection credential is invalid.' }, 401)));
 

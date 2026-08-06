@@ -73,6 +73,21 @@ export type RuntimeX402PaymentResult = Record<string, unknown> & {
   readonly response?: RuntimePaidHttpResponse | undefined;
 };
 
+export type RuntimeIntraFleetPaymentInput = {
+  readonly payee_agent_id: string;
+  readonly chain: 'base' | 'arbitrum' | 'polygon' | 'optimism' | 'avalanche' | 'arc';
+  readonly url: string;
+};
+
+export type RuntimeIntraFleetPaymentResult = Record<string, unknown> & {
+  readonly payment: {
+    readonly status: number;
+    readonly body: unknown;
+    readonly txHash: string;
+    readonly amountUsdc: string;
+  };
+};
+
 export class RuntimeApiError extends Error {
   readonly code: string | null;
   readonly details: Record<string, unknown>;
@@ -185,6 +200,13 @@ export class RuntimeApiClient {
 
   async paymentX402(input: RuntimeX402PaymentInput): Promise<RuntimeX402PaymentResult> {
     return this.request<RuntimeX402PaymentResult>('/v1/runtime/payments/x402', {
+      body: input,
+      method: 'POST',
+    });
+  }
+
+  async paymentIntraFleet(input: RuntimeIntraFleetPaymentInput): Promise<RuntimeIntraFleetPaymentResult> {
+    return this.request<RuntimeIntraFleetPaymentResult>('/v1/runtime/payments/intra-fleet', {
       body: input,
       method: 'POST',
     });

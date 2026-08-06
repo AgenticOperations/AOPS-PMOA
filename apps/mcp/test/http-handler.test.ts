@@ -39,6 +39,7 @@ function fakeClient(
     onboard: () => Promise.resolve({ tenant: credential }),
     operationCheck: () => Promise.resolve({}),
     operationRecord: () => Promise.resolve({}),
+    paymentIntraFleet: () => Promise.resolve({}),
     paymentX402: () => Promise.resolve({}),
     ...overrides,
   };
@@ -214,7 +215,7 @@ afterEach(async () => {
 });
 
 describe('createHostedMcpHandler', () => {
-  it('supports initialize, all eight tools, and agentops.onboard through the real SDK transport', async () => {
+  it('supports initialize, all nine tools, and agentops.onboard through the real SDK transport', async () => {
     const credentials: string[] = [];
     const started = await startHandler({
       createRuntimeClient: (credential) => {
@@ -226,7 +227,7 @@ describe('createHostedMcpHandler', () => {
 
     try {
       expect(client.getServerVersion()).toEqual({ name: 'agentops', version: '0.0.0' });
-      expect((await client.listTools()).tools).toHaveLength(8);
+      expect((await client.listTools()).tools).toHaveLength(9);
       expect(await client.callTool({ name: 'agentops.onboard', arguments: {} })).toMatchObject({
         isError: false,
         structuredContent: { tenant: 'credential-a' },

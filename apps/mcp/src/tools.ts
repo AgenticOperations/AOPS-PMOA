@@ -3,6 +3,7 @@ import { z, type ZodObject, type ZodRawShape } from 'zod';
 import { RuntimeApiError } from './runtime-client.js';
 import type {
   RuntimeCheckInput,
+  RuntimeIntraFleetPaymentInput,
   RuntimeX402PaymentInput,
 } from './runtime-client.js';
 
@@ -17,6 +18,7 @@ export type AgentOpsRuntimeClient = {
     readonly outcome?: 'success' | 'denied' | 'pending' | 'error' | undefined;
     readonly summary: string;
   }) => Promise<Record<string, unknown>>;
+  readonly paymentIntraFleet: (input: RuntimeIntraFleetPaymentInput) => Promise<Record<string, unknown>>;
   readonly paymentX402: (input: RuntimeX402PaymentInput) => Promise<Record<string, unknown>>;
 };
 
@@ -105,6 +107,11 @@ const paidHttpRequestSchema = z.object({
 const paymentX402Schema = z.object({
   idempotency_key: z.string().min(1).max(160).refine((value) => value.trim().length > 0, 'Idempotency key is required.'),
   request: paidHttpRequestSchema,
+}).strict();
+const paymentIntraFleetSchema = z.object({
+  payee_agent_id: z.string().trim().min(1).max(120),
+  chain: z.enum(['base', 'arbitrum', 'polygon', 'optimism', 'avalanche', 'arc']),
+  url: z.string().trim().min(1).max(4096),
 }).strict();
 const operationSchema = z.object({
   action: z.enum(['runtime.http.request', 'tool.call']),
@@ -261,6 +268,16 @@ export function createAgentOpsTools(client: AgentOpsRuntimeClient): readonly Age
       inputSchema: paymentX402Schema,
       name: 'agentops.payment_x402',
       title: 'Request governed paid HTTP',
+    },
+    {
+      description: 'Pay another agent in this fleet for a paid HTTP resource it serves (agent-to-agent x402 discovery, settled by drawing down this agent\'s standing Permit2 delegation — funds never leave the payer\'s wallet until draw time). Bounded by the payer\'s delegation ceiling and treasury solvency, not by a policy check — this call is NOT idempotent, so do not retry it blindly after a timeout or crash; confirm the payment did not already land before calling again.',
+      execute: async (args) =>
+        safePaymentExecute(async () => client.paymentIntraFleet(
+          paymentIntraFleetSchema.parse(recordArgs(args)),
+        )),
+      inputSchema: paymentIntraFleetSchema,
+      name: 'agentops.payment_intra_fleet',
+      title: 'Pay a fleet agent',
     },
     {
       description: 'Fetch the status of a one-time approval request created by a policy check.',
