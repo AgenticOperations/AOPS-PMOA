@@ -88,6 +88,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0031_changelog_sync');
     expect(firstRun).toContain('0032_escrow_jobs');
     expect(firstRun).toContain('0033_agent_identity_reputation');
+    expect(firstRun).toContain('0034_ledger_postings');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -128,6 +129,7 @@ describe('PMOA database migrations', () => {
       '0031_changelog_sync',
       '0032_escrow_jobs',
       '0033_agent_identity_reputation',
+      '0034_ledger_postings',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(
@@ -194,6 +196,12 @@ describe('PMOA database migrations', () => {
       "SELECT to_regclass('public.agent_reputation_events')::text AS exists",
     );
     expect(reputationTable.rows[0]?.exists).toBe('agent_reputation_events');
+
+    // Migration 0034: append-only ledger postings.
+    const ledgerTable = await pool.query<{ exists: string }>(
+      "SELECT to_regclass('public.ledger_postings')::text AS exists",
+    );
+    expect(ledgerTable.rows[0]?.exists).toBe('ledger_postings');
   });
 
   it('serializes concurrent migration runners with a PostgreSQL advisory lock', async () => {

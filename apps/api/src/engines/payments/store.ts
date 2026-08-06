@@ -4,6 +4,7 @@ import type { PaymentPayload } from '@x402/core/types';
 import { enqueueAgentWalletProvisioning, findAgentWallet, nativeBalanceMicros, readSpendableMicros } from './agent-wallets.js';
 import { readCachedBalances, writeCachedBalances } from './balances-cache.js';
 import { gatewayDepositSatisfied, resolveGatewayDepositorAddress } from './circle-liquidity-worker.js';
+import { writePosting } from './ledger.js';
 import { sha256Hex } from '../evidence/canonical-json.js';
 import { recordAuditEvent } from '../evidence/audit-writer.js';
 import { approvalContextHash, consumeApproval, createApprovalRequest, getApproval, recordActivity } from '../approvals/store.js';
@@ -5134,6 +5135,21 @@ async function preparePaidHttpPayment(
         WHERE org_id = $1 AND agent_id = $2`,
       [auth.org_id, auth.agent_id, quote.amount],
     );
+    // Negative: money leaves "available" the moment it's reserved, mirroring
+    // the counter update just above -- same transaction, so the two can
+    // never disagree about whether this reservation happened.
+    await writePosting(client, {
+      orgId: auth.org_id,
+      agentId: auth.agent_id,
+      mode,
+      chain: quote.chain,
+      entryType: 'reserve',
+      amountUsdc: `-${quote.amount}`,
+      reservationId,
+      attemptId: attempt.id,
+      reasonCode: 'x402_attempt_prepared',
+      createdBy: 'system',
+    });
     await client.query(
       `UPDATE runtime_payment_attempts
           SET payment_metadata = payment_metadata || $2::jsonb,
@@ -5279,7 +5295,7 @@ async function finalizeSettledPaidHttpPayment(
     );
   }
   return withTransaction(pool, async (client) => {
-    const { attempt, quote, reservationId, resource, source } = prepared;
+    const { attempt, mode, quote, reservationId, resource, source } = prepared;
     await client.query(
       `UPDATE payment_reservations
           SET status = 'settled', updated_at = now()
@@ -5294,6 +5310,18 @@ async function finalizeSettledPaidHttpPayment(
         WHERE org_id = $1 AND agent_id = $2`,
       [auth.org_id, auth.agent_id, quote.amount],
     );
+    await writePosting(client, {
+      orgId: auth.org_id,
+      agentId: auth.agent_id,
+      mode,
+      chain: quote.chain,
+      entryType: 'settle',
+      amountUsdc: quote.amount,
+      reservationId,
+      attemptId: attempt.id,
+      reasonCode: 'x402_payment_settled',
+      createdBy: 'system',
+    });
     if (source.provider === 'simulation') {
       await client.query(
         `UPDATE payment_sources
@@ -5481,7 +5509,7 @@ async function finalizeTerminalPaidHttpPayment(
     status === 'failed' ? 'payment_settlement_failed' : 'payment_settlement_unknown'
   );
   return withTransaction(pool, async (client) => {
-    const { attempt, quote, reservationId, source } = prepared;
+    const { attempt, mode, quote, reservationId, source } = prepared;
     if (status === 'failed') {
       await client.query(
         `UPDATE payment_reservations SET status = 'released', updated_at = now()
@@ -5494,6 +5522,18 @@ async function finalizeTerminalPaidHttpPayment(
           WHERE org_id = $1 AND agent_id = $2`,
         [auth.org_id, auth.agent_id, quote.amount],
       );
+      await writePosting(client, {
+        orgId: auth.org_id,
+        agentId: auth.agent_id,
+        mode,
+        chain: quote.chain,
+        entryType: 'release',
+        amountUsdc: quote.amount,
+        reservationId,
+        attemptId: attempt.id,
+        reasonCode: 'x402_payment_failed',
+        createdBy: 'system',
+      });
     }
     const activity = await recordActivity(client, {
       orgId: auth.org_id,
@@ -5745,6 +5785,7 @@ export async function resolveUnknownAttempt(
         WHERE id = $1 AND org_id = $2`,
       [reservationId, orgId, newStatus],
     );
+    const mode = (await getOrgPaymentMode(client, orgId)).mode;
     if (outcome === 'failed') {
       await client.query(
         `UPDATE agent_payment_accounts
@@ -5752,6 +5793,11 @@ export async function resolveUnknownAttempt(
           WHERE org_id = $1 AND agent_id = $2`,
         [orgId, row.agent_id, row.amount_usdc],
       );
+      await writePosting(client, {
+        orgId, agentId: row.agent_id, mode, entryType: 'release',
+        amountUsdc: row.amount_usdc, reservationId,
+        reasonCode: 'unknown_attempt_resolved_failed', createdBy: operator.actorId,
+      });
     } else {
       await client.query(
         `UPDATE agent_payment_accounts
@@ -5761,6 +5807,11 @@ export async function resolveUnknownAttempt(
           WHERE org_id = $1 AND agent_id = $2`,
         [orgId, row.agent_id, row.amount_usdc],
       );
+      await writePosting(client, {
+        orgId, agentId: row.agent_id, mode, entryType: 'settle',
+        amountUsdc: row.amount_usdc, reservationId,
+        reasonCode: 'unknown_attempt_resolved_settled', createdBy: operator.actorId,
+      });
     }
 
     await recordAuditEvent(client, {

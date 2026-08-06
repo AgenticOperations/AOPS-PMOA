@@ -4,6 +4,7 @@ import { prefixedId } from '../identity/ids.js';
 import { parseUsdcMicros } from './allocations.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
+import { writePosting } from './ledger.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 type Db = pg.Pool | pg.PoolClient;
@@ -400,6 +401,20 @@ export async function processAgentWalletTopUpJob(
         WHERE id = $1`,
       [jobId, transfer.transactionId],
     );
+    // Positive: money arrives in the agent's own available balance. No
+    // reservation/attempt exists for a topup, so job_id is what satisfies
+    // the table's "at least one cause" constraint.
+    await writePosting(db, {
+      orgId: job.org_id,
+      agentId,
+      mode: job.mode,
+      chain: job.chain,
+      entryType: 'topup',
+      amountUsdc: job.amount_usdc,
+      jobId,
+      reasonCode: 'agent_wallet_topup',
+      createdBy: 'system',
+    });
   } catch (error) {
     await db.query(
       `UPDATE circle_provider_jobs

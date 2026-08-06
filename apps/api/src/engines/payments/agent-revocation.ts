@@ -5,6 +5,7 @@ import type { OperatorContext } from '../identity/types.js';
 import { nativeBalanceMicros as defaultNativeBalanceMicros } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { withPostgresCircleOrgLock } from './circle-org-lock.js';
+import { writePosting } from './ledger.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 async function withTransaction<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -221,6 +222,20 @@ export async function processAgentWalletSweepJob(
         WHERE id = $1`,
       [jobId, formatUsdc(amountMicros), providerRef],
     );
+    // Recorded even when amountMicros is 0 (a dust balance with nothing to
+    // sweep) -- the job still happened and the row is what job_id anchors
+    // to; a zero-amount posting is honest, not noise.
+    await writePosting(db, {
+      orgId: job.org_id,
+      agentId,
+      mode: job.mode,
+      chain: job.chain,
+      entryType: 'sweep',
+      amountUsdc: `-${formatUsdc(amountMicros)}`,
+      jobId,
+      reasonCode: 'agent_wallet_swept',
+      createdBy: 'system',
+    });
   } catch (error) {
     await db.query(
       `UPDATE circle_provider_jobs
