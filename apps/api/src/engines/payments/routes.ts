@@ -59,6 +59,7 @@ import {
   recordSignedDelegation,
   revokeDelegation,
 } from './permit2.js';
+import { getTrustEvidence, revokeTrust, trustExternalAgent } from './trust.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain } from './types.js';
@@ -190,6 +191,12 @@ const treasuryDelegationSchema = z.object({}).and(delegationTargetSchema);
 const orgCeilingSchema = z.object({
   chain: chainSchema,
   ceiling_usdc: moneySchema,
+});
+
+const trustPromoteSchema = z.object({
+  label: z.string().trim().min(1).max(120),
+  ceiling_usdc: moneySchema,
+  expires_at: z.coerce.date(),
 });
 
 type OrgCeilingRow = {
@@ -1059,6 +1066,57 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       delegationId: params.delegationId,
     });
     return result;
+  });
+
+  // --- Trust graduation ----------------------------------------------------
+  //
+  // Promotion is always a human act: the system presents evidence, a person
+  // decides. There is no automatic graduation, no threshold, no "N clean
+  // jobs" rule -- see docs/superpowers/plans/2026-08-06-escrow-trust-graduation.md.
+
+  app.get('/v1/orgs/:orgId/payments/trust/:chain/:address', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly chain: string; readonly address: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const chain = chainSchema.parse(params.chain);
+    const address = addressSchema.parse(params.address);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const evidence = await getTrustEvidence(deps.pool, { orgId: params.orgId, chain, mode, address });
+    return { evidence };
+  });
+
+  app.post('/v1/orgs/:orgId/payments/trust/:chain/:address', async (request, reply) => {
+    const params = request.params as { readonly orgId: string; readonly chain: string; readonly address: string };
+    // approvedBy comes from the authenticated SESSION, never the request
+    // body -- a client-supplied approver would make the audit trail
+    // forgeable, defeating the entire point of a human-only promotion.
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const chain = chainSchema.parse(params.chain);
+    const address = addressSchema.parse(params.address);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const body = parseBody(trustPromoteSchema, request);
+    const trust = await trustExternalAgent(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId,
+      chain,
+      mode,
+      address,
+      label: body.label,
+      ceilingUsdc: body.ceiling_usdc,
+      expiresAt: body.expires_at,
+      approvedBy: operator.actorId,
+    });
+    return reply.code(201).send({ trust });
+  });
+
+  app.post('/v1/orgs/:orgId/payments/trust/:chain/:address/revoke', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly chain: string; readonly address: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'admin');
+    const chain = chainSchema.parse(params.chain);
+    const address = addressSchema.parse(params.address);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    await revokeTrust(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId, chain, mode, address, revokedBy: operator.actorId,
+    });
+    return { revoked: true };
   });
 
   app.post('/v1/orgs/:orgId/agents/:agentId/revoke', async (request) => {
