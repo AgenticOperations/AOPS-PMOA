@@ -8,15 +8,37 @@ import { Sheet, SheetBody, SheetCloseButton, SheetDescription, SheetHeader, Shee
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import { TreasuryPageHeader, TreasurySectionNav } from './TreasuryChrome';
+import { EscrowJobList, type EscrowJobSummary } from './EscrowJobList';
+import { EscrowLivenessBanner, type EscrowLivenessRiskSummary } from './EscrowLivenessBanner';
+import { TrustAgentPanel, type EscrowEvidence, type TrustInput } from './TrustAgentPanel';
+import { TrustedBadge } from './TrustedBadge';
 import { PRIMARY_RAILS, accountState, formatMoney, formatRail, railIsSettlementVerified } from '@/lib/payments-format';
 import type { AgentPaymentAccountRecord, CircleChainCapabilityRecord, PaymentRail } from '@/lib/payments-types';
 import type { AgentRosterItem } from '@/lib/identity-spine-types';
+import type { SupportedChainKey } from '@/lib/wallet-chains';
+
+// External agents are counterparties identified by address (design doc
+// D-4), not entries in this org's own agent roster -- so each carries its
+// own bound trust/revoke actions rather than being keyed into accessAction.
+export type ExternalEscrowAgent = {
+  readonly chain: SupportedChainKey;
+  readonly address: string;
+  readonly label: string;
+  readonly trusted: boolean;
+  readonly evidence: EscrowEvidence;
+  readonly jobs: readonly EscrowJobSummary[];
+  readonly trustAction: (input: TrustInput) => Promise<void>;
+  readonly revokeAction: () => Promise<void>;
+  readonly error?: string | undefined;
+};
 
 type TreasuryAgentAccessProps = {
   readonly accessAction: (formData: FormData) => Promise<void>;
   readonly accounts: readonly AgentPaymentAccountRecord[];
   readonly agents: readonly AgentRosterItem[];
+  readonly atRiskEscrowJobs?: readonly EscrowLivenessRiskSummary[];
   readonly capabilities: readonly CircleChainCapabilityRecord[];
+  readonly externalAgents?: readonly ExternalEscrowAgent[];
   readonly orgSlug: string;
 };
 
@@ -33,7 +55,15 @@ function initials(name: string): string {
   return name.split(/\s+/g).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 }
 
-export function TreasuryAgentAccess({ accessAction, accounts, agents, capabilities, orgSlug }: TreasuryAgentAccessProps) {
+export function TreasuryAgentAccess({
+  accessAction,
+  accounts,
+  agents,
+  atRiskEscrowJobs = [],
+  capabilities,
+  externalAgents = [],
+  orgSlug,
+}: TreasuryAgentAccessProps) {
   const accountByAgentId = useMemo(() => new Map(accounts.map((account) => [account.agent_id, account])), [accounts]);
   const assignableAgents = agents.filter((agent) => agent.status !== 'deactivated');
   const defaultRails = useMemo(() => PRIMARY_RAILS.filter((rail) => railIsSettlementVerified(capabilities, rail)), [capabilities]);
@@ -106,6 +136,7 @@ export function TreasuryAgentAccess({ accessAction, accounts, agents, capabiliti
   return (
     <div className="treasury-workbench treasury-access-workbench">
       <TreasurySectionNav active="access" orgSlug={orgSlug} />
+      <EscrowLivenessBanner atRisk={atRiskEscrowJobs} />
       <TreasuryPageHeader
         actions={<button className="treasury-button treasury-button-primary" disabled={assignableAgents.length === 0} onClick={() => openEditor()} type="button">Grant access</button>}
         description="Payment access is off by default. Audit delegation, budgets, caps, approval thresholds, and settlement-verified rails at a glance."
@@ -151,6 +182,41 @@ export function TreasuryAgentAccess({ accessAction, accounts, agents, capabiliti
           </>
         )}
       </section>
+
+      {externalAgents.length === 0 ? null : (
+        <section aria-labelledby="treasury-external-agents-title" className="treasury-table-section">
+          <div className="treasury-section-heading">
+            <div>
+              <h2 id="treasury-external-agents-title">External escrow agents</h2>
+              <p>
+                Counterparties hired through escrow, not this org&apos;s own agent roster. Review
+                the on-chain record, then trust the ones that have earned it.
+              </p>
+            </div>
+          </div>
+          <div className="treasury-external-agents">
+            {externalAgents.map((external) => (
+              <div className="treasury-external-agent" key={`${external.chain}:${external.address}`}>
+                <div className="treasury-external-agent-header">
+                  <div>
+                    <strong>{external.label}</strong>
+                    <small>{external.address}</small>
+                  </div>
+                  <TrustedBadge trusted={external.trusted} />
+                </div>
+                <EscrowJobList chain={external.chain} jobs={external.jobs} />
+                <TrustAgentPanel
+                  error={external.error}
+                  evidence={external.evidence}
+                  revokeAction={external.revokeAction}
+                  trustAction={external.trustAction}
+                  trusted={external.trusted}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <Sheet labelledBy="agent-payment-access-title" onOpenChange={(nextOpen) => !pending && setOpen(nextOpen)} open={open} panelClassName="treasury-drawer">
         <SheetHeader><div><SheetTitle id="agent-payment-access-title">Set agent access</SheetTitle><SheetDescription>Configure one agent using only settlement-verified exact or Gateway rails.</SheetDescription></div><SheetCloseButton disabled={pending} onClick={() => setOpen(false)} /></SheetHeader>

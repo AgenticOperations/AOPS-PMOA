@@ -255,4 +255,56 @@ describe('TreasuryAgentAccess', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grant access' }));
     expect(screen.getByRole('checkbox', { name: /Gateway · Arc/ })).toBeDisabled();
   });
+
+  it('shows the trust panel for an external escrow agent', () => {
+    // External agents are counterparties by address (design doc D-4), not
+    // entries in the org's own agent roster -- so this is an additive
+    // section, not a row in the existing access table.
+    render(
+      <TreasuryAgentAccess
+        accessAction={async () => {}}
+        accounts={[]}
+        agents={[]}
+        capabilities={[capability]}
+        externalAgents={[
+          {
+            chain: 'arc',
+            address: '0x5555555555555555555555555555555555555555',
+            label: 'Marketplace agent A',
+            trusted: false,
+            evidence: { completedCount: 2, rejectedCount: 0, expiredCount: 0, settledUsdc: '12.00' },
+            jobs: [],
+            trustAction: async () => {},
+            revokeAction: async () => {},
+          },
+        ]}
+        orgSlug="sample-qa-workspace"
+      />,
+    );
+
+    expect(screen.getByText('Marketplace agent A')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /trust this agent/i })).toBeInTheDocument();
+  });
+
+  it('warns when an external agent has a job approaching evaluator expiry', () => {
+    render(
+      <TreasuryAgentAccess
+        accessAction={async () => {}}
+        accounts={[]}
+        agents={[]}
+        atRiskEscrowJobs={[
+          {
+            escrowJobId: 'escrow_9',
+            providerAddress: '0x6666666666666666666666666666666666666666',
+            expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          },
+        ]}
+        capabilities={[capability]}
+        externalAgents={[]}
+        orgSlug="sample-qa-workspace"
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
 });
