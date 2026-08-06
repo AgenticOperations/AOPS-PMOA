@@ -309,6 +309,61 @@ async function resolvePermitSubmitter(
   throw new Error('permit_submitter_unavailable');
 }
 
+// Enough to submit one permit() call, no more. On Arc this is literally gas,
+// because USDC is the native gas asset there. Same floor and same
+// treasury-funds-it approach as agent-funding.ts's ensureAgentGasFloor,
+// which covers the agent's OWN drawdown submission later -- this one covers
+// the permit() submission that happens right here, which for a user-signed
+// delegation is sent from the payee agent's wallet, not the payer's.
+const SUBMITTER_GAS_FLOOR_MICROS = 100_000n; // 0.10 USDC
+
+/**
+ * Tops up whoever `resolvePermitSubmitter` picked so its permit() call can
+ * actually land, instead of failing at Circle with "insufficient funds"
+ * (confirmed live: a fresh agent wallet has a zero balance and this was the
+ * exact failure the first time a non-custodial delegation named an agent as
+ * payee).
+ *
+ * Silently a no-op wherever it can't help -- Base/etc need native gas the
+ * Circle provider has no method to send, and if the submitter already IS
+ * the treasury there's nothing to move funds from. Both cases fall through
+ * to executePermit2Transaction, which still raises a real error if the
+ * submitter truly can't pay.
+ */
+async function ensureSubmitterGasFloor(
+  client: pg.PoolClient,
+  provider: CircleTreasuryProvider,
+  input: {
+    readonly orgId: string;
+    readonly submitterAddress: string;
+    readonly chain: PaymentChain;
+    readonly mode: PaymentMode;
+  },
+): Promise<void> {
+  if (input.chain !== 'arc') return;
+
+  const balance = await nativeBalanceMicros(input.submitterAddress, input.chain, input.mode);
+  if (balance >= SUBMITTER_GAS_FLOOR_MICROS) return;
+
+  const treasury = await client.query<{ address: string }>(
+    `SELECT address FROM circle_chain_wallets
+      WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+      LIMIT 1`,
+    [input.orgId, input.mode, input.chain],
+  );
+  const treasuryAddress = treasury.rows[0]?.address;
+  if (treasuryAddress === undefined || treasuryAddress === input.submitterAddress) return;
+
+  await provider.transferWallet({
+    amountMicros: SUBMITTER_GAS_FLOOR_MICROS - balance,
+    chain: input.chain,
+    destinationAddress: input.submitterAddress,
+    mode: input.mode,
+    refId: `agentops-permit-gas-${crypto.randomUUID()}`,
+    sourceAddress: treasuryAddress,
+  });
+}
+
 /**
  * Signs a fresh PermitSingle for a payer->payee delegation and persists
  * it as 'active'. The on-chain allowance is the authority -- this row is
@@ -473,6 +528,13 @@ export async function recordSignedDelegation(
       payerIsPlatformControlled: input.userSigned === undefined,
       payeeAgentId: input.payeeAgentId,
       payeeAddress: input.payeeAddress,
+    });
+
+    await ensureSubmitterGasFloor(client, provider, {
+      orgId: input.orgId,
+      submitterAddress: permitSubmitter,
+      chain: input.chain,
+      mode: input.mode,
     });
 
     await provider.executePermit2Transaction({

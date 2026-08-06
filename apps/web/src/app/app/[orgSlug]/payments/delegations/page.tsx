@@ -2,7 +2,9 @@ import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
 import { DelegateFromTreasury } from '@/components/payments/DelegateFromTreasury';
 import { OrgCeilingForm } from '@/components/payments/OrgCeilingForm';
+import { DelegateToAgent } from '@/components/wallet/DelegateToAgent';
 import { DelegationList } from '@/components/wallet/DelegationList';
+import { WalletProvider } from '@/components/wallet/WalletProvider';
 import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
 import { listAgentWalletFunding, listDelegations, listOrgCeilings } from '@/lib/server/payments-client';
 
@@ -54,6 +56,19 @@ export default async function PaymentsDelegationsPage({ params }: DelegationsPag
         </header>
 
         <OrgCeilingForm ceilings={ceilings} orgSlug={org.slug} />
+
+        <section>
+          <h2 className="text-sm font-medium">Delegate from your own wallet</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Non-custodial: your wallet signs, your funds never leave your wallet until the agent
+            actually draws against the Permit2 allowance you approve.
+          </p>
+          <div className="mt-3">
+            <WalletProvider>
+              <DelegateToAgent agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))} orgSlug={org.slug} />
+            </WalletProvider>
+          </div>
+        </section>
 
         <DelegateFromTreasury
           agentWallets={agentWallets.map((wallet) => ({

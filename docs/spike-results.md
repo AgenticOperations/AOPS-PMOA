@@ -595,6 +595,20 @@ Independently verifiable on Arc's testnet explorer, e.g. **https://testnet.arcsc
 
 ---
 
+## Phase 8 · Task 1 — ERC-8004 identity registration, live proof
+
+Re-verification before writing any code (per the task's own gate, and the same discipline S8 already forced on escrow): the tutorial-documented Identity Registry address (`0x8004A818BFB912233c491871b3d84c89A494BD9e`) was confirmed live via `eth_getCode` on Arc testnet (262 bytes, a delegatecall proxy) rather than trusted on the tutorial's word. The real `register()`/`Registered` event ABI was pulled from the canonical `erc-8004/erc-8004-contracts` source, not re-derived from the tutorial. The Reputation Registry address (`0x8004B663056A597Dffe9eCcC1965A193B7388713`, needed for Task 2) was independently probed the same way and returns **byte-identical bytecode** to the Identity Registry — both delegatecall proxies from the same factory.
+
+**Registration run**, via `registerAgentIdentity` (the actual application function, run against the live dev database and the running circle-worker — not a parallel script):
+
+- Agent: `agt_a0eca188-7728-4c61-a639-59cdbf6c635a` ("research", org `kaushalya`)
+- Submitter: the agent's own wallet, `0x29de452040e7df6ca31e28fd8d768a6a7d6e6d85` (ERC-8004 gives the token owner control of the entry, and the Reputation Registry's self-feedback guard later checks ownership of exactly this identity)
+- tx `0x7fc58f442eb853787c25ac20c9988d465154a2bcf5858245119f7df34ebaa539`, minted **token id `863468`**
+
+Confirmed independently via `eth_getTransactionReceipt` (not from the function's return value alone): `status: 0x1`, `to` matches the registry address, `from` matches the agent's wallet, and the `Registered` log's topic0 (`0xca52e62c367d81bb2e328eb795f7c7ba24afb478408a26c0e201d155c449bc4a`) matches the independently-computed `keccak256("Registered(uint256,string,address)")` — with `topics[1] = 0x...d2cec` decoding to `863468` and the log `data` decoding to the exact `agentURI` string that was sent. Idempotency (re-registering the same agent mints nothing further) is covered by `test/identity/erc8004.test.ts`, not re-proven live here.
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
@@ -607,3 +621,4 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 | Phase 6 · Task 2 — Permit2 drawdown | Real drawdown + `lockdown()` via `permit2.ts`'s actual functions, tx `0x8232550...dae86f25`, allowance confirmed `0n` after lockdown. See "Phase 6 · Task 2 proof test" above. | ✅ |
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
 | Piece 4 · Task 6 — escrow-to-Permit2 graduation demo | 2 completed escrow jobs (6 tx each), promotion (2 tx), 1-tx drawdown. See "Piece 4 · Task 6 proof" above | ✅ tx `0xef084b9e...93640722e04` |
+| Phase 8 · Task 1 — ERC-8004 identity registration | Real agent registered via `registerAgentIdentity`, token id `863468`. See "Phase 8 · Task 1" above | ✅ tx `0x7fc58f44...34ebaa539` |

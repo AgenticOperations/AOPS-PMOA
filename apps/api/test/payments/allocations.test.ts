@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CircleTreasuryProvider } from '../../src/engines/payments/circle-provider.js';
-import { evaluateTopUps, setAllocation } from '../../src/engines/payments/allocations.js';
+import {
+  applyReputationAdjustment,
+  evaluateTopUps,
+  nextAllocation,
+  setAllocation,
+} from '../../src/engines/payments/allocations.js';
 import { recordProvisionedWallet } from '../../src/engines/payments/agent-wallets.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
 
@@ -323,5 +328,109 @@ describe('auto top-up', () => {
     );
     expect(jobs.rowCount).toBe(2);
     expect(jobs.rows.map((row) => row.amount_usdc)).toEqual(['5.000000', '5.000000']);
+  });
+});
+
+// K-6 (docs/decisions.md). Pure-function tests need no database at all --
+// deliberately, since this is the one place in the build where a bug
+// compounds automatically rather than failing once.
+describe('reputation-driven allocation', () => {
+  it('never drops allocation below the floor', () => {
+    const next = nextAllocation({
+      current: 5_000_000n, floor: 2_000_000n, ceiling: 20_000_000n,
+      reputation: 0, maxStepBps: 1000,
+    });
+    expect(next).toBeGreaterThanOrEqual(2_000_000n);
+  });
+
+  it('never raises allocation above the operator ceiling', () => {
+    const next = nextAllocation({
+      current: 19_500_000n, floor: 2_000_000n, ceiling: 20_000_000n,
+      reputation: 100, maxStepBps: 1000,
+    });
+    expect(next).toBeLessThanOrEqual(20_000_000n);
+  });
+
+  it('bounds how far a single adjustment can move allocation', () => {
+    const next = nextAllocation({
+      current: 10_000_000n, floor: 1_000_000n, ceiling: 100_000_000n,
+      reputation: 100, maxStepBps: 1000, // 10% max step
+    });
+    expect(next).toBeLessThanOrEqual(11_000_000n);
+  });
+
+  it('moves toward the floor when reputation is at the bottom, not away from it', () => {
+    const next = nextAllocation({
+      current: 10_000_000n, floor: 1_000_000n, ceiling: 20_000_000n,
+      reputation: 0, maxStepBps: 1000,
+    });
+    expect(next).toBeLessThan(10_000_000n);
+    expect(next).toBeGreaterThanOrEqual(1_000_000n);
+  });
+
+  it('holds steady when current is already at the reputation-implied target', () => {
+    const next = nextAllocation({
+      current: 20_000_000n, floor: 1_000_000n, ceiling: 20_000_000n,
+      reputation: 100, maxStepBps: 1000,
+    });
+    expect(next).toBe(20_000_000n);
+  });
+
+  it('converges rather than oscillating across repeated adjustments', () => {
+    let current = 10_000_000n;
+    for (let i = 0; i < 50; i += 1) {
+      current = nextAllocation({
+        current, floor: 1_000_000n, ceiling: 20_000_000n,
+        reputation: 100, maxStepBps: 1000,
+      });
+    }
+    expect(current).toBe(20_000_000n); // settles at the ceiling, no runaway
+  });
+
+  describe('applyReputationAdjustment', () => {
+    let store: PostgresTestStore;
+
+    beforeAll(async () => {
+      store = await startPostgres();
+    }, 90_000);
+
+    afterAll(async () => {
+      if (store !== undefined) await store.stop();
+    });
+
+    it('still refuses to breach the treasury solvency invariant', async () => {
+      // Reputation adjusts allocation WITHIN deposits, never around them.
+      const { orgId, agentId, pool, provider } = await setupTreasuryFixture(store, 'repufull', { arc: '50.00' });
+      await setAllocation(pool, provider, {
+        orgId, agentId, mode: 'test', chain: 'arc', allocatedUsdc: '50.00', ceilingUsdc: '50.00', createdBy: 'usr_1',
+      });
+
+      await expect(
+        applyReputationAdjustment(pool, provider, { orgId, agentId, mode: 'test', chain: 'arc', reputation: 100 }),
+      ).resolves.toMatchObject({ allocated_usdc: '50.000000' }); // capped, not raised
+    });
+
+    it('writes the adjusted allocation through setAllocation, bounded by the step', async () => {
+      const { orgId, agentId, pool, provider } = await setupTreasuryFixture(store, 'repustep', { arc: '50.00' });
+      await setAllocation(pool, provider, {
+        orgId, agentId, mode: 'test', chain: 'arc',
+        allocatedUsdc: '10.00', ceilingUsdc: '50.00', gasReserveUsdc: '1.00', createdBy: 'usr_1',
+      });
+
+      const adjusted = await applyReputationAdjustment(pool, provider, {
+        orgId, agentId, mode: 'test', chain: 'arc', reputation: 100,
+      });
+
+      // Target is the ceiling (reputation 100), but the step bound (10% of
+      // the prior 10.00) caps a single adjustment at +1.00.
+      expect(adjusted.allocated_usdc).toBe('11.000000');
+    });
+
+    it('throws when the agent has no allocation to adjust', async () => {
+      const { orgId, agentId, pool, provider } = await setupTreasuryFixture(store, 'repumissing', { arc: '50.00' });
+      await expect(
+        applyReputationAdjustment(pool, provider, { orgId, agentId, mode: 'test', chain: 'arc', reputation: 100 }),
+      ).rejects.toThrow(/agent_allocation_not_found/);
+    });
   });
 });

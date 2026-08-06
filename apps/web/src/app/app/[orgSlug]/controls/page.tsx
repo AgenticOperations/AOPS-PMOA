@@ -5,10 +5,12 @@ import {
   activatePolicyDraftAction,
   activatePolicyRevisionDraftAction,
   archivePolicyAction,
+  bindPolicyAction,
   createPolicyDraftAction,
   createPolicyRestoreDraftAction,
   createPolicyRevisionDraftAction,
   discardPolicyDraftAction,
+  removePolicyBindingAction,
   simulatePolicyDraftAction,
   updatePolicyDraftAction,
   validatePolicyDraftAction,
@@ -71,6 +73,7 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
         activateAction={activatePolicyDraftAction.bind(null, org.id, org.slug)}
         activateRevisionAction={activatePolicyRevisionDraftAction.bind(null, org.id, org.slug)}
         archivePolicyAction={archivePolicyAction.bind(null, org.id, org.slug)}
+        bindAction={bindPolicyAction.bind(null, org.id, org.slug)}
         createAction={createPolicyDraftAction.bind(null, org.id, org.slug)}
         createRestoreDraftAction={createPolicyRestoreDraftAction.bind(null, org.id, org.slug)}
         createRevisionDraftAction={createPolicyRevisionDraftAction.bind(null, org.id, org.slug)}
@@ -83,6 +86,7 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
         orgId={org.id}
         orgSlug={org.slug}
         policies={library.policies}
+        removeBindingAction={removePolicyBindingAction.bind(null, org.id, org.slug)}
         simulateDraftAction={simulatePolicyDraftAction.bind(null, org.id, org.slug)}
         updateDraftAction={updatePolicyDraftAction.bind(null, org.id, org.slug)}
         validateAction={validatePolicyDraftAction.bind(null, org.id, org.slug)}

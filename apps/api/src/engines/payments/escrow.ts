@@ -18,6 +18,7 @@ import {
   type EscrowReceiptLog,
 } from './escrow-contract.js';
 import { formatUsdc, parseUsdcMicros } from './permit2.js';
+import { onEscrowCompleted, reputationRegistryFromProvider } from './reputation-hook.js';
 import type { PaymentChain, PaymentMode } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -689,7 +690,7 @@ export async function applyEscrowStateChange(
   provider: CircleTreasuryProvider,
   input: ApplyEscrowStateChangeInput,
 ): Promise<EscrowJob> {
-  return withTransaction(pool, async (client) => {
+  const result = await withTransaction(pool, async (client) => {
     const locked = await client.query<EscrowJobRow>(
       'SELECT * FROM escrow_jobs WHERE id = $1 FOR UPDATE',
       [input.escrowJobId],
@@ -722,6 +723,22 @@ export async function applyEscrowStateChange(
     await applyReservationOutcome(client, job, input.next);
     return escrowJobFromRow(row);
   });
+
+  // Fired AFTER commit, deliberately outside the transaction above: D4's
+  // reputation write must never be able to roll back a settled escrow
+  // completion, and onEscrowCompleted already swallows its own on-chain
+  // failures -- this catch is only for something re-reading the row itself
+  // going wrong (e.g. the pool being unavailable).
+  if (input.next === 'completed') {
+    try {
+      await onEscrowCompleted(pool, { jobId: result.id }, reputationRegistryFromProvider(provider));
+    } catch {
+      // Operational problem, not a money problem -- the escrow completion
+      // above already committed regardless.
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -789,6 +806,36 @@ export async function listEscrowLivenessRisks(
     budgetUsdc: row.budget_usdc,
     expiresAt: row.expires_at,
   }));
+}
+
+export type EscrowCounterparty = {
+  readonly chain: PaymentChain;
+  readonly providerAddress: string;
+};
+
+export type ListEscrowCounterpartiesInput = {
+  readonly orgId: string;
+  readonly mode: PaymentMode;
+};
+
+/**
+ * Distinct (chain, providerAddress) pairs this org has ANY escrow history
+ * with. Nothing else discovers this -- the trust console needs it to know
+ * which external addresses to pull `getTrustEvidence` for in the first
+ * place, rather than requiring an operator to already know the address.
+ */
+export async function listEscrowCounterparties(
+  pool: pg.Pool,
+  input: ListEscrowCounterpartiesInput,
+): Promise<readonly EscrowCounterparty[]> {
+  const result = await pool.query<{ chain: PaymentChain; provider_address: string }>(
+    `SELECT DISTINCT chain, provider_address
+       FROM escrow_jobs
+      WHERE org_id = $1 AND mode = $2
+      ORDER BY chain, provider_address`,
+    [input.orgId, input.mode],
+  );
+  return result.rows.map((row) => ({ chain: row.chain, providerAddress: row.provider_address }));
 }
 
 // ---------------------------------------------------------------------------

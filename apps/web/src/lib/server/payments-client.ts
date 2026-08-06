@@ -544,6 +544,109 @@ export async function revokeDelegation(
   return apiFetch(`/v1/orgs/${orgId}/payments/delegations/${delegationId}/revoke`, { method: 'POST' });
 }
 
+// --- Escrow trust graduation ------------------------------------------------
+//
+// `jobs` comes back as raw `escrow_jobs` rows (trust.ts deliberately reuses
+// EscrowJobRow rather than shaping a second DTO) -- snake_case, and each job
+// carries four separate tx-hash columns rather than one. The console only
+// wants the single most-recent hash, so that reduction happens here rather
+// than asking every caller to repeat it.
+
+export type EscrowJobRecord = {
+  readonly id: string;
+  readonly state: 'open' | 'funded' | 'submitted' | 'completed' | 'rejected' | 'expired';
+  readonly budgetUsdc: string;
+  readonly txHash: string | null;
+};
+
+type RawEscrowJobRow = {
+  readonly id: string;
+  readonly state: EscrowJobRecord['state'];
+  readonly budget_usdc: string;
+  readonly create_tx_hash: string | null;
+  readonly fund_tx_hash: string | null;
+  readonly submit_tx_hash: string | null;
+  readonly terminal_tx_hash: string | null;
+};
+
+function escrowJobRecordFromRow(row: RawEscrowJobRow): EscrowJobRecord {
+  return {
+    id: row.id,
+    state: row.state,
+    budgetUsdc: row.budget_usdc,
+    // Terminal first: once a job settles, that tx is the one worth linking
+    // to, not an earlier step in its life.
+    txHash: row.terminal_tx_hash ?? row.submit_tx_hash ?? row.fund_tx_hash ?? row.create_tx_hash,
+  };
+}
+
+export type TrustEvidenceRecord = {
+  readonly completedCount: number;
+  readonly rejectedCount: number;
+  readonly expiredCount: number;
+  readonly settledUsdc: string;
+  readonly trusted: boolean;
+  readonly jobs: readonly EscrowJobRecord[];
+};
+
+export async function getTrustEvidence(
+  orgId: string,
+  chain: PaymentChain,
+  address: string,
+): Promise<TrustEvidenceRecord> {
+  const body = await apiFetch<{
+    readonly evidence: Omit<TrustEvidenceRecord, 'jobs'> & { readonly jobs: readonly RawEscrowJobRow[] };
+  }>(`/v1/orgs/${orgId}/payments/trust/${chain}/${address}`);
+  return { ...body.evidence, jobs: body.evidence.jobs.map(escrowJobRecordFromRow) };
+}
+
+export type TrustPromoteRequest = {
+  readonly label: string;
+  readonly ceiling_usdc: string;
+  readonly expires_at: string;
+};
+
+export async function trustExternalAgent(
+  orgId: string,
+  chain: PaymentChain,
+  address: string,
+  body: TrustPromoteRequest,
+): Promise<unknown> {
+  return apiFetch(`/v1/orgs/${orgId}/payments/trust/${chain}/${address}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function revokeTrust(orgId: string, chain: PaymentChain, address: string): Promise<unknown> {
+  return apiFetch(`/v1/orgs/${orgId}/payments/trust/${chain}/${address}/revoke`, { method: 'POST' });
+}
+
+export type EscrowCounterpartyRecord = {
+  readonly chain: PaymentChain;
+  readonly providerAddress: string;
+};
+
+export async function listEscrowCounterparties(orgId: string): Promise<readonly EscrowCounterpartyRecord[]> {
+  const body = await apiFetch<{ readonly counterparties: readonly EscrowCounterpartyRecord[] }>(
+    `/v1/orgs/${orgId}/payments/escrow/counterparties`,
+  );
+  return body.counterparties;
+}
+
+export type EscrowLivenessRiskRecord = {
+  readonly escrowJobId: string;
+  readonly providerAddress: string;
+  readonly expiresAt: string;
+};
+
+export async function listEscrowLivenessRisks(orgId: string): Promise<readonly EscrowLivenessRiskRecord[]> {
+  const body = await apiFetch<{ readonly risks: readonly EscrowLivenessRiskRecord[] }>(
+    `/v1/orgs/${orgId}/payments/escrow/liveness-risks`,
+  );
+  return body.risks;
+}
+
 // --- Funding hierarchy: org treasury -> agent wallet -> the agent ---------
 
 export type AgentWalletFundingRecord = {

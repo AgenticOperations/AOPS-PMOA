@@ -28,6 +28,12 @@ function formatUsdc(micros: bigint): string {
   return `${whole.toString()}.${decimal}`;
 }
 
+function clampBigint(value: bigint, min: bigint, max: bigint): bigint {
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
 export type AgentAllocationRow = {
   readonly id: string;
   readonly org_id: string;
@@ -343,4 +349,99 @@ async function evaluateSingleTopUp(
       ],
     );
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Reputation -> allocation feedback [manifest D5, K-6]. Formula recorded in
+// docs/decisions.md under K-6 before this was written -- read that first if
+// the bounds below look arbitrary; they are not.
+// ---------------------------------------------------------------------------
+
+// K-6's fixed bound: one adjustment can move allocation by at most 10% of
+// its CURRENT value, never a flat USDC amount, so the bound stays
+// proportionate as an agent's allocation grows.
+const REPUTATION_MAX_STEP_BPS = 1000;
+const BPS_DENOMINATOR = 10_000n;
+
+export type NextAllocationInput = {
+  readonly current: bigint;
+  readonly floor: bigint;
+  readonly ceiling: bigint;
+  // 0-100. Not a fraction -- kept as the same 0-100 scale
+  // agent_reputation_events.score already uses, so a caller never has to
+  // convert between two different reputation scales.
+  readonly reputation: number;
+  readonly maxStepBps: number;
+};
+
+/**
+ * Pure and exhaustively testable without a database on purpose -- this is
+ * the one place in the build where a bug compounds automatically rather
+ * than failing once (K-6), so its correctness has to be checkable without
+ * spinning up Postgres or a fake provider.
+ *
+ * Never returns a value outside [floor, ceiling], and never moves further
+ * than maxStepBps of `current` in one call -- both are hard bounds, not
+ * defaults a caller can widen by passing a different reputation.
+ */
+export function nextAllocation(input: NextAllocationInput): bigint {
+  const reputationBps = BigInt(Math.max(0, Math.min(100, Math.round(input.reputation)))) * 100n;
+  const range = input.ceiling - input.floor;
+  const target = input.floor + (range * reputationBps) / BPS_DENOMINATOR;
+  const step = (input.current * BigInt(Math.max(0, Math.round(input.maxStepBps)))) / BPS_DENOMINATOR;
+  const delta = clampBigint(target - input.current, -step, step);
+  return clampBigint(input.current + delta, input.floor, input.ceiling);
+}
+
+export type ApplyReputationAdjustmentInput = {
+  readonly orgId: string;
+  readonly agentId: string;
+  readonly mode: PaymentMode;
+  readonly chain: PaymentChain;
+  readonly reputation: number;
+  readonly createdBy?: string | undefined;
+};
+
+/**
+ * Moves one agent's allocation toward its reputation-implied target, bounded
+ * per nextAllocation, then writes it through the EXISTING setAllocation --
+ * never a second write path. That is what keeps the Phase 4 solvency
+ * invariant binding: a reputation-implied allocation that would exceed real
+ * treasury deposits is refused exactly the way any other over-allocation is.
+ */
+export async function applyReputationAdjustment(
+  pool: pg.Pool,
+  provider: CircleTreasuryProvider,
+  input: ApplyReputationAdjustmentInput,
+): Promise<AgentAllocationRow> {
+  const existing = await pool.query<AgentAllocationRow>(
+    `SELECT * FROM agent_allocations
+      WHERE org_id = $1 AND agent_id = $2 AND mode = $3 AND chain = $4 AND status = 'active'`,
+    [input.orgId, input.agentId, input.mode, input.chain],
+  );
+  const row = existing.rows[0];
+  if (row === undefined) throw new Error('agent_allocation_not_found');
+
+  const next = nextAllocation({
+    current: parseUsdcMicros(row.allocated_usdc),
+    // gas_reserve_usdc, not a new column: K-6's hard floor exists so
+    // reputation can never strand an agent below what it needs to operate
+    // at all, which is exactly what this column already represents.
+    floor: parseUsdcMicros(row.gas_reserve_usdc),
+    ceiling: parseUsdcMicros(row.ceiling_usdc),
+    reputation: input.reputation,
+    maxStepBps: REPUTATION_MAX_STEP_BPS,
+  });
+
+  return setAllocation(pool, provider, {
+    orgId: input.orgId,
+    agentId: input.agentId,
+    mode: input.mode,
+    chain: input.chain,
+    allocatedUsdc: formatUsdc(next),
+    gasReserveUsdc: row.gas_reserve_usdc,
+    lowWaterMarkUsdc: row.low_water_mark_usdc,
+    ceilingUsdc: row.ceiling_usdc,
+    createdBy: input.createdBy ?? 'system',
+  });
 }

@@ -26,6 +26,8 @@
 
 **If Phase 7's S8 failed:** Task 1 (identity) still ships — registration does not depend on escrow. Tasks 2–3 **do not ship**. Do not substitute an ungated reputation write to keep the feature visible; that would be exactly the overclaim the manifest's Section J exists to prevent, and it would ship the very weakness we criticise competitors for.
 
+**Resolved:** the S8 spike's "FALLBACK" verdict was against a stale/original escrow deployment whose tutorial ABI didn't match the deployed struct (wrong `fund()` selector, garbage decoded values). Escrow was later deployed correctly with the real guarded signature (`docs/superpowers/plans/2026-08-05-escrow-contract-deploy.md`) and proven end-to-end (`docs/spike-results.md`'s escrow lifecycle and trust-graduation sections). Escrow ships, so Tasks 2–3 proceeded — this is not the ungated-fallback path the paragraph above warns against.
+
 **The hook is a footgun.** ERC-8183's spec flags that hooks run client-supplied code inside the state-change path, with only `SHOULD`-level mitigations. Our hook must be **minimal, non-reverting, and side-effect-free on the escrow's own state**. If reputation writing fails, the escrow completion must still succeed.
 
 ---
@@ -34,7 +36,7 @@
 
 | File | Responsibility | Action |
 |---|---|---|
-| `packages/db/src/migrations/0030_agent_identity_reputation.sql` | Identity + reputation records | **Create** |
+| `packages/db/src/migrations/0033_agent_identity_reputation.sql` | Identity + reputation records | **Create** |
 | `apps/api/src/engines/identity/erc8004.ts` | Registry client | **Create** |
 | `apps/api/src/engines/payments/reputation-hook.ts` | Escrow-gated feedback writer | **Create** |
 | `apps/api/src/engines/payments/allocations.ts` | Reputation → allocation | Modify (Phase 4 file) |
@@ -49,10 +51,10 @@ Ships regardless of S8's escrow verdict.
 
 ### Task 1: Register agents in the IdentityRegistry `[D3]`
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 ```sql
--- 0030_agent_identity_reputation.sql
+-- 0033_agent_identity_reputation.sql
 -- ERC-8004 identity is an ERC-721 NFT per agent.
 -- Registry addresses appear only in Arc's TUTORIALS, not its official
 -- contract reference -- treat as testnet-tutorial-grade and re-verify.
@@ -95,7 +97,7 @@ CREATE INDEX IF NOT EXISTS agent_reputation_events_agent_idx
 
 > `UNIQUE (escrow_job_id)` prevents one completed job being milked for repeated feedback. `NOT NULL` on the FK is what makes "earned only" a database guarantee rather than a code convention.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 describe('ERC-8004 identity registration', () => {
@@ -121,7 +123,7 @@ describe('ERC-8004 identity registration', () => {
 });
 ```
 
-- [ ] **Step 3: Re-verify the registry address, then implement**
+- [x] **Step 3: Re-verify the registry address, then implement**
 
 ```bash
 node scripts/spikes/s8-erc8183-funding.mjs   # includes registry address checks
@@ -131,12 +133,12 @@ If the Identity registry has no code at the tutorial address, **stop** and recor
 
 Implement `register(agentURI, MetadataEntry[])` in `erc8004.ts`. Registration is an NFT mint, so make it idempotent against the `UNIQUE (agent_id, mode, chain)` constraint.
 
-- [ ] **Step 4: Verify on testnet and commit**
+- [x] **Step 4: Verify on testnet and commit**
 
 Register a real agent; record the token id and tx hash.
 
 ```bash
-git add packages/db/src/migrations/0030_agent_identity_reputation.sql apps/api/src/engines/identity/erc8004.ts apps/api/test/identity/erc8004.test.ts
+git add packages/db/src/migrations/0033_agent_identity_reputation.sql apps/api/src/engines/identity/erc8004.ts apps/api/test/identity/erc8004.test.ts
 git commit -m "feat(identity): register agents in the ERC-8004 identity registry"
 ```
 
@@ -148,7 +150,7 @@ git commit -m "feat(identity): register agents in the ERC-8004 identity registry
 
 ### Task 2: Write reputation only from an escrow completion hook `[D4]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 The gating tests are the point of this task — they encode the contribution.
 
@@ -206,13 +208,13 @@ describe('payment-gated reputation', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails, then implement `reputation-hook.ts`**
+- [x] **Step 2: Run to verify it fails, then implement `reputation-hook.ts`**
 
 Bind to the ERC-8183 `IACPHook.afterAction` hook, firing only on `complete`. Re-read the job's on-chain state before writing — do not trust the hook's payload alone.
 
 Keep the hook **minimal and non-reverting**: catch every error from the registry write, log it, and return successfully. A failed reputation write is an operational problem; a reverted escrow completion is a money problem.
 
-- [ ] **Step 3: Verify on testnet and commit**
+- [x] **Step 3: Verify on testnet and commit**
 
 Complete a real escrow job; confirm feedback appears on-chain and that no path exists to write it otherwise.
 
@@ -235,7 +237,7 @@ Non-negotiable properties:
 - **Bounded step size** — one job cannot move allocation more than a fixed fraction.
 - **The Phase 4 solvency invariant still binds.** Reputation adjusts allocation *within* treasury deposits, never around them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('reputation-driven allocation', () => {
@@ -285,11 +287,11 @@ describe('reputation-driven allocation', () => {
 });
 ```
 
-- [ ] **Step 2: Record the formula, then implement**
+- [x] **Step 2: Record the formula, then implement**
 
 Write the exact function into `docs/decisions.md` as decision K-6 before coding it. Implement `nextAllocation` as a **pure function** so it is exhaustively testable without a database, and call it from an `applyReputationAdjustment` that reuses Phase 4's `setAllocation` — which already enforces solvency under the org advisory lock. Do not bypass it.
 
-- [ ] **Step 3: Run the full gate and commit**
+- [x] **Step 3: Run the full gate and commit**
 
 ```bash
 npm run verify
@@ -301,18 +303,18 @@ git commit -m "feat(payments): adjust allocation from earned reputation within b
 
 ## Phase 8 Done Criteria
 
-- [ ] Registry addresses were **re-verified** before any code was written against them
-- [ ] Agents register in the IdentityRegistry; registration is idempotent
-- [ ] (If escrow shipped) Reputation is written **only** from a genuine escrow `complete`
-- [ ] Feedback with no escrow job is rejected **at the database level**
-- [ ] `rejected` and `expired` jobs write no reputation
-- [ ] At most one feedback per job
-- [ ] A failing reputation write **does not** revert the escrow completion
-- [ ] Allocation adjustment respects floor, ceiling, and max step size
-- [ ] Allocation adjustment still obeys the Phase 4 solvency invariant
-- [ ] Repeated adjustments converge; no oscillation or runaway
-- [ ] The K-6 formula is recorded in `docs/decisions.md`
-- [ ] `npm run verify` passes with Docker up
+- [x] Registry addresses were **re-verified** before any code was written against them
+- [x] Agents register in the IdentityRegistry; registration is idempotent
+- [x] (If escrow shipped) Reputation is written **only** from a genuine escrow `complete`
+- [x] Feedback with no escrow job is rejected **at the database level**
+- [x] `rejected` and `expired` jobs write no reputation
+- [x] At most one feedback per job
+- [x] A failing reputation write **does not** revert the escrow completion
+- [x] Allocation adjustment respects floor, ceiling, and max step size
+- [x] Allocation adjustment still obeys the Phase 4 solvency invariant
+- [x] Repeated adjustments converge; no oscillation or runaway
+- [x] The K-6 formula is recorded in `docs/decisions.md`
+- [x] `npm run verify` passes with Docker up
 
 **Claim discipline:**
 - ✅ *"Reputation is earned only by completing a real escrowed job — a property the standard itself does not require."*

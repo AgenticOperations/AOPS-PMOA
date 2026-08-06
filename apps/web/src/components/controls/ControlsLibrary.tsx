@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { IconArrowRight } from '@tabler/icons-react';
 import type { AuditEventRecord } from '@/lib/audit-types';
 import type {
@@ -41,6 +41,8 @@ type ControlsLibraryProps = {
   readonly archivePolicyAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly createRevisionDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
   readonly createRestoreDraftAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly bindAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly removeBindingAction?: ((formData: FormData) => Promise<void>) | undefined;
 };
 
 type DrawerState =
@@ -271,6 +273,8 @@ export function ControlsLibrary({
   archivePolicyAction,
   createRevisionDraftAction,
   createRestoreDraftAction,
+  bindAction,
+  removeBindingAction,
 }: ControlsLibraryProps) {
   const [drawer, setDrawer] = useState<DrawerState>({ kind: 'closed' });
   const [tableView, setTableView] = useState<TableView>('library');
@@ -325,6 +329,20 @@ export function ControlsLibrary({
       setConfirmDiscardDraftId(null);
       return;
     }
+  }, [drafts, drawer]);
+
+  // The create form has no completion callback (it submits a Server Action
+  // directly via the form's `action` prop), so once the new draft shows up
+  // in `drafts` after revalidation, close the drawer ourselves -- otherwise
+  // it just sits there looking like the click did nothing.
+  const draftIdsRef = useRef<Set<string>>(new Set(drafts.map((draft) => draft.id)));
+  useEffect(() => {
+    const knownIds = draftIdsRef.current;
+    if (drawer.kind === 'create' && drafts.some((draft) => !knownIds.has(draft.id))) {
+      setDrawer({ kind: 'closed' });
+      setTableView('drafts');
+    }
+    draftIdsRef.current = new Set(drafts.map((draft) => draft.id));
   }, [drafts, drawer]);
   const detailStatement = detailPolicy === undefined ? undefined : primaryStatement(detailPolicy);
   const detailPolicyActivity =
@@ -1090,7 +1108,7 @@ export function ControlsLibrary({
                     <section className="controls-form-surface controls-detail-panel" aria-label={`${detailPolicy.name} targets`}>
                       <div className="controls-form-heading">
                         <h2>Targets</h2>
-                        <p>Current assignments are shown for impact review. Attach or remove policies from the workspace, team, agent, or credential page.</p>
+                        <p>Assign this policy to a supported scope, or remove an existing assignment.</p>
                       </div>
                       {detailPolicy.bindings.length === 0 ? (
                         <div className="controls-side-empty flush">
@@ -1106,10 +1124,41 @@ export function ControlsLibrary({
                                 <span>{binding.target_id}</span>
                               </div>
                               <span className={`status-badge ${statusClass(binding.status)}`}>{binding.status}</span>
+                              {removeBindingAction === undefined ? null : (
+                                <form action={removeBindingAction}>
+                                  <input name="policyId" type="hidden" value={detailPolicy.id} />
+                                  <input name="bindingId" type="hidden" value={binding.id} />
+                                  <button className="button-secondary" type="submit">Remove</button>
+                                </form>
+                              )}
                             </li>
                           ))}
                         </ol>
                       )}
+                      {detailPolicy.status === 'active' && bindAction !== undefined ? (
+                        <form action={bindAction} className="controls-bind-form">
+                          <input name="policyId" type="hidden" value={detailPolicy.id} />
+                          <input name="policyVersion" type="hidden" value={detailPolicy.version} />
+                          <label>
+                            <span>Assign to</span>
+                            <select name="targetKey" required defaultValue="">
+                              <option value="" disabled>Select target</option>
+                              {groupedTargets(
+                                bindTargets.filter((target) => detailPolicy.binding_target_types.includes(target.type)),
+                              ).map((group) => (
+                                <optgroup key={group.type} label={formatTargetType(group.type)}>
+                                  {group.targets.map((target) => (
+                                    <option key={`${target.type}:${target.id}`} value={`${target.type}:${target.id}`}>
+                                      {target.label} · {formatTargetType(target.type)}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                          </label>
+                          <button className="button-primary" type="submit">Assign</button>
+                        </form>
+                      ) : null}
                     </section>
                   ) : null}
 

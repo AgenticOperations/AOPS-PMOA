@@ -60,6 +60,7 @@ import {
   revokeDelegation,
 } from './permit2.js';
 import { getTrustEvidence, revokeTrust, trustExternalAgent } from './trust.js';
+import { listEscrowCounterparties, listEscrowLivenessRisks } from './escrow.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain } from './types.js';
@@ -197,6 +198,12 @@ const trustPromoteSchema = z.object({
   label: z.string().trim().min(1).max(120),
   ceiling_usdc: moneySchema,
   expires_at: z.coerce.date(),
+});
+
+const escrowLivenessQuerySchema = z.object({
+  // Default matches EscrowLivenessBanner's intent: warn with enough runway
+  // left to actually act on it, not the moment expiry is imminent.
+  within_hours: z.coerce.number().positive().max(720).default(24),
 });
 
 type OrgCeilingRow = {
@@ -1066,6 +1073,30 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       delegationId: params.delegationId,
     });
     return result;
+  });
+
+  // --- Escrow: counterparties and liveness ---------------------------------
+  //
+  // Piece 2 (escrow-lifecycle-engine.md) built listEscrowCounterparties and
+  // listEscrowLivenessRisks but never exposed them -- the console has no
+  // other way to discover which external addresses to pull trust evidence
+  // for, or which submitted jobs are approaching their evaluator-liveness
+  // trap.
+
+  app.get('/v1/orgs/:orgId/payments/escrow/counterparties', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const counterparties = await listEscrowCounterparties(deps.pool, { orgId: params.orgId, mode });
+    return { counterparties };
+  });
+
+  app.get('/v1/orgs/:orgId/payments/escrow/liveness-risks', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = escrowLivenessQuerySchema.parse(request.query ?? {});
+    const risks = await listEscrowLivenessRisks(deps.pool, { orgId: params.orgId, withinHours: query.within_hours });
+    return { risks };
   });
 
   // --- Trust graduation ----------------------------------------------------

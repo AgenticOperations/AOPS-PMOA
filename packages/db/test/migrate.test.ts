@@ -87,6 +87,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0030_treasury_payer_and_org_ceiling');
     expect(firstRun).toContain('0031_changelog_sync');
     expect(firstRun).toContain('0032_escrow_jobs');
+    expect(firstRun).toContain('0033_agent_identity_reputation');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -126,6 +127,7 @@ describe('PMOA database migrations', () => {
       '0030_treasury_payer_and_org_ceiling',
       '0031_changelog_sync',
       '0032_escrow_jobs',
+      '0033_agent_identity_reputation',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(
@@ -182,6 +184,16 @@ describe('PMOA database migrations', () => {
       "SELECT to_regclass('public.escrow_jobs')::text AS exists",
     );
     expect(escrowTable.rows[0]?.exists).toBe('escrow_jobs');
+
+    // Migration 0033: ERC-8004 identity + payment-gated reputation.
+    const identityTable = await pool.query<{ exists: string }>(
+      "SELECT to_regclass('public.agent_onchain_identities')::text AS exists",
+    );
+    expect(identityTable.rows[0]?.exists).toBe('agent_onchain_identities');
+    const reputationTable = await pool.query<{ exists: string }>(
+      "SELECT to_regclass('public.agent_reputation_events')::text AS exists",
+    );
+    expect(reputationTable.rows[0]?.exists).toBe('agent_reputation_events');
   });
 
   it('serializes concurrent migration runners with a PostgreSQL advisory lock', async () => {

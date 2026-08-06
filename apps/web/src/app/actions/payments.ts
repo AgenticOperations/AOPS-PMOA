@@ -10,8 +10,10 @@ import {
   reconcileCircleProviderJobs,
   requestTestnetFunds,
   retryLiquidityJob,
+  revokeTrust,
   setProviderMode,
   setAgentPaymentAccess,
+  trustExternalAgent,
   verifyPaymentRails,
   verifyPaymentRail,
 } from '@/lib/server/payments-client';
@@ -196,6 +198,35 @@ export async function createTreasuryAction(orgId: string, orgSlug: string, formD
     label: requiredStringField(formData, 'label'),
     treasury_type: 'gateway',
   });
+  revalidatePayments(orgSlug);
+}
+
+// TrustAgentPanel calls these directly as functions (bound per external
+// agent to its chain + address), not through a <form action> -- that is why
+// they take a plain object rather than FormData.
+
+export async function trustExternalAgentAction(
+  orgId: string,
+  orgSlug: string,
+  chain: PaymentChain,
+  address: string,
+  input: { readonly label: string; readonly ceilingUsdc: string; readonly expiresAt: string },
+): Promise<void> {
+  await trustExternalAgent(orgId, chain, address, {
+    label: input.label,
+    ceiling_usdc: input.ceilingUsdc,
+    expires_at: input.expiresAt,
+  });
+  revalidatePayments(orgSlug);
+}
+
+export async function revokeTrustAction(
+  orgId: string,
+  orgSlug: string,
+  chain: PaymentChain,
+  address: string,
+): Promise<void> {
+  await revokeTrust(orgId, chain, address);
   revalidatePayments(orgSlug);
 }
 

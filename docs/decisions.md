@@ -20,7 +20,26 @@ Decisions made during the Arc build, per `docs/superpowers/plans/2026-08-03-phas
 
 ## K-6 — Reputation → allocation formula
 
-**Not needed for T3.** Required before Phase 8 · Task 3 starts. Must be bounded with a hard floor, a hard ceiling, and a bounded per-job step size — an unbounded feedback loop on real money is dangerous. Formula to be recorded here before that task begins.
+**Decision:** allocation moves toward a reputation-implied target, but never by more than a bounded fraction of its current value in one adjustment.
+
+```
+target = floor + (ceiling - floor) * (reputation / 100)
+step   = current * maxStepBps / 10000
+delta  = clamp(target - current, -step, +step)
+next   = clamp(current + delta, floor, ceiling)
+```
+
+With `maxStepBps = 1000` (10%) as the fixed constant `allocations.ts` uses.
+
+**Where the bounds come from -- existing columns, not new ones:**
+- **floor = `agent_allocations.gas_reserve_usdc`.** Reusing the existing gas-reserve column rather than adding a new one: K-6's hard floor exists so "reputation can never drive allocation to zero and strand an agent," and the gas reserve is already this codebase's number for what an agent needs to keep operating at all. A floor that could sit below the agent's own gas reserve would strand it exactly the way the requirement forbids.
+- **ceiling = `agent_allocations.ceiling_usdc`.** Already the literal operator-set ceiling `setAllocation` enforces — no new concept needed.
+
+**Why bounded-step rather than snap-to-target:** a single job's reputation event must not be able to move an agent's allocation from floor to ceiling (or the reverse) in one adjustment — that is the "unbounded feedback loop on real money" this decision exists to prevent. Scaling the step by a percentage of *current* allocation (not a flat USDC amount) means the bound stays proportionate as an agent's allocation grows, and — proven in the convergence test — repeated adjustments toward a fixed target settle exactly at that target rather than oscillating around it or overshooting.
+
+**Solvency still wins.** `applyReputationAdjustment` computes `next` and then calls Phase 4's existing `setAllocation` with it unchanged — it does not bypass or duplicate the `sum(allocated) <= treasury deposits` check. A reputation-implied allocation that would exceed real deposits is refused the same way any other over-allocation is, by the same code path.
+
+**Where `reputation` (0-100) itself comes from is deliberately NOT decided here.** `applyReputationAdjustment` takes it as a caller-supplied input; aggregating `agent_reputation_events` into a single score, and wiring something to call this on a schedule or per-event, is out of this task's scope (`allocations.ts` only, per the Phase 8 · Task 3 file structure) and needs its own decision before it's built.
 
 ## K-11 — 7-day `minValiditySeconds` exposure window
 
@@ -47,3 +66,14 @@ arc side  gateway balance 32.000000 -> 31.946500  (0.05 burn + 0.0035 fee)
 ```
 
 Both halves reconcile exactly: 0.0535 USDC left the Arc Gateway balance, 0.05 USDC was minted from the zero address on Base, and the 0.0035 difference matches Circle's documented fee. See `docs/spike-results.md`'s "Phase 7 · Task 4 — mint verified" section for the earlier failed attempts and their real root cause.
+
+## Delegation UX — keep both treasury (custodial) and wallet (non-custodial) flows
+
+**Decision: keep both, deliberately, as two entry points on the same delegations page — not one flow replacing the other.**
+
+- **Treasury flow** (`DelegateFromTreasury` → `/payments/delegations/treasury`): the payer is the org's Circle-held treasury wallet; Circle signs via the platform's entity secret (`circle-provider.ts`'s `signPermit2Delegation`). No wallet, no MetaMask, no gas from the operator. This is the path for an operator who has no wallet at all — the platform can create and hold one for them via Circle's developer-controlled wallets, so "I don't have a wallet" is never a blocker to delegating.
+- **Wallet flow** (`DelegateToAgent` → `/payments/delegations/typed-data` + `/payments/delegations`): the payer is the operator's own connected wallet; the operator signs the EIP-712 permit themselves via MetaMask (`useSignTypedData`). Non-custodial — the platform never holds this key.
+
+**Why both, not just one:** they trade off custody against onboarding friction in opposite directions, and different operators will legitimately want different sides of that trade — an operator who already runs a treasury wallet elsewhere wants funds to stay in their own custody; an operator who just wants to try the product without setting up a wallet needs the platform to hold custody for them. Collapsing to only the wallet flow would gate every new operator behind "go install MetaMask and fund it" before they can create a single delegation; collapsing to only the treasury flow would make the "non-custodial" claim false for everyone.
+
+**Consequence for future work on this page:** don't remove either card to "simplify" the delegations page. If a no-wallet operator lands there, the treasury card is the one to point them at — it directs to Circle rather than requiring wallet setup first.
