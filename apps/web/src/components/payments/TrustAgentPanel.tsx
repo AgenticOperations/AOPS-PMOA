@@ -18,7 +18,7 @@ export type TrustInput = {
 type Props = {
   readonly evidence: EscrowEvidence;
   readonly trusted: boolean;
-  readonly error?: string;
+  readonly error?: string | undefined;
   readonly trustAction: (input: TrustInput) => Promise<void>;
   readonly revokeAction: () => Promise<void>;
 };
