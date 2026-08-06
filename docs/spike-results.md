@@ -558,6 +558,43 @@ wallet    0xD7E0B42A09399E29b2e84fbEa02382ba2715d551, same address both chains
 
 ---
 
+### Piece 4 · Task 6 proof — the escrow-to-Permit2 graduation demo
+
+**Verdict: the full narrative works end to end on real infrastructure — real Postgres, real Circle developer-controlled-wallets API (test mode), real Arc testnet RPC, the real deployed ERC-8183 escrow (`0x31C0...4e0F5`). Two escrow jobs completed (6 real transactions each), a human-equivalent promotion call opened a Permit2 delegation (2 transactions), and one drawdown against it settled in a single transaction — the exact 6-vs-1 contrast the console UI (piece 4) exists to make legible.**
+
+Run via `validation/spike-escrow-console-demo.mts`, calling piece 2's and piece 3's engine functions directly (`createEscrowJob`, `fundEscrowJob`, `applyEscrowStateChange`, `getTrustEvidence`, `trustExternalAgent`, `drawDown`) — not mocks, the same functions any future route or the console itself would call. No route or UI calls the escrow lifecycle functions today; piece 2 is exercised only by mocked unit tests, so this is the first live run of that code against real infrastructure.
+
+**Setup:** a fresh demo org, two agents (`Client agent (demo)`, `Marketplace provider agent (demo)`), each provisioned a real Circle wallet on Arc testnet, plus the org's own treasury wallet — all via the same `ensureCircleTreasury` / `enqueueAgentWalletProvisioning` code paths the console's onboarding flow uses.
+
+**Funding hit a known blocker again:** Circle's testnet faucet (`POST /v1/faucet/drips`) returned a real `403`, the same finding already recorded above under Phase 6 · Task 7 (`/v1/faucet/drips` requires a mainnet-upgraded account). Funded manually instead — a plain signed `transfer()` from the same funded EOA prior spikes reused (`0x5448...96ee4`, ~$61 USDC on Arc), 0.30 USDC to each of the client wallet, provider wallet, and treasury wallet:
+
+```
+client wallet   0x788c43660bdd43f4fa965313547b4d3fb4d7a318   funded 0x52edbdea...258e6b
+provider wallet 0x20355dbc2d92beccdf97e08a2ad4a4e8a0b72a0c   funded 0x13905e57...34865
+treasury wallet 0x5fd645cc0071571750e25871ccbeaeef38a35b8f   funded 0x4c27ba88...e70ddb
+```
+
+**Two escrow jobs, funded and completed** (self-evaluated, escrow mode 2 — the client is its own evaluator, and this is stated as-is, not as neutral arbitration):
+
+| Job | Create (`createJob`) | Fund (`setBudget`+`approve`+`fund`, last hash) | Submit | Complete |
+|---|---|---|---|---|
+| 1 (onchain id 5) | `0xfae75449...54eb251` | `0x46f8df69...1de47901` | `0x992e494b...f86d61e10` | `0x024117ba...f0936b1f462a6f` |
+| 2 (onchain id 6) | `0x715b2fe6...0efc2244b4` | `0x9346826e...9f90c274d48` | `0x050c21b2...9b1ce27c874eb4b` | `0x54409bf5...90da1d5282` |
+
+Both `complete` hashes confirmed `status: success` on-chain via `eth_getTransactionReceipt` (spot-checked, along with the create and drawdown hashes below). Each job is 6 transactions here specifically because this org holds the keys for **both** client and provider (a demo convenience) — `fundEscrowJob` auto-sends `setBudget` when the provider wallet is fleet-held, which a genuinely external provider would instead set out of band. The console's own claim ("Escrow: 5 transactions per job") describes that external-provider case; this run's honest count is 6, not 5, and that difference is recorded here rather than silently rounded off.
+
+**Trust evidence, read before promotion** (`getTrustEvidence`): `completedCount: 2, settledUsdc: "0.040000", trusted: false` — exactly the two jobs above, nothing more.
+
+**Promotion** (`trustExternalAgent`, `approvedBy` = the demo org's real owner user id, never `'system'`): opened a treasury-funded Permit2 delegation, ceiling `0.10` USDC, 90-day expiry — `allowlistId payto_a1bf0001...`, `delegationId dele_486e5494...`. Two transactions (ERC-20 `approve` then Permit2 `permit`), matching `recordSignedDelegation`'s documented shape. `getTrustEvidence` read again immediately after: `trusted: true`.
+
+**Drawdown** (`drawDown`, one job's worth — 0.02 USDC, well under the 0.10 ceiling): **one transaction**, `0xef084b9e...93640722e04` (`transferFrom`, sent from the provider's own wallet as payee) — confirmed `status: success`, block `0x34fcebc`. Nothing was locked beforehand; nothing but this one call moved.
+
+**The contrast, as run:** 6 transactions and locked capital to complete one escrow job under the untrusted rail, vs. 1 transaction and nothing locked for the same-sized payment once trusted — the trust decision itself (2 transactions, one time) is the only added cost, amortized across every future job with that counterparty.
+
+Independently verifiable on Arc's testnet explorer, e.g. **https://testnet.arcscan.app/tx/0xef084b9e1dff76fafed5a28715e07f0f6bcced77349aeba964b0a93640722e04**.
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
@@ -569,3 +606,4 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 | Phase 4 · Task 5 — sweep-revocation | Balance drains to treasury, tx hash | ✅ tx `0x566966b...f3d5627` — see "Phase 4 · Task 5 proof test" above |
 | Phase 6 · Task 2 — Permit2 drawdown | Real drawdown + `lockdown()` via `permit2.ts`'s actual functions, tx `0x8232550...dae86f25`, allowance confirmed `0n` after lockdown. See "Phase 6 · Task 2 proof test" above. | ✅ |
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
+| Piece 4 · Task 6 — escrow-to-Permit2 graduation demo | 2 completed escrow jobs (6 tx each), promotion (2 tx), 1-tx drawdown. See "Piece 4 · Task 6 proof" above | ✅ tx `0xef084b9e...93640722e04` |
