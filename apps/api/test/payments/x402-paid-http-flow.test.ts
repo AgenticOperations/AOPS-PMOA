@@ -7,6 +7,7 @@ import type {
   CircleGatewayX402SettlementResult,
   CircleTreasuryProvider,
 } from '../../src/engines/payments/circle-provider.js';
+import { deriveSpentUsdc } from '../../src/engines/payments/ledger.js';
 import { listUnknownAttempts, resolveUnknownAttempt } from '../../src/engines/payments/store.js';
 import { createX402ResultCryptoCodec } from '../../src/engines/payments/x402-result-crypto.js';
 import { startPostgres, type PostgresTestStore } from '../helpers/postgres.js';
@@ -531,6 +532,79 @@ describe('durable x402 paid HTTP flow', () => {
     expect(conflict.json()).toMatchObject({ error: 'payment_idempotency_conflict' });
     expect(discoveryCalls).toBe(1);
     expect(providerCalls).toBe(1);
+  });
+
+  it('derives spent_usdc from ledger postings that match the counter after a real settle', async () => {
+    // Task 1 (E5): the append-only ledger runs ALONGSIDE the existing
+    // counters, not instead of them. This proves the postings written at
+    // the real reserve/settle call sites (store.ts) sum to exactly what
+    // the counter reports -- not a hand-seeded fixture, the actual HTTP
+    // flow every other test in this file already drives.
+    providerOutcome = 'settled';
+    providerCalls = 0;
+    discoveryCalls = 0;
+    const org = await api.inject({
+      method: 'POST',
+      url: '/v1/orgs',
+      payload: { name: 'Ledger Parity Org', owner: { email: 'ledger@example.test', name: 'Owner' } },
+    });
+    expect(org.statusCode, org.body).toBe(201);
+    const orgId = org.json<{ org: { id: string } }>().org.id;
+    await store.pool.query("UPDATE orgs SET default_policy_effect = 'allow' WHERE id = $1", [orgId]);
+    await store.pool.query(
+      `INSERT INTO payment_destination_allowlist (id, org_id, chain, address, label, source, created_by)
+       VALUES ($1, $2, 'base', '0x0000000000000000000000000000000000000001', 'Test merchant', 'marketplace', 'usr_owner')`,
+      [`payto_${orgId}`, orgId],
+    );
+
+    const agent = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents`,
+      payload: { name: 'Ledger buyer' },
+    });
+    expect(agent.statusCode, agent.body).toBe(201);
+    const agentId = agent.json<{ agent: { id: string } }>().agent.id;
+    const connection = await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/connections`,
+      payload: { kind: 'agent_credential', name: 'Runtime' },
+    });
+    const secret = connection.json<{ secret: string }>().secret;
+    expect((await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/payments/circle/treasury`,
+      payload: { label: 'Treasury' },
+    })).statusCode).toBe(201);
+    expect((await api.inject({
+      method: 'POST',
+      url: `/v1/orgs/${orgId}/agents/${agentId}/payment-access`,
+      payload: {
+        allowed_rails: ['exact_base'],
+        budget_usdc: '5',
+        dedicated_wallet_required: false,
+        per_request_cap_usdc: '2',
+        status: 'active',
+      },
+    })).statusCode).toBe(200);
+
+    const paid = await api.inject({
+      method: 'POST',
+      url: '/v1/runtime/payments/x402',
+      headers: { authorization: `Bearer ${secret}` },
+      payload: {
+        idempotency_key: 'ledger-parity-1',
+        request: { url: merchantUrl, method: 'GET', headers: [] },
+      },
+    });
+    expect(paid.statusCode, paid.body).toBe(200);
+    expect(paid.json()).toMatchObject({ payment: { status: 'settled' } });
+
+    const counter = await store.pool.query<{ spent_usdc: string }>(
+      'SELECT spent_usdc FROM agent_payment_accounts WHERE org_id = $1 AND agent_id = $2',
+      [orgId, agentId],
+    );
+    const derived = await deriveSpentUsdc(store.pool, { orgId, agentId, mode: 'test' });
+    expect(derived).toBe(counter.rows[0]?.spent_usdc);
   });
 
   it('serializes concurrent full-flow requests into one attempt, reservation, and provider call', async () => {

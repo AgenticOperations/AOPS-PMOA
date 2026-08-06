@@ -89,6 +89,7 @@ describe('PMOA database migrations', () => {
     expect(firstRun).toContain('0032_escrow_jobs');
     expect(firstRun).toContain('0033_agent_identity_reputation');
     expect(firstRun).toContain('0034_ledger_postings');
+    expect(firstRun).toContain('0035_approval_quorum');
     expect(secondRun).toEqual([]);
 
     const applied = await pool.query<{ id: string }>(
@@ -130,6 +131,7 @@ describe('PMOA database migrations', () => {
       '0032_escrow_jobs',
       '0033_agent_identity_reputation',
       '0034_ledger_postings',
+      '0035_approval_quorum',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(

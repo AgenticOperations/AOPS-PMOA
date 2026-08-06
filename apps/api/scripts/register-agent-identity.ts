@@ -10,36 +10,35 @@ import pg from 'pg';
 import { createCircleWorkerTreasuryProvider } from '../src/engines/payments/circle-worker-client.js';
 import { registerAgentIdentity } from '../src/engines/identity/erc8004.js';
 
-const [agentId, orgId] = process.argv.slice(2);
-if (agentId === undefined || orgId === undefined) {
-  console.error('Usage: tsx scripts/register-agent-identity.ts <agentId> <orgId>');
-  process.exit(1);
+async function main(): Promise<void> {
+  const [agentId, orgId] = process.argv.slice(2);
+  if (agentId === undefined || orgId === undefined) {
+    console.error('Usage: tsx scripts/register-agent-identity.ts <agentId> <orgId>');
+    process.exit(1);
+  }
+
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    const provider = createCircleWorkerTreasuryProvider({
+      baseUrl: process.env.CIRCLE_WORKER_URL ?? 'http://127.0.0.1:8090',
+      orgId,
+      timeoutMs: Number(process.env.CIRCLE_WORKER_TIMEOUT_MS ?? '180000'),
+      token: process.env.CIRCLE_WORKER_TOKEN ?? '',
+    });
+    const identity = await registerAgentIdentity(pool, provider, {
+      orgId,
+      agentId,
+      mode: 'test',
+      chain: 'arc',
+      agentUri: `https://agentops.example/agents/${agentId}.json`,
+    });
+    console.log(JSON.stringify(identity, null, 2));
+  } finally {
+    await pool.end();
+  }
 }
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-const provider = createCircleWorkerTreasuryProvider({
-  baseUrl: process.env.CIRCLE_WORKER_URL ?? 'http://127.0.0.1:8090',
-  orgId,
-  timeoutMs: Number(process.env.CIRCLE_WORKER_TIMEOUT_MS ?? '180000'),
-  token: process.env.CIRCLE_WORKER_TOKEN ?? '',
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
 });
-
-async function main() {
-  const identity = await registerAgentIdentity(pool, provider, {
-    orgId,
-    agentId,
-    mode: 'test',
-    chain: 'arc',
-    agentUri: `https://agentops.example/agents/${agentId}.json`,
-  });
-  console.log(JSON.stringify(identity, null, 2));
-}
-
-main()
-  .catch((error: unknown) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    void pool.end();
-  });

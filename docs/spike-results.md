@@ -609,6 +609,70 @@ Confirmed independently via `eth_getTransactionReceipt` (not from the function's
 
 ---
 
+## Phase 9 · Task 5 — Google ADK binding, live proof
+
+Ran the real three-process setup documented in `apps/mcp/examples/README.md`:
+a real api instance (`apps/api/scripts/adk-example-fixture.ts`), agentOps'
+real unmodified `apps/mcp/src/http.ts` entrypoint pointed at it via plain
+env vars (no code changes), and `apps/mcp/examples/adk_agent_example.py`
+using the actual `google-adk` package (`google-adk[mcp]==2.6.2`, pinned to
+`mcp>=1.24,<2` per its own `pyproject` constraint — the latest `mcp` 2.0.0
+is NOT compatible with this ADK release, confirmed by a real `ImportError`
+before pinning down).
+
+A real `McpToolset` with `StreamableHTTPConnectionParams` (bearer auth)
+completed the MCP handshake and listed agentOps' real tool surface:
+
+```
+Connected. 8 tools exposed by agentOps' MCP server:
+  - agentops.activity_record
+  - agentops.approval_consume
+  - agentops.approval_status
+  - agentops.onboard
+  - agentops.operation_check
+  - agentops.operation_record
+  - agentops.payment_x402
+  - agentops.policy_check
+```
+
+Then called `agentops.onboard` for real (not just listed it) against a real
+throwaway org/agent/connection, and got back the actual runtime contract —
+enforcement modes, the full action catalog (`runtime.http.request`,
+`payment.x402.authorize`, `tool.call`) with required/optional fields and
+examples, `isError: false`. No code changed in `apps/mcp/` to make this
+work — confirming the manifest's framing: **a binding, not new
+architecture**.
+
+Not attempted: a full `LlmAgent` reasoning loop over this toolset, which
+needs a live Gemini API key. See `adk_agent_example.py`'s docstring for why
+that line isn't claimed here.
+
+---
+
+## Phase 9 · Task 6 — `llms.txt` / `skill.md` cold-onboarding proof
+
+Verified per the plan's own bar: "have an agent onboard from them cold,
+with no other context." A fresh subagent was given ONLY the text of
+`docs/llms.txt` and `docs/skill.md` — no filesystem access, no other tools,
+no other knowledge of agentOps — and asked to derive (a) the exact tool
+call sequence before doing anything else, (b) the full branch (allow/deny/
+approval-required) for a free external request, (c) the full approval-then-
+retry sequence for a paid x402 request including a `pending` poll, and (d)
+two explicit "do not" rules and why they matter.
+
+It answered all four correctly with the right tool names and argument
+shapes, and — more usefully — surfaced two real gaps instead of guessing
+past them: no stated preference between `agentops.policy_check` and
+`agentops.operation_check` for the same action types, and no concrete
+polling backoff interval for `agentops.approval_status`. Both docs were
+fixed in response (operation_check preferred for `runtime.http.request`/
+`tool.call`; poll backoff of "at least 2s, doubling to a ~30s cap"
+specified). This is the loop the plan's verification step is for: a real
+cold read finding real ambiguity, not a self-check that could only confirm
+what was already assumed correct.
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
@@ -622,3 +686,4 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
 | Piece 4 · Task 6 — escrow-to-Permit2 graduation demo | 2 completed escrow jobs (6 tx each), promotion (2 tx), 1-tx drawdown. See "Piece 4 · Task 6 proof" above | ✅ tx `0xef084b9e...93640722e04` |
 | Phase 8 · Task 1 — ERC-8004 identity registration | Real agent registered via `registerAgentIdentity`, token id `863468`. See "Phase 8 · Task 1" above | ✅ tx `0x7fc58f44...34ebaa539` |
+| Phase 9 · Task 5 — Google ADK binding | Real `google-adk` `McpToolset` connected to our real MCP server, listed 8 real tools, called `agentops.onboard` end to end. See "Phase 9 · Task 5" below | ✅ |

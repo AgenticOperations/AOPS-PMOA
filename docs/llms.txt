@@ -1,0 +1,88 @@
+# agentOps
+
+> agentOps is a control plane for AI agents that spend money and act on
+> external systems. It sits between your agent and the outside world:
+> policy checks before an action runs, payment controls (x402 USDC) before
+> a payment settles, human approval when policy requires it, and an audit
+> trail after. You reach it as an MCP server over Streamable HTTP.
+
+This file is written for an agent (or the code that configures one), not a
+human. If you are an LLM or an agent framework reading this cold, follow
+the Quickstart below in order — it is the complete, minimal path to a
+working connection. Do not guess endpoint shapes or invent actions; the
+runtime contract you fetch in Step 2 is the authoritative, current list.
+
+## Quickstart
+
+1. **Get a connection.** You need an MCP URL and a bearer credential for
+   one specific agent identity. An agentOps operator issues these from
+   their console (Agents → an agent → Connections → new `agent_credential`
+   connection) — you cannot self-register. If you were not handed a URL
+   and a credential, stop and ask for them; nothing below works without
+   both.
+2. **Connect and onboard.** Open an MCP session against the URL from step 1
+   (Streamable HTTP transport, `Authorization: Bearer <credential>` on
+   every request), then call the `agentops.onboard` tool with no
+   arguments. Its response is the **authoritative, versioned runtime
+   contract** for your connection right now: which actions exist, which
+   fields each one needs, and worked examples for each. Read that
+   response, not this file, for the current action catalog — it is
+   generated from the same policy action registry your requests are
+   checked against, so it cannot drift from what's actually enforced.
+3. **Check before you act.** For an external HTTP/API call or a tool call
+   specifically, call `agentops.operation_check` — it is the same
+   evaluation as `agentops.policy_check` scoped to exactly those two
+   action types, so prefer it there; fall back to the more general
+   `agentops.policy_check` for any other action the contract lists. You
+   will get back one of: allowed (proceed), denied (stop, do not retry
+   the same request), or an `approval_id` (a human must approve — poll
+   `agentops.approval_status` for that id, waiting at least 2 seconds
+   between polls and backing off further — e.g. doubling up to a ~30
+   second cap — rather than polling in a tight loop; once it reports
+   `approved`, call `agentops.approval_consume` immediately before you
+   act — consuming is one-time and must happen right before, not stored
+   for later).
+4. **Do the governed thing.** For a payment, call `agentops.payment_x402`
+   directly — it applies policy and payment controls itself and executes
+   the payment; you do not need a separate policy_check first for that
+   one call; it is documented in the contract as combining both. For a
+   plain external HTTP/API request or a tool call, do the request only
+   after policy_check clears it.
+5. **Record what happened, if not already implied.** `agentops.activity_record`
+   and `agentops.operation_record` let you log completed non-financial
+   actions for operator visibility when you took an action that wasn't
+   itself an agentOps-mediated call.
+
+## Tools (fetch the live list from `agentops.onboard`; names are stable)
+
+- `agentops.onboard` — the runtime contract. Call first, no arguments.
+- `agentops.policy_check` — evaluate an action against policy before doing it.
+- `agentops.payment_x402` — execute a governed x402 USDC payment.
+- `agentops.approval_status` — poll a pending human approval by id.
+- `agentops.approval_consume` — consume an approved one-time approval, immediately before acting on it.
+- `agentops.operation_check` — evaluate a non-financial action (tool call, external request) before doing it.
+- `agentops.operation_record` — record a completed non-financial action.
+- `agentops.activity_record` — record a concise activity event for operator visibility.
+
+## What NOT to do
+
+- Do not retry a `denied` policy decision with reworded arguments to see if
+  it passes — it will not, and it looks like an attempt to route around
+  governance.
+- Do not consume an approval and then wait — consume it immediately before
+  the action it authorizes.
+- Do not call `agentops.payment_x402` speculatively to "check" a price or
+  availability — it executes a real payment. Use `agentops.policy_check`
+  or read the resource without payment first if you need to know terms.
+- Do not hardcode the action catalog from this file or any other static
+  doc — always read it from `agentops.onboard`'s live response.
+
+## Further reading (for the operator setting you up, not for you at runtime)
+
+- `apps/mcp/examples/` — a working example client (Google ADK) if your
+  framework needs a reference implementation of the connection itself.
+- `docs/batch-settlement-binding.md` — how the Permit2-based payment rail
+  works, if your payments use a spending delegation rather than
+  per-payment `agentops.payment_x402` calls.
+- `docs/skill.md` — a longer, step-by-step walkthrough of the same
+  onboarding flow above, with worked examples.

@@ -37,6 +37,11 @@ export type ApprovalRecord = {
   readonly consumed_at: string | null;
   readonly expires_at: string;
   readonly note: string;
+  // N-of-M quorum [manifest E4]. required_approvals defaults to 1, which
+  // preserves every pre-quorum approval's behavior exactly: one non-
+  // requester vote still approves immediately.
+  readonly required_approvals: number;
+  readonly votes_count: number;
   readonly created_at: string;
   readonly updated_at: string;
   readonly actions?: readonly ApprovalActionRecord[] | undefined;

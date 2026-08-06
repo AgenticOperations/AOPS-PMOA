@@ -38,6 +38,8 @@ type ApprovalRow = {
   readonly consumed_at: Date | null;
   readonly expires_at: Date;
   readonly note: string;
+  readonly required_approvals: number;
+  readonly votes_count: string;
   readonly created_at: Date;
   readonly updated_at: Date;
 };
@@ -108,10 +110,15 @@ function approvalFromRow(row: ApprovalRow): ApprovalRecord {
     consumed_at: row.consumed_at?.toISOString() ?? null,
     expires_at: row.expires_at.toISOString(),
     note: row.note,
+    required_approvals: row.required_approvals,
+    votes_count: Number(row.votes_count),
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
   };
 }
+
+const VOTES_COUNT_SUBQUERY =
+  '(SELECT count(*) FROM approval_votes WHERE approval_votes.approval_id = approval_requests.id)::text AS votes_count';
 
 function activityFromRow(row: ActivityRow): ActivityRecord {
   return {
@@ -278,6 +285,11 @@ export async function createApprovalRequest(
     readonly action: string;
     readonly target: { readonly type: string; readonly id?: string | undefined };
     readonly context: Record<string, unknown>;
+    // Defaults to 1, which reproduces every pre-quorum approval's behavior
+    // exactly. Deciding WHAT this should be for a given amount/action is a
+    // caller concern (an amount-vs-threshold policy) -- this engine only
+    // enforces whatever quorum it's told, per approval.
+    readonly requiredApprovals?: number | undefined;
   },
 ): Promise<ApprovalRecord> {
   return withTransaction(pool, async (client) => {
@@ -291,14 +303,14 @@ export async function createApprovalRequest(
       `INSERT INTO approval_requests (
          id, org_id, agent_id, connection_id, decision_id, status,
          action_id, target_type, target_id, context, context_hash,
-         requested_by, expires_at
+         requested_by, expires_at, required_approvals
        )
        VALUES (
          $1, $2, $3, $4, $5, 'pending',
          $6, $7, $8, $9::jsonb, $10,
-         $4, now() + interval '15 minutes'
+         $4, now() + interval '15 minutes', $11
        )
-       RETURNING *`,
+       RETURNING *, '0' AS votes_count`,
       [
         approvalId,
         input.orgId,
@@ -310,6 +322,7 @@ export async function createApprovalRequest(
         input.target.id ?? null,
         JSON.stringify(input.context),
         contextHash,
+        input.requiredApprovals ?? 1,
       ],
     );
 
@@ -386,6 +399,17 @@ async function assertNotSelfApproval(
   }
 }
 
+/**
+ * Adds one operator's vote toward an approval's quorum, approving it once
+ * `required_approvals` distinct voters have voted -- not on the first vote
+ * unconditionally, which is what every pre-quorum approval effectively did
+ * (required_approvals defaults to 1, so that case still approves on vote
+ * one, unchanged).
+ *
+ * The self-approval guard applies to EVERY vote, not just the first: the
+ * WHERE clause below excludes requested_by = actorId the same way the
+ * pre-quorum single-vote UPDATE did.
+ */
 export async function approveApproval(
   pool: pg.Pool,
   operator: OperatorContext,
@@ -394,25 +418,35 @@ export async function approveApproval(
   note: string,
 ): Promise<ApprovalRecord> {
   return withTransaction(pool, async (client) => {
-    const updated = await client.query<ApprovalRow>(
-      `UPDATE approval_requests
-          SET status = 'approved',
-              approved_by = $3,
-              approved_at = now(),
-              note = $4,
-              updated_at = now()
-        WHERE org_id = $1
-          AND id = $2
-          AND status = 'pending'
-          AND expires_at > now()
-          AND requested_by <> $3
-        RETURNING *`,
-      [orgId, approvalId, operator.actorId, note],
+    const locked = await client.query<ApprovalRow>(
+      `SELECT *, ${VOTES_COUNT_SUBQUERY}
+         FROM approval_requests
+        WHERE org_id = $1 AND id = $2
+        FOR UPDATE`,
+      [orgId, approvalId],
     );
-    const row = updated.rows[0];
-    if (row === undefined) {
-      await assertNotSelfApproval(client, orgId, approvalId, operator.actorId);
+    const existing = locked.rows[0];
+    if (existing === undefined || existing.status !== 'pending' || existing.expires_at.getTime() <= Date.now()) {
       throw conflict('approval_not_pending', 'Approval is not pending or has expired.');
+    }
+    if (existing.requested_by === operator.actorId) {
+      throw new IdentityError('self_approval_forbidden', 403, 'The requester cannot approve or deny their own request.');
+    }
+
+    // UNIQUE (approval_id, actor_id) is what makes "the same operator
+    // cannot vote twice toward quorum" a database guarantee. A duplicate
+    // vote hits this constraint rather than silently double-counting.
+    try {
+      await client.query(
+        `INSERT INTO approval_votes (id, org_id, approval_id, actor_id, note)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [prefixedId('apvote'), orgId, approvalId, operator.actorId, note],
+      );
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && (error as { code?: string }).code === '23505') {
+        throw conflict('already_voted', 'This operator has already voted on this approval.');
+      }
+      throw error;
     }
 
     await client.query(
@@ -421,38 +455,70 @@ export async function approveApproval(
       [prefixedId('apact'), orgId, approvalId, operator.actorId, note],
     );
 
-    await recordActivity(client, {
-      orgId,
-      agentId: row.agent_id,
-      connectionId: row.connection_id,
-      decisionId: row.decision_id,
-      approvalId,
-      category: 'approval',
-      action: 'approval.approved',
-      outcome: 'success',
-      summary: 'Approval granted',
-      payload: { note },
-    });
+    const votesCount = Number(existing.votes_count) + 1;
+    const quorumReached = votesCount >= existing.required_approvals;
 
-    await recordAuditEvent(client, {
-      orgId,
-      idempotencyKey: `approval.approved:${approvalId}`,
-      eventType: 'approval.approved',
-      actor: { type: 'user', id: operator.actorId },
-      action: 'approval.approved',
-      outcome: 'success',
-      resource: { type: 'approval', id: approvalId },
-      classification: {
-        domain: 'policy',
-        category: 'runtime',
-        severity: 'info',
-        tags: ['section_3', 'approval'],
-      },
-      relations: { agent: row.agent_id, connection: row.connection_id },
-      refs: { decision: row.decision_id, approval: approvalId },
-      source: { section: 'section_3', system: 'approvals' },
-      payload: { note },
-    });
+    const updated = await client.query<ApprovalRow>(
+      `UPDATE approval_requests
+          SET status = CASE WHEN $3 THEN 'approved' ELSE status END,
+              approved_by = CASE WHEN $3 THEN $4 ELSE approved_by END,
+              approved_at = CASE WHEN $3 THEN now() ELSE approved_at END,
+              note = $5,
+              updated_at = now()
+        WHERE org_id = $1 AND id = $2
+        RETURNING *, ${VOTES_COUNT_SUBQUERY}`,
+      [orgId, approvalId, quorumReached, operator.actorId, note],
+    );
+    const row = updated.rows[0];
+    if (row === undefined) throw new Error('approval_vote_update_failed');
+
+    if (quorumReached) {
+      await recordActivity(client, {
+        orgId,
+        agentId: row.agent_id,
+        connectionId: row.connection_id,
+        decisionId: row.decision_id,
+        approvalId,
+        category: 'approval',
+        action: 'approval.approved',
+        outcome: 'success',
+        summary: `Approval granted (${votesCount}/${existing.required_approvals} votes)`,
+        payload: { note, votes_count: votesCount, required_approvals: existing.required_approvals },
+      });
+
+      await recordAuditEvent(client, {
+        orgId,
+        idempotencyKey: `approval.approved:${approvalId}`,
+        eventType: 'approval.approved',
+        actor: { type: 'user', id: operator.actorId },
+        action: 'approval.approved',
+        outcome: 'success',
+        resource: { type: 'approval', id: approvalId },
+        classification: {
+          domain: 'policy',
+          category: 'runtime',
+          severity: 'info',
+          tags: ['section_3', 'approval'],
+        },
+        relations: { agent: row.agent_id, connection: row.connection_id },
+        refs: { decision: row.decision_id, approval: approvalId },
+        source: { section: 'section_3', system: 'approvals' },
+        payload: { note, votes_count: votesCount, required_approvals: existing.required_approvals },
+      });
+    } else {
+      await recordActivity(client, {
+        orgId,
+        agentId: row.agent_id,
+        connectionId: row.connection_id,
+        decisionId: row.decision_id,
+        approvalId,
+        category: 'approval',
+        action: 'approval.approved',
+        outcome: 'pending',
+        summary: `Vote recorded (${votesCount}/${existing.required_approvals} votes) -- quorum not yet reached`,
+        payload: { note, votes_count: votesCount, required_approvals: existing.required_approvals },
+      });
+    }
 
     return approvalFromRow(row);
   });
@@ -478,7 +544,7 @@ export async function denyApproval(
           AND status = 'pending'
           AND expires_at > now()
           AND requested_by <> $3
-        RETURNING *`,
+        RETURNING *, ${VOTES_COUNT_SUBQUERY}`,
       [orgId, approvalId, operator.actorId, note],
     );
     const row = updated.rows[0];
@@ -529,10 +595,10 @@ export async function denyApproval(
 }
 
 export async function getApproval(pool: pg.Pool, orgId: string, approvalId: string): Promise<ApprovalRecord> {
-  const result = await pool.query<ApprovalRow>('SELECT * FROM approval_requests WHERE org_id = $1 AND id = $2', [
-    orgId,
-    approvalId,
-  ]);
+  const result = await pool.query<ApprovalRow>(
+    `SELECT *, ${VOTES_COUNT_SUBQUERY} FROM approval_requests WHERE org_id = $1 AND id = $2`,
+    [orgId, approvalId],
+  );
   const row = result.rows[0];
   if (row === undefined) throw notFound('Approval was not found.');
   const [approval] = await attachApprovalDetails(pool, orgId, [approvalFromRow(row)]);
@@ -542,7 +608,7 @@ export async function getApproval(pool: pg.Pool, orgId: string, approvalId: stri
 
 export async function listApprovals(pool: pg.Pool, orgId: string): Promise<ApprovalRecord[]> {
   const result = await pool.query<ApprovalRow>(
-    `SELECT *
+    `SELECT *, ${VOTES_COUNT_SUBQUERY}
        FROM approval_requests
       WHERE org_id = $1
       ORDER BY created_at DESC, id DESC`,
@@ -595,7 +661,7 @@ export async function consumeApproval(
         WHERE org_id = $1
           AND id = $2
           AND status = 'approved'
-        RETURNING *`,
+        RETURNING *, ${VOTES_COUNT_SUBQUERY}`,
       [auth.org_id, approvalId],
     );
     const row = updated.rows[0];

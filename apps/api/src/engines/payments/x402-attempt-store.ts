@@ -1,7 +1,8 @@
 import pg from 'pg';
-import { conflict, IdentityError } from '../identity/errors.js';
+import { badRequest, conflict, IdentityError } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
-import type { PaymentRail } from './types.js';
+import { writePosting } from './ledger.js';
+import type { PaymentMode, PaymentRail } from './types.js';
 import {
   validateX402ResultEnvelope,
   type X402ResultCryptoCodec,
@@ -381,6 +382,140 @@ export async function purgeExpiredX402Results(
     [boundedBatchLimit],
   );
   return result.rowCount ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Proof-based reservation release [manifest E6].
+//
+// Phase 4 · Task 4 already closed the concrete leak: an operator can
+// manually resolve a stranded 'unknown' attempt via resolveUnknownAttempt
+// (store.ts). What was still missing is release ON PROOF rather than on a
+// human's guess or a bare timeout -- an EIP-3009 authorization is
+// PROVABLY dead only once BOTH hold:
+//   1. block.timestamp > validBefore (the signed window has closed), AND
+//   2. authorizationState(from, nonce) == false (it was never consumed)
+// Either alone is insufficient. Past validBefore but USED means it
+// settled -- releasing would double-count the money the payee already
+// received. Still-valid means it could yet be submitted. No reorg branch
+// is needed: Arc has deterministic BFT finality, so a settled payment is
+// final the instant it confirms.
+// ---------------------------------------------------------------------------
+
+/**
+ * What `releaseOnProof` needs to know about a reservation's authorization
+ * to evaluate the death predicate. Injected as a single boundary so tests
+ * can supply any combination without a real chain call, and so a real
+ * implementation can source `validBefore`/`authorizationUsed` however the
+ * caller actually tracks the signed authorization for that reservation --
+ * this schema does not persist EIP-3009 authorization fields today, so a
+ * production reader has its own sourcing to do before it can answer.
+ */
+export type DeathPredicateChainReader = (input: {
+  readonly reservationId: string;
+}) => Promise<{ readonly validBeforeUnixSeconds: number; readonly authorizationUsed: boolean }>;
+
+/** Both conditions, never either alone -- that IS the death predicate. */
+export function isProvablyDead(input: {
+  readonly validBeforeUnixSeconds: number;
+  readonly authorizationUsed: boolean;
+  readonly nowUnixSeconds?: number | undefined;
+}): boolean {
+  const now = input.nowUnixSeconds ?? Math.floor(Date.now() / 1000);
+  return now > input.validBeforeUnixSeconds && !input.authorizationUsed;
+}
+
+type ReservationForRelease = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly amount_usdc: string;
+  readonly status: string;
+};
+
+async function orgPaymentMode(db: pg.Pool | pg.PoolClient, orgId: string): Promise<PaymentMode> {
+  // Duplicated from store.ts's getOrgPaymentMode rather than imported --
+  // store.ts already imports FROM this file, and importing back would be
+  // this codebase's first circular module dependency (the same reasoning
+  // permit2.ts/escrow.ts/trust.ts already document for their own small
+  // duplicated helpers).
+  const result = await db.query<{ mode: PaymentMode }>(
+    'SELECT mode FROM org_payment_modes WHERE org_id = $1', [orgId],
+  );
+  return result.rows[0]?.mode ?? 'test';
+}
+
+export type ReleaseOnProofInput = {
+  readonly reservationId: string;
+};
+
+/**
+ * Releases a reservation once its authorization is PROVABLY dead, never on
+ * a timeout or a guess. Refuses -- rather than silently doing nothing --
+ * when the predicate does not hold, so a caller cannot accidentally treat
+ * "not yet provable" as "nothing to do here."
+ */
+export async function releaseOnProof(
+  pool: pg.Pool,
+  input: ReleaseOnProofInput,
+  chainReader: DeathPredicateChainReader,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const reservation = await client.query<ReservationForRelease>(
+      `SELECT id, org_id, agent_id, amount_usdc, status
+         FROM payment_reservations
+        WHERE id = $1
+        FOR UPDATE`,
+      [input.reservationId],
+    );
+    const row = reservation.rows[0];
+    if (row === undefined) throw new IdentityError('reservation_not_found', 404, 'Payment reservation was not found.');
+    if (row.status !== 'reserved') {
+      throw conflict('reservation_not_reserved', `Reservation is ${row.status}, not reserved.`);
+    }
+
+    const proof = await chainReader({ reservationId: input.reservationId });
+    if (!isProvablyDead({
+      validBeforeUnixSeconds: proof.validBeforeUnixSeconds,
+      authorizationUsed: proof.authorizationUsed,
+    })) {
+      throw badRequest(
+        'not_provably_dead',
+        'not_provably_dead: the authorization has not both expired and gone unused, so releasing now could double-count '
+        + 'money that may still settle.',
+      );
+    }
+
+    await client.query(
+      `UPDATE payment_reservations SET status = 'released', updated_at = now()
+        WHERE id = $1 AND org_id = $2 AND status = 'reserved'`,
+      [row.id, row.org_id],
+    );
+    await client.query(
+      `UPDATE agent_payment_accounts
+          SET reserved_usdc = reserved_usdc - $3::numeric, updated_at = now()
+        WHERE org_id = $1 AND agent_id = $2`,
+      [row.org_id, row.agent_id, row.amount_usdc],
+    );
+    await writePosting(client, {
+      orgId: row.org_id,
+      agentId: row.agent_id,
+      mode: await orgPaymentMode(client, row.org_id),
+      entryType: 'release',
+      amountUsdc: row.amount_usdc,
+      reservationId: row.id,
+      reasonCode: 'death_predicate_proven',
+      createdBy: 'system',
+    });
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export function createPostgresX402AttemptStore(

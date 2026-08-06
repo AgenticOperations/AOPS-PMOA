@@ -30,7 +30,7 @@
 
 | File | Responsibility | Action |
 |---|---|---|
-| `packages/db/src/migrations/0031_ledger_postings.sql` | Append-only postings | **Create** |
+| `packages/db/src/migrations/0034_ledger_postings.sql` | Append-only postings | **Create** |
 | `apps/api/src/engines/payments/ledger.ts` | Posting writer + balance derivation | **Create** |
 | `apps/api/src/engines/payments/x402-attempt-store.ts` | Death-predicate release | Modify |
 | `apps/api/src/engines/approvals/store.ts` | N-of-M quorum | Modify |
@@ -44,10 +44,10 @@
 
 ### Task 1: Postings table with derived balances `[E5]`
 
-- [ ] **Step 1: Write the migration**
+- [x] **Step 1: Write the migration**
 
 ```sql
--- 0031_ledger_postings.sql
+-- 0034_ledger_postings.sql
 -- Append-only postings. Every economic event is a row; balances are
 -- DERIVED by summation. Corrections happen by appending an offsetting
 -- row, NEVER by editing. The existing counters on agent_payment_accounts
@@ -100,7 +100,7 @@ CREATE TRIGGER ledger_postings_no_update
 
 > The trigger is what makes "append-only" a guarantee rather than a naming convention. Without it, the first person in a hurry does an `UPDATE`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 describe('append-only ledger', () => {
@@ -140,15 +140,15 @@ describe('append-only ledger', () => {
 });
 ```
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Write a posting at each existing money-movement point — reserve (`store.ts:4955`), settle (`:5147`), release (`:5348`), plus topup and sweep from Phase 4. **Do not remove the counter updates.** They stay as the cache; the postings become the truth. The parity test above is what proves they agree.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 npx vitest run test/payments --root apps/api
-git add packages/db/src/migrations/0031_ledger_postings.sql apps/api/src/engines/payments/ledger.ts apps/api/test
+git add packages/db/src/migrations/0034_ledger_postings.sql apps/api/src/engines/payments/ledger.ts apps/api/test
 git commit -m "feat(payments): add append-only ledger postings with derived balances"
 ```
 
@@ -158,7 +158,7 @@ git commit -m "feat(payments): add append-only ledger postings with derived bala
 
 ### Task 2: Death-predicate release `[E6]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('proof-based reservation release', () => {
@@ -197,13 +197,13 @@ describe('proof-based reservation release', () => {
 });
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Both conditions must hold: `block.timestamp > validBefore` **AND** `authorizationState(from, nonce) == false`. Either alone is insufficient — that is the whole point of a death predicate versus a timeout.
 
 No reorg branch is needed: Arc has deterministic BFT finality, *"no confirmation windows, no reorganization risk, and no probabilistic uncertainty."*
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 git add apps/api/src/engines/payments/x402-attempt-store.ts apps/api/test
@@ -218,7 +218,7 @@ git commit -m "feat(payments): release reservations on proof of dead authorizati
 
 Phase 6 implemented Permit2 ceiling + drawdown and exposed it as a `batch-settlement` binding. The spec obliges us to publish **7 mandatory items**. This is a credibility artifact for judges, and it can only be written accurately now that the implementation exists.
 
-- [ ] **Step 1: Write `docs/batch-settlement-binding.md`** covering all seven:
+- [x] **Step 1: Write `docs/batch-settlement-binding.md`** covering all seven:
 
 | # | Item | What to document |
 |---|---|---|
@@ -232,7 +232,7 @@ Phase 6 implemented Permit2 ceiling + drawdown and exposed it as a `batch-settle
 
 Document what shipped, not what was designed. If Phase 6 fell back to T4 (per-payment `exact`), say so and drop the binding claim.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add docs/batch-settlement-binding.md
@@ -247,7 +247,7 @@ git commit -m "docs: publish x402 batch-settlement binding"
 
 Phase 5 · Task 4 shipped the self-approval guard — the actual control gap. This adds the second layer.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('approval quorum', () => {
@@ -280,11 +280,11 @@ describe('approval quorum', () => {
 });
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 Needs an `approval_votes` table (one row per approver per approval, unique on the pair) so the second test passes structurally rather than by convention. Keep Phase 5's `requested_by <> approver` guard applying to **every** vote.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 git add packages/db/src/migrations apps/api/src/engines/approvals apps/api/test
@@ -299,29 +299,29 @@ git commit -m "feat(approvals): add N-of-M quorum above a configurable threshold
 
 ### Task 5: Google ADK binding `[G1]`
 
-- [ ] **Step 1:** Expose the existing MCP tool surface in the shape ADK expects. Our MCP service already serves `policy_check`, `payment_x402`, `approval_status` etc. as bearer-authenticated HTTP — **this is a binding, not new architecture.**
-- [ ] **Step 2:** Write one working example agent that uses it.
-- [ ] **Step 3:** Test that the example actually runs end to end, then commit.
+- [x] **Step 1:** Expose the existing MCP tool surface in the shape ADK expects. Our MCP service already serves `policy_check`, `payment_x402`, `approval_status` etc. as bearer-authenticated HTTP — **this is a binding, not new architecture.**
+- [x] **Step 2:** Write one working example agent that uses it.
+- [x] **Step 3:** Test that the example actually runs end to end, then commit.
 
 ### Task 6: Agent-readable onboarding `[G2]`
 
-- [ ] **Step 1:** Publish `llms.txt` and `skill.md` so agents can self-onboard without a human reading docs. Write them **to agents**, not to humans — that is what makes Ampersand's version effective.
-- [ ] **Step 2:** Verify by having an agent onboard from them cold, with no other context.
-- [ ] **Step 3:** Commit.
+- [x] **Step 1:** Publish `llms.txt` and `skill.md` so agents can self-onboard without a human reading docs. Write them **to agents**, not to humans — that is what makes Ampersand's version effective.
+- [x] **Step 2:** Verify by having an agent onboard from them cold, with no other context.
+- [x] **Step 3:** Commit.
 
 ---
 
 ## Phase 9 Done Criteria
 
-- [ ] Derived ledger balances match the existing counters exactly
-- [ ] `UPDATE` and `DELETE` on postings are **rejected by the database**
-- [ ] Corrections append an offsetting row rather than editing
-- [ ] The docs state honestly that this is append-only postings with derived balances, **not** full double-entry
-- [ ] Reservations release only when **both** death-predicate conditions hold
-- [ ] A used authorization past `validBefore` does **not** release
-- [ ] All 7 `batch-settlement` binding items are documented, describing what shipped
-- [ ] Quorum requires N distinct approvers above threshold; one below
-- [ ] The same operator cannot vote twice toward quorum
-- [ ] The ADK example agent runs end to end
-- [ ] An agent can onboard from `llms.txt` / `skill.md` with no other context
-- [ ] `npm run verify` passes with Docker up
+- [x] Derived ledger balances match the existing counters exactly
+- [x] `UPDATE` and `DELETE` on postings are **rejected by the database**
+- [x] Corrections append an offsetting row rather than editing
+- [x] The docs state honestly that this is append-only postings with derived balances, **not** full double-entry
+- [x] Reservations release only when **both** death-predicate conditions hold
+- [x] A used authorization past `validBefore` does **not** release
+- [x] All 7 `batch-settlement` binding items are documented, describing what shipped
+- [x] Quorum requires N distinct approvers above threshold; one below
+- [x] The same operator cannot vote twice toward quorum
+- [x] The ADK example agent runs end to end
+- [x] An agent can onboard from `llms.txt` / `skill.md` with no other context
+- [x] `npm run verify` passes with Docker up
