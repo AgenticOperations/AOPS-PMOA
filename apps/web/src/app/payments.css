@@ -30,12 +30,12 @@
   min-width: max-content;
   align-items: center;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
 .treasury-subnav a:hover,
-.treasury-subnav a.is-active { color: var(--text-primary); }
+.treasury-subnav a.is-active { color: var(--accent-ink); }
 
 .treasury-subnav a.is-active::after {
   position: absolute;
@@ -49,20 +49,20 @@
 
 .treasury-page-header {
   display: flex;
-  min-height: 105px;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 24px;
+  gap: 20px;
+  margin-bottom: 16px;
+  min-height: 0;
 }
 
 .treasury-eyebrow,
 .treasury-rail-eyebrow {
-  margin: 0 0 7px;
-  color: var(--accent-ink);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.13em;
+  margin: 0 0 6px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -70,20 +70,239 @@
   max-width: 900px;
   margin: 0;
   color: var(--text-primary);
-  font-family: "Iowan Old Style", Baskerville, Georgia, serif;
-  font-size: 34px;
+  font-family: var(--font-ui);
+  font-size: 1.5rem;
   font-weight: 500;
-  line-height: 1.04;
-  letter-spacing: 0;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.treasury-info-callout {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.treasury-info-mark {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  place-items: center;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.treasury-info-body {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.treasury-info-body a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.treasury-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.treasury-panel-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.treasury-panel-header p {
+  display: none;
+}
+
+.treasury-panel-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.treasury-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.treasury-fund-grid {
+  display: grid;
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .treasury-fund-grid {
+    grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+    align-items: end;
+  }
+}
+
+.treasury-agent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.treasury-agent-row-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.treasury-agent-name {
+  margin: 0 0 4px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.treasury-metric-value {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.treasury-select,
+.treasury-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.treasury-inline-meta {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.treasury-inline-meta strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.treasury-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+  max-width: 28rem;
+}
+
+.treasury-inline-actions .treasury-field-stack {
+  flex: 1;
+}
+
+.treasury-ok {
+  margin: 10px 0 0;
+  color: var(--state-success);
+  font-size: 0.75rem;
+}
+
+.treasury-error {
+  margin: 10px 0 0;
+  color: var(--state-danger);
+  font-size: 0.8125rem;
+}
+
+.empower-workbench {
+  display: grid;
+  gap: 14px;
+}
+
+.empower-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.empower-tabs button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.empower-tabs button.is-active {
+  background: var(--bg-soft);
+  color: var(--text-primary);
+}
+
+.empower-panel {
+  min-width: 0;
+}
+
+.treasury-field-label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.treasury-field-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.treasury-agent-row {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--bg-soft);
+}
+
+@media (min-width: 640px) {
+  .treasury-agent-row {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 10rem) auto auto;
+    align-items: center;
+  }
 }
 
 .treasury-page-header > div:first-child > p:last-child {
-  max-width: 78ch;
-  margin: 8px 0 0;
+  max-width: 52ch;
+  margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 0.8125rem;
   font-weight: 400;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .treasury-header-actions {
@@ -92,7 +311,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
-  padding-top: 20px;
+  padding-top: 0;
 }
 
 .treasury-button,
@@ -104,16 +323,16 @@
 
 .treasury-button {
   display: inline-flex;
-  min-height: 34px;
+  min-height: 38px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 12px;
+  padding: 0 14px;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--bg-panel);
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -122,12 +341,26 @@
 .treasury-text-action:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .treasury-button-primary {
-  border-color: var(--console-action);
+  border-color: transparent;
   background: var(--console-action);
-  color: var(--bg-panel);
+  color: var(--text-on-accent);
 }
 
-.treasury-button-primary:hover:not(:disabled) { border-color: var(--console-action); background: color-mix(in oklch, var(--console-action) 88%, white); }
+.treasury-button-primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--console-action-hover);
+  color: var(--text-on-accent);
+}
+
+.treasury-embedded-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.treasury-access-embedded .treasury-table-section {
+  margin-top: 0;
+}
 
 .treasury-icon-button {
   display: grid;
@@ -160,7 +393,7 @@
 .treasury-metric:first-child { border-left: 0; }
 .treasury-metric span { color: var(--text-muted); font-size: 8px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .treasury-metric strong { color: var(--text-primary); font-size: 19px; font-weight: 500; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.treasury-metric-lead strong { font-family: "Iowan Old Style", Baskerville, Georgia, serif; font-size: 28px; }
+.treasury-metric-lead strong { font-family: var(--font-ui); font-size: 28px; }
 .treasury-metric p,
 .treasury-metric small { margin: 0; color: var(--text-muted); font-size: 8px; font-weight: 400; line-height: 1.4; }
 .treasury-metric strong.is-danger { color: var(--state-danger); }
@@ -184,8 +417,8 @@
   border-bottom: 1px solid var(--border-strong);
 }
 
-.treasury-section-heading h2 { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 600; }
-.treasury-section-heading p { margin: 4px 0 0; color: var(--text-muted); font-size: 9px; font-weight: 400; line-height: 1.45; }
+.treasury-section-heading h2 { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 500; }
+.treasury-section-heading p { display: none; }
 .treasury-section-heading > span { display: inline-flex; min-height: 22px; align-items: center; padding: 0 8px; border-radius: 999px; background: var(--bg-soft); color: var(--text-muted); font-size: 8px; font-weight: 600; }
 
 .treasury-attention-row,
@@ -289,7 +522,7 @@
 
 .treasury-chain-title { justify-self: stretch; }
 .treasury-chain-title p { margin: 0 0 6px; color: var(--text-muted); font-size: 8px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
-.treasury-chain-title h2 { margin: 0; color: var(--text-primary); font-family: "Iowan Old Style", Baskerville, Georgia, serif; font-size: 31px; font-weight: 500; }
+.treasury-chain-title h2 { margin: 0; color: var(--text-primary); font-family: var(--font-ui); font-size: 31px; font-weight: 500; }
 
 .treasury-chain-meta {
   display: grid;
@@ -440,8 +673,9 @@
 .treasury-table time { color: var(--text-muted); font-family: var(--font-mono); font-size: 8px; }
 
 .treasury-primary-cell { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.treasury-primary-cell > span { display: grid; width: 32px; height: 32px; flex: none; place-items: center; border-radius: 7px; background: var(--bg-soft); color: var(--accent-ink); font-size: 8px; font-weight: 600; }
+.treasury-primary-cell > span:not(.agent-robot-avatar) { display: grid; width: 32px; height: 32px; flex: none; place-items: center; border-radius: 7px; background: var(--bg-soft); color: var(--accent-ink); font-size: 8px; font-weight: 500; }
 .treasury-primary-cell > .chain-mark { width: 36px; height: 36px; background: transparent; }
+.treasury-primary-cell > .agent-robot-avatar { flex: none; }
 .treasury-primary-cell > div,
 .treasury-index-primary { display: grid; min-width: 0; gap: 3px; }
 .treasury-primary-cell strong,

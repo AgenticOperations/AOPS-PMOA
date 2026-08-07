@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { ConsoleShell } from '@/components/ConsoleShell';
 import { FundingHierarchy } from '@/components/payments/FundingHierarchy';
+import { TreasuryWorkbench } from '@/components/payments/TreasuryChrome';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { listAgentWalletFunding, listCircleWallets } from '@/lib/server/payments-client';
 
@@ -19,8 +21,6 @@ export default async function PaymentsFundingPage({ params }: FundingPageProps) 
     redirect('/auth');
   }
 
-  // A workspace with no treasury or no agents yet simply has empty lists --
-  // that is the starting state, not an error worth failing the page over.
   const [treasuryWallets, agentWallets] = await Promise.all([
     listCircleWallets(org.id).catch(() => []),
     listAgentWalletFunding(org.id).catch(() => []),
@@ -28,15 +28,26 @@ export default async function PaymentsFundingPage({ params }: FundingPageProps) 
 
   return (
     <ConsoleShell active="payments" org={org}>
-      <div className="grid gap-6">
-        <header>
-          <h1 className="text-lg font-medium">Funding</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Where money enters, where it sits, and who spends it.
-          </p>
-        </header>
-        <FundingHierarchy agentWallets={agentWallets} treasuryWallets={treasuryWallets} />
-      </div>
+      <TreasuryWorkbench
+        active="fund"
+        description="Deposit USDC, then inspect agent balances by chain."
+        info={
+          <>
+            Advanced:{' '}
+            <Link href={`/app/${org.slug}/payments/sources`}>Networks</Link>
+            {' · '}
+            <Link href={`/app/${org.slug}/payments/liquidity`}>Liquidity</Link>
+          </>
+        }
+        orgSlug={org.slug}
+        title="Fund"
+      >
+        <FundingHierarchy
+          agentWallets={agentWallets}
+          orgSlug={org.slug}
+          treasuryWallets={treasuryWallets}
+        />
+      </TreasuryWorkbench>
     </ConsoleShell>
   );
 }

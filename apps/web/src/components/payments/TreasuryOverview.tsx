@@ -118,11 +118,11 @@ export function TreasuryOverview({
 
   return (
     <div className="treasury-workbench">
-      <TreasurySectionNav active="overview" orgSlug={orgSlug} />
+      <TreasurySectionNav active="fund" orgSlug={orgSlug} />
       <TreasuryPageHeader
         description="A calm operational view of funded liquidity, executable rails, delegated access, and exceptions."
         eyebrow="Treasury / command view"
-        title="Money your agents can use."
+        title="Treasury your agents can use"
       />
 
       <section aria-label="Treasury status" className="treasury-status-band">

@@ -116,7 +116,7 @@ describe('ApprovalsPage', () => {
 
     expect(screen.getByRole('heading', { name: 'Approvals' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { name: 'Pending requests' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Pending' })).toBeInTheDocument();
     expect(screen.getByText('apr_pending')).toBeInTheDocument();
     expect(screen.queryByText('apr_consumed')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
@@ -136,7 +136,7 @@ describe('ApprovalsPage', () => {
     );
 
     expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { name: 'Approval history' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'History' })).toBeInTheDocument();
     expect(screen.getByText('apr_consumed')).toBeInTheDocument();
     expect(screen.queryByText('apr_pending')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();

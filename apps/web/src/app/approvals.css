@@ -57,34 +57,34 @@
 }
 
 .approval-page-header {
-  margin-bottom: 25px;
+  margin-bottom: 18px;
 }
 
 .approval-eyebrow {
   margin: 0 0 6px;
-  color: var(--accent-ink);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.13em;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .approval-page-header h1 {
   margin: 0;
   color: var(--text-primary);
-  font-family: "Iowan Old Style", Baskerville, Georgia, serif;
-  font-size: 34px;
+  font-family: var(--font-ui);
+  font-size: 1.5rem;
   font-weight: 500;
-  line-height: 1.04;
-  letter-spacing: 0;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .approval-page-header > div > p:last-child {
-  max-width: 74ch;
-  margin: 8px 0 0;
+  max-width: 52ch;
+  margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .approval-filter-bar {
@@ -167,25 +167,22 @@
 
 .approval-index-heading {
   display: flex;
-  min-height: 60px;
+  min-height: 40px;
   align-items: end;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 0 8px;
+  padding: 10px 0 8px;
 }
 
 .approval-index-heading h2 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 0.9375rem;
+  font-weight: 500;
 }
 
 .approval-index-heading p {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 9px;
-  line-height: 1.45;
+  display: none;
 }
 
 .approval-index-heading > span {
@@ -294,7 +291,7 @@
 
 .approval-index-body > .console-empty-state {
   display: grid;
-  min-height: 220px;
+  min-height: 140px;
   place-content: center;
   justify-items: center;
   border-top: 1px solid var(--border-strong);
@@ -304,7 +301,7 @@
 
 .approval-index-body > .console-empty-state h3 {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .approval-index-body > .console-empty-state p {
@@ -398,7 +395,7 @@
 .approval-drawer .sheet-title {
   margin: 0;
   color: var(--text-primary);
-  font-family: "Iowan Old Style", Baskerville, Georgia, serif;
+  font-family: var(--font-ui);
   font-size: 26px;
   font-weight: 500;
   line-height: 1.08;

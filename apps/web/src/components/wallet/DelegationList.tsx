@@ -40,9 +40,7 @@ export function DelegationList({ orgSlug, delegations }: Props) {
 
   if (delegations.length === 0) {
     return (
-      <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-        No delegations yet. Connect a wallet above and set a spending cap for an agent.
-      </div>
+      <p className="treasury-inline-meta">No delegations yet.</p>
     );
   }
 

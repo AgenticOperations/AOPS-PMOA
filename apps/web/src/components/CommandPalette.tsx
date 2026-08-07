@@ -27,16 +27,14 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
   const base = `/app/${orgSlug}`;
   const pages = useMemo(
     () => [
-      { group: 'Workspace', href: `${base}/overview`, label: 'Overview' },
+      { group: 'Workspace', href: `${base}/overview`, label: 'Home' },
       { group: 'Identity', href: `${base}/agents`, label: 'Agents' },
       { group: 'Identity', href: `${base}/controls`, label: 'Controls' },
       { group: 'Runtime', href: `${base}/operations`, label: 'Operations' },
       { group: 'Runtime', href: `${base}/approvals`, label: 'Approvals' },
-      { group: 'Treasury', href: `${base}/payments`, label: 'Treasury Overview' },
-      { group: 'Treasury', href: `${base}/payments/sources`, label: 'Sources & Rails' },
-      { group: 'Treasury', href: `${base}/payments/agent-access`, label: 'Agent Access' },
-      { group: 'Treasury', href: `${base}/payments/liquidity`, label: 'Liquidity' },
-      { group: 'Treasury', href: `${base}/payments/activity`, label: 'Activity & Evidence' },
+      { group: 'Treasury', href: `${base}/payments/funding`, label: 'Fund' },
+      { group: 'Treasury', href: `${base}/payments/empower`, label: 'Empower' },
+      { group: 'Treasury', href: `${base}/payments/activity`, label: 'Activity' },
       { group: 'Org', href: `${base}/settings`, label: 'Settings' },
     ],
     [base],

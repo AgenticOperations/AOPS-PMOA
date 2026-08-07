@@ -4,8 +4,6 @@ import { z } from 'zod';
 import { buildGoogleAuthorizeUrl, fetchGoogleProfile } from '../auth/google.js';
 import { createSession, resolveSession, revokeSession, upsertGoogleUser } from '../auth/store.js';
 import type { GoogleOAuthConfig, SessionContext } from '../auth/types.js';
-import type { RegisterPolicyRoutesDeps } from '../policy/routes.js';
-import { assertPolicyAllows } from '../policy/store.js';
 import { IdentityError } from './errors.js';
 import { satisfiesRole } from './roles.js';
 import {
@@ -58,7 +56,6 @@ import type { OperatorContext, Role } from './types.js';
 export type RegisterIdentityRoutesDeps = {
   readonly pool: pg.Pool;
   readonly googleOAuth?: GoogleOAuthConfig | undefined;
-  readonly policy?: RegisterPolicyRoutesDeps | undefined;
   readonly sessionCookieName?: string | undefined;
   readonly resolveOperator?: ((request: FastifyRequest) => Promise<OperatorContext | null>) | undefined;
 };
@@ -255,16 +252,6 @@ function sendIdentityError(reply: { code: (statusCode: number) => { send: (body:
 
 function parseBody<T>(schema: z.ZodType<T>, request: FastifyRequest): T {
   return schema.parse(request.body);
-}
-
-async function requirePolicyAllow(
-  deps: RegisterIdentityRoutesDeps,
-  operator: OperatorContext,
-  orgId: string,
-  request: Parameters<typeof assertPolicyAllows>[3],
-): Promise<void> {
-  if (deps.policy === undefined) return;
-  await assertPolicyAllows(deps.policy.pool, operator, orgId, request);
 }
 
 export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdentityRoutesDeps): void {
@@ -481,11 +468,8 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
   app.post('/v1/orgs/:orgId/agents', async (request, reply) => {
     const params = request.params as { readonly orgId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.agent.create',
-      target: { type: 'org', id: params.orgId },
-      context: {},
-    });
+    // Operator setup is role-gated only. Policy enforces agent runtime
+    // (HTTP / payments / tools), not standing up identities.
     const agent = await createAgent(
       deps.pool,
       operator,
@@ -524,33 +508,18 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
   app.post('/v1/orgs/:orgId/agents/:agentId/pause', async (request) => {
     const params = request.params as { readonly orgId: string; readonly agentId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.agent.pause',
-      target: { type: 'agent', id: params.agentId },
-      context: {},
-    });
     return { agent: await setAgentStatus(deps.pool, operator, params.orgId, params.agentId, 'paused') };
   });
 
   app.post('/v1/orgs/:orgId/agents/:agentId/activate', async (request) => {
     const params = request.params as { readonly orgId: string; readonly agentId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.agent.activate',
-      target: { type: 'agent', id: params.agentId },
-      context: {},
-    });
     return { agent: await setAgentStatus(deps.pool, operator, params.orgId, params.agentId, 'active') };
   });
 
   app.post('/v1/orgs/:orgId/agents/:agentId/deactivate', async (request) => {
     const params = request.params as { readonly orgId: string; readonly agentId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.agent.deactivate',
-      target: { type: 'agent', id: params.agentId },
-      context: {},
-    });
     return { agent: await setAgentStatus(deps.pool, operator, params.orgId, params.agentId, 'deactivated') };
   });
 
@@ -563,11 +532,6 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
   app.post('/v1/orgs/:orgId/agents/:agentId/connections', async (request, reply) => {
     const params = request.params as { readonly orgId: string; readonly agentId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.connection.issue',
-      target: { type: 'agent', id: params.agentId },
-      context: {},
-    });
     const result = await createConnection(
       deps.pool,
       operator,
@@ -587,22 +551,12 @@ export function registerIdentityRoutes(app: FastifyInstance, deps: RegisterIdent
   app.post('/v1/orgs/:orgId/connections/:connectionId/rotate', async (request) => {
     const params = request.params as { readonly orgId: string; readonly connectionId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.connection.rotate',
-      target: { type: 'connection', id: params.connectionId },
-      context: {},
-    });
     return rotateConnection(deps.pool, operator, params.orgId, params.connectionId);
   });
 
   app.post('/v1/orgs/:orgId/connections/:connectionId/revoke', async (request) => {
     const params = request.params as { readonly orgId: string; readonly connectionId: string };
     const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
-    await requirePolicyAllow(deps, operator, params.orgId, {
-      action: 'management.connection.revoke',
-      target: { type: 'connection', id: params.connectionId },
-      context: {},
-    });
     return { connection: await revokeConnection(deps.pool, operator, params.orgId, params.connectionId) };
   });
 

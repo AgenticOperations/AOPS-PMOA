@@ -99,9 +99,9 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
 
         <header className="approval-page-header">
           <div>
-            <p className="approval-eyebrow">Runtime / human decisions</p>
+            <p className="approval-eyebrow">Runtime</p>
             <h1>Approvals</h1>
-            <p>Resolve one-time policy exceptions with their full context, expiry, decision, and consumption trail.</p>
+            <p>Pending and past human decisions.</p>
           </div>
         </header>
 
@@ -117,12 +117,12 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
 
         <section className="approval-index-section" aria-labelledby="approval-index-title">
           <div className="approval-index-heading">
-            <div><h2 id="approval-index-title">{activeTab === 'inbox' ? 'Pending requests' : 'Approval history'}</h2><p>Each request remains tied to its decision, target, context hash, expiry, and consumption evidence.</p></div>
-            <span>{filteredApprovals.length} of {tabApprovals.length}</span>
+            <div><h2 id="approval-index-title">{activeTab === 'inbox' ? 'Pending' : 'History'}</h2></div>
+            <span>{filteredApprovals.length}</span>
           </div>
           <div className="approval-index-body">
             {visibleApprovals.length === 0 ? (
-              <div className="console-empty-state"><h3>{activeTab === 'inbox' ? 'No pending approvals' : 'No matching approval history'}</h3><p>Approval-required managed requests appear here with their persisted policy context.</p></div>
+              <div className="console-empty-state"><h3>{activeTab === 'inbox' ? 'No pending approvals' : 'No matching history'}</h3><p>Approval-gated requests appear here.</p></div>
             ) : <ApprovalIndex actions={actions} approvals={visibleApprovals} renderedAt={renderedAt} />}
           </div>
 

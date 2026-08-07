@@ -148,7 +148,7 @@ describe('OperationsWorkbench', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Operations' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Tool catalog' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Tools' })).toBeInTheDocument();
     expect(screen.getByText('browser.search')).toBeInTheDocument();
     expect(screen.getByText('Managed search tool')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Import tool' })).toBeInTheDocument();
@@ -159,7 +159,7 @@ describe('OperationsWorkbench', () => {
     expect(screen.getByRole('button', { name: 'Create limit' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Decisions' }));
-    expect(screen.getByRole('heading', { name: 'Runtime decisions' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Decisions' })).toBeInTheDocument();
     expect(screen.getByText('api.market.test')).toBeInTheDocument();
     expect(screen.getByText('api.weather.test')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Decision'), { target: { value: 'deny' } });

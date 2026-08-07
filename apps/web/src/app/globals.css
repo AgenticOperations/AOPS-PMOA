@@ -20,45 +20,47 @@
 
 :root {
   color-scheme: light;
-  --bg-app: oklch(0.98 0.003 240);
-  --bg-panel: oklch(0.995 0.002 240);
-  --bg-soft: oklch(0.965 0.004 240);
-  --bg-soft-strong: oklch(0.94 0.007 245);
-  --bg-ink: oklch(0.18 0.006 240);
-  --border-subtle: oklch(0.92 0.002 240);
-  --border-strong: oklch(0.86 0.004 240);
-  --text-primary: oklch(0.2 0.005 240);
-  --text-muted: oklch(0.5 0.005 240);
-  --text-faint: oklch(0.62 0.005 240);
-  --text-on-dark: oklch(0.985 0.004 245);
-  --text-on-accent: oklch(0.985 0.004 250);
-  --accent-blue: oklch(0.55 0.2 250);
-  --accent-blue-hover: oklch(0.48 0.22 250);
-  --accent-tint: oklch(0.95 0.01 250);
-  --accent-ink: oklch(0.34 0.1 250);
-  --console-action: oklch(0.27 0.025 251);
-  --console-action-hover: oklch(0.22 0.03 251);
-  --state-success: oklch(0.49 0.15 140);
-  --state-success-tint: oklch(0.96 0.02 140);
-  --state-warning: oklch(0.7 0.15 65);
-  --state-warning-tint: oklch(0.97 0.02 65);
-  --state-danger: oklch(0.55 0.18 25);
-  --state-danger-tint: oklch(0.95 0.02 25);
+  /* Casper console theme: warm paper, near-monochrome ink, blue used sparingly */
+  --bg-app: #f7f7f6;
+  --bg-panel: #ffffff;
+  --bg-soft: #f5f6f8;
+  --bg-soft-strong: #eaecf0;
+  --bg-ink: #111111;
+  --bg-card: #ffffff;
+  --border-subtle: #eaecf0;
+  --border-strong: #e2e5ea;
+  --text-primary: #111111;
+  --text-muted: #666666;
+  --text-faint: #888888;
+  --text-on-dark: #f9fafb;
+  --text-on-accent: #ffffff;
+  --accent-blue: #5064ff;
+  --accent-blue-hover: #3d52ef;
+  --accent-tint: #eef0ff;
+  --accent-ink: #3a4ad4;
+  --console-action: #111111;
+  --console-action-hover: #222222;
+  --state-success: #16a34a;
+  --state-success-tint: #ecfdf3;
+  --state-warning: #d97706;
+  --state-warning-tint: #fff7ed;
+  --state-danger: #c43b3b;
+  --state-danger-tint: #fef2f2;
   --radius: 8px;
-  --shadow-panel: 0 1px 3px rgb(0 0 0 / 0.02), 0 8px 24px rgb(0 0 0 / 0.015);
+  --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.04);
   --font-ui: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", "SF Mono", Consolas, monospace;
-  --entry-bg: oklch(0.976 0.004 245);
+  --entry-bg: #f7f7f6;
   --entry-panel-text: var(--text-primary);
   --entry-panel-muted: var(--text-muted);
-  --entry-button-bg: oklch(0.2 0.006 250);
-  --entry-button-bg-hover: oklch(0.27 0.008 250);
-  --entry-button-text: oklch(0.985 0.004 245);
+  --entry-button-bg: #111111;
+  --entry-button-bg-hover: #222222;
+  --entry-button-text: #ffffff;
   --entry-secondary-bg: var(--bg-panel);
   --entry-secondary-bg-hover: var(--bg-soft);
   --entry-input-bg: var(--bg-panel);
-  --entry-input-placeholder: oklch(0.62 0.004 240);
+  --entry-input-placeholder: #9ca3af;
   --entry-workspace-bg: var(--bg-panel);
   --theme-toggle-bg: var(--bg-panel);
   --theme-toggle-border: var(--border-subtle);
@@ -67,42 +69,43 @@
 
 html[data-theme="dark"] {
   color-scheme: dark;
-  --bg-app: oklch(0.17 0.006 245);
-  --bg-panel: oklch(0.205 0.007 245);
-  --bg-soft: oklch(0.25 0.008 245);
-  --bg-soft-strong: oklch(0.29 0.01 245);
-  --bg-ink: oklch(0.12 0.006 245);
-  --border-subtle: oklch(0.32 0.006 245);
-  --border-strong: oklch(0.41 0.007 245);
-  --text-primary: oklch(0.93 0.004 245);
-  --text-muted: oklch(0.68 0.006 245);
-  --text-faint: oklch(0.54 0.007 245);
-  --text-on-dark: oklch(0.97 0.004 245);
-  --text-on-accent: oklch(0.985 0.004 245);
-  --accent-blue: oklch(0.66 0.18 250);
-  --accent-blue-hover: oklch(0.72 0.16 250);
-  --accent-tint: oklch(0.27 0.05 250);
-  --accent-ink: oklch(0.82 0.09 250);
-  --console-action: oklch(0.88 0.01 245);
-  --console-action-hover: oklch(0.95 0.006 245);
-  --state-success: oklch(0.72 0.14 140);
-  --state-success-tint: oklch(0.27 0.05 145);
-  --state-warning-tint: oklch(0.29 0.05 70);
-  --state-danger-tint: oklch(0.27 0.06 25);
-  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.02), 0 18px 50px rgb(0 0 0 / 0.18);
-  --entry-bg: oklch(0.145 0.006 250);
+  --bg-app: #0c0c0c;
+  --bg-panel: #141414;
+  --bg-soft: #1a1a1a;
+  --bg-soft-strong: #222222;
+  --bg-ink: #080808;
+  --bg-card: #141414;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --text-primary: #e2e2e2;
+  --text-muted: rgba(226, 226, 226, 0.55);
+  --text-faint: rgba(226, 226, 226, 0.38);
+  --text-on-dark: #f9fafb;
+  --text-on-accent: #111111;
+  --accent-blue: #7b8cff;
+  --accent-blue-hover: #96a3ff;
+  --accent-tint: rgba(80, 100, 255, 0.16);
+  --accent-ink: #aeb6ff;
+  --console-action: #e2e2e2;
+  --console-action-hover: #ffffff;
+  --state-success: #4ade80;
+  --state-success-tint: #14301f;
+  --state-warning-tint: #3a2710;
+  --state-danger-tint: #3a1616;
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.03), 0 18px 50px rgb(0 0 0 / 0.28);
+  --entry-bg: #0c0c0c;
   --entry-panel-text: var(--text-primary);
   --entry-panel-muted: var(--text-muted);
-  --entry-button-bg: oklch(0.92 0.004 245);
-  --entry-button-bg-hover: oklch(0.85 0.004 245);
-  --entry-button-text: oklch(0.16 0.006 250);
-  --entry-secondary-bg: oklch(0.19 0.006 250);
-  --entry-secondary-bg-hover: oklch(0.23 0.006 250);
-  --entry-input-bg: oklch(0.21 0.006 250);
-  --entry-input-placeholder: oklch(0.78 0.006 245 / 0.4);
-  --entry-workspace-bg: oklch(0.19 0.006 250);
-  --theme-toggle-bg: oklch(0.22 0.007 245);
-  --theme-toggle-border: oklch(0.35 0.007 245);
+  --entry-button-bg: #e2e2e2;
+  --entry-button-bg-hover: #ffffff;
+  --entry-button-text: #111111;
+  --entry-secondary-bg: #1a1a1a;
+  --entry-secondary-bg-hover: #222222;
+  --entry-input-bg: #1a1a1a;
+  --entry-input-placeholder: rgba(226, 226, 226, 0.35);
+  --entry-workspace-bg: #1a1a1a;
+  --theme-toggle-bg: #1a1a1a;
+  --theme-toggle-border: rgba(255, 255, 255, 0.07);
   --theme-toggle-text: var(--text-primary);
 }
 
@@ -1061,7 +1064,8 @@ input::placeholder {
 .app-frame {
   display: grid;
   min-width: 0;
-  grid-template-rows: 72px 1fr;
+  grid-template-rows: 64px 1fr;
+  background: var(--bg-app);
 }
 
 .app-header {
@@ -6034,13 +6038,19 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .console-shell .sidebar-nav-link.nav-active,
 .console-shell .sidebar-nav-parent.nav-active .sidebar-nav-parent-link,
 .console-shell .sidebar-subnav-link.nav-active {
-  background: color-mix(in oklch, var(--accent-tint) 54%, var(--bg-panel));
-  color: var(--text-primary);
+  background: #1a1a1a;
+  color: #ffffff;
 }
 
 .console-shell .sidebar-nav-link.nav-active,
 .console-shell .sidebar-subnav-link.nav-active {
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent-blue) 18%, var(--border-subtle));
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.console-shell .sidebar-nav-link.nav-active .nav-icon,
+.console-shell .sidebar-subnav-link.nav-active .nav-sub-icon {
+  color: #ffffff;
 }
 
 .console-shell .sidebar-nav-disclosure,
@@ -6225,21 +6235,21 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .console-empty-state {
   display: grid;
-  min-height: 230px;
+  min-height: 140px;
   place-content: center;
   justify-items: center;
   gap: 8px;
-  padding: 32px;
+  padding: 24px;
   text-align: center;
 }
 
 .console-empty-state.compact {
-  min-height: 180px;
+  min-height: 120px;
 }
 
 .console-empty-state h3 {
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .console-empty-state p {
@@ -6802,7 +6812,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .registry-page-header h1 {
   margin: 0;
-  font-family: "Iowan Old Style", Baskerville, Georgia, serif;
+  font-family: var(--font-ui);
   font-size: 2.125rem;
   font-weight: 500;
   line-height: 1.04;
@@ -7090,7 +7100,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 }
 
 .registry-empty-state {
-  min-height: 330px;
+  min-height: 160px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -7110,13 +7120,13 @@ html[data-theme="dark"] .sidebar-brand-logo {
   background: var(--accent-tint);
   color: var(--accent-ink);
   font-size: 0.66rem;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .registry-empty-state h2 {
   margin: 0;
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .registry-empty-state p {

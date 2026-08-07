@@ -20,8 +20,8 @@
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 26px;
+  gap: 20px;
+  margin-bottom: 18px;
 }
 
 .registry-page-header > div:first-child,
@@ -31,30 +31,31 @@
 
 .registry-eyebrow {
   margin: 0 0 6px;
-  color: var(--accent-ink);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.13em;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
 .registry-page-header h1,
 .agent-detail-page-header h1 {
   margin: 0;
-  font-family: "Iowan Old Style", Baskerville, Georgia, serif;
-  font-size: 34px;
+  font-family: var(--font-ui);
+  font-size: 1.5rem;
   font-weight: 500;
-  line-height: 1.04;
-  letter-spacing: 0;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
 .registry-page-copy,
 .agent-detail-page-header > div > p:last-child {
-  max-width: 68ch;
-  margin: 8px 0 0;
+  max-width: 52ch;
+  margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.5;
 }
 
 .registry-page-header .console-primary-button,
@@ -62,22 +63,42 @@
 .agent-secondary-button,
 .agent-danger-button,
 .agent-live-monitor-trigger {
-  min-height: 37px;
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 0 13px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg-panel);
-  color: var(--text-primary);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--console-action);
+  color: var(--text-on-accent);
   font: inherit;
-  font-size: 10px;
+  font-size: 0.8125rem;
   font-weight: 500;
-  transition: transform 140ms ease, background-color 140ms ease, border-color 140ms ease;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
+.registry-page-header .console-primary-button:hover,
+.agent-primary-button:hover {
+  background: var(--console-action-hover);
+}
+
+.agent-secondary-button {
+  border-color: var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.agent-secondary-button:hover {
+  background: var(--bg-soft);
+}
+
+.agent-danger-button {
+  border-color: color-mix(in srgb, var(--state-danger) 28%, var(--border-subtle));
+  background: var(--state-danger-tint);
+  color: var(--state-danger);
+}
 .registry-page-header .console-primary-button,
 .agent-primary-button {
   border-color: var(--console-action);
@@ -244,10 +265,10 @@
 
 .registry-table [data-slot="table-cell"],
 .agent-record-table [data-slot="table-cell"] {
-  padding: 14px 12px;
+  padding: 12px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   vertical-align: middle;
@@ -574,27 +595,23 @@
 }
 
 .agent-section-heading {
-  min-height: 48px;
+  min-height: 40px;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 18px;
-  padding-bottom: 12px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--border-strong);
 }
 
 .agent-section-heading h2 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 0.9375rem;
+  font-weight: 500;
 }
 
 .agent-section-heading p {
-  max-width: 58ch;
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 9px;
-  line-height: 1.5;
+  display: none;
 }
 
 .agent-definition-list,
@@ -842,7 +859,7 @@
 }
 
 .agent-table-empty {
-  min-height: 240px;
+  min-height: 140px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -856,7 +873,7 @@
 .agent-table-empty strong {
   color: var(--text-primary);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .agent-table-empty span {
@@ -951,7 +968,7 @@
 
 .agent-action-sheet .sheet-title,
 .live-monitor-sheet .sheet-title {
-  font-family: "Iowan Old Style", Baskerville, Georgia, serif;
+  font-family: var(--font-ui);
   font-size: 24px;
   font-weight: 500;
   letter-spacing: 0;
@@ -1472,3 +1489,351 @@
     animation: none;
   }
 }
+
+/* ── Casper robot mark (shared agent face) ─────────────────────────────── */
+
+.agent-robot-avatar {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  background: linear-gradient(150deg, #141414 0%, #1e1e1e 100%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+
+.agent-robot-avatar.is-sm { border-radius: 8px; }
+.agent-robot-avatar.is-md { border-radius: 11px; }
+.agent-robot-avatar.is-lg { border-radius: 14px; }
+
+.agent-robot-avatar-glow {
+  position: absolute;
+  inset: auto -20% -35% auto;
+  width: 70%;
+  height: 70%;
+  border-radius: 999px;
+  background: var(--agent-glow);
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.agent-robot-avatar-tint {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  mix-blend-mode: color;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.agent-robot-avatar-img {
+  position: relative;
+  z-index: 0;
+  width: 118%;
+  height: 118%;
+  object-fit: contain;
+  object-position: center 18%;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ── Home fleet cards ──────────────────────────────────────────────────── */
+
+.agent-fleet-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.agent-fleet-card {
+  display: flex;
+  width: 260px;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 220ms ease;
+}
+
+.agent-fleet-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgb(17 17 17 / 0.08);
+}
+
+.agent-fleet-card-hero {
+  position: relative;
+  display: flex;
+  height: 148px;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 0 18px 14px;
+  background: linear-gradient(150deg, #141414 0%, #1e1e1e 100%);
+}
+
+.agent-fleet-card-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgb(255 255 255 / 0.07) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+.agent-fleet-card-glow {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 9rem;
+  height: 9rem;
+  border-radius: 999px;
+  background: var(--agent-glow);
+  filter: blur(28px);
+}
+
+.agent-fleet-card-robot {
+  position: absolute;
+  right: 10px;
+  bottom: 0;
+  width: 130px;
+  height: 130px;
+  transition: transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.agent-fleet-card:hover .agent-fleet-card-robot {
+  transform: translateY(-4px);
+}
+
+.agent-fleet-card-robot-tint {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  mix-blend-mode: color;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.agent-fleet-card-robot-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom;
+  user-select: none;
+  pointer-events: none;
+}
+
+.agent-fleet-card-badge {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 2;
+}
+
+.agent-fleet-card-badge span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.06);
+  color: rgb(255 255 255 / 0.42);
+  font-size: 10px;
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+}
+
+.agent-fleet-card-badge span.is-ready {
+  background: rgba(52, 211, 153, 0.18);
+  color: #34d399;
+}
+
+.agent-fleet-card-badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.agent-fleet-card-badge span.is-ready i {
+  box-shadow: 0 0 4px #34d399;
+}
+
+.agent-fleet-card-label {
+  position: relative;
+  z-index: 2;
+  max-width: 58%;
+}
+
+.agent-fleet-card-label p {
+  margin: 0;
+  color: rgb(255 255 255 / 0.28);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.agent-fleet-card-label strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-fleet-card-accent {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(to right, color-mix(in srgb, var(--agent-tint) 90%, transparent) 0%, color-mix(in srgb, var(--agent-tint) 20%, transparent) 60%, transparent 100%);
+}
+
+.agent-fleet-card-body {
+  display: grid;
+  gap: 14px;
+  padding: 14px 18px 18px;
+  background: #fff;
+}
+
+html[data-theme="dark"] .agent-fleet-card-body {
+  background: var(--bg-panel);
+}
+
+.agent-fleet-card-body > code {
+  overflow: hidden;
+  color: #c0c0c0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-fleet-card-body dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #eaecf0;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #fafafa 0%, #f3f4f6 100%);
+}
+
+html[data-theme="dark"] .agent-fleet-card-body dl {
+  border-color: var(--border-subtle);
+  background: var(--bg-soft);
+}
+
+.agent-fleet-card-body dl > div {
+  padding: 10px 12px;
+}
+
+.agent-fleet-card-body dl > div:not(:last-child) {
+  border-right: 1px solid #eaecf0;
+}
+
+html[data-theme="dark"] .agent-fleet-card-body dl > div:not(:last-child) {
+  border-right-color: var(--border-subtle);
+}
+
+.agent-fleet-card-body dt {
+  color: #aaa;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.agent-fleet-card-body dd {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: #111;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-theme="dark"] .agent-fleet-card-body dd {
+  color: var(--text-primary);
+}
+
+.agent-fleet-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 16px;
+  background: var(--bg-panel);
+  text-align: center;
+}
+
+.agent-fleet-empty-robot {
+  display: grid;
+  width: 96px;
+  height: 96px;
+  place-items: center;
+  margin-bottom: 4px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: linear-gradient(150deg, #141414 0%, #1e1e1e 100%);
+}
+
+.agent-fleet-empty-robot img {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  object-position: bottom;
+  opacity: 0.85;
+}
+
+.agent-fleet-empty strong {
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.agent-fleet-empty p {
+  margin: 0 0 8px;
+  max-width: 36ch;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.canonical-overview-fleet {
+  margin: 0 0 28px;
+}
+
+.canonical-overview-agent-cell > .agent-robot-avatar {
+  flex: none;
+}
+
+.treasury-primary-cell > .agent-robot-avatar,
+.registry-agent-cell > .agent-robot-avatar,
+.agent-identity-lead > .agent-robot-avatar {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-fleet-card,
+  .agent-fleet-card-robot {
+    transition: none;
+  }
+
+  .agent-fleet-card:hover {
+    transform: none;
+  }
+}
+

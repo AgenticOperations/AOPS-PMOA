@@ -757,7 +757,73 @@ transfer; a naive log count will double-report every Arc amount.
 
 **Not covered by this run:** K.4 steps 9–11 (escrow hire → reputation → allocation feedback). Those engines
 exist and are tested, but no route or agent triggers them, so they remain outside the runnable demo — the same
-gap `validation/spike-escrow-console-demo.mts` states in its own header.
+gap `validation/spike-escrow-console-demo.mts` states in its own header. ✅ **Closed 2026-08-07** — driven
+live in the next section.
+
+---
+
+## Manifest §K.4 steps 9–11 + §K.5 Moment 3 — escrow → earned reputation → capital allocation (2026-08-07)
+
+**Verdict: the escrow → reputation → allocation chain runs live, on the same funded fleet org as the K.4 run
+above. Reputation had until now only ever been unit-tested; this is its first on-chain write, and the first
+time an allocation moved because of it.** Driven by `validation/spike-manifest-k4-completion.mts`, calling the
+same engine functions a route would call — the escrow engine still has no route or agent trigger, which is why
+a script is still what drives it.
+
+**Step 9 — escrowed hire (Orchestrator → DataFetcher), ERC-8183 mode 2 (client is its own evaluator).**
+Escrow job `escrowjob_0f2a1dfb…`, on-chain job id `7`, budget 0.02 USDC. Every tx verified against the
+deployed escrow `0x31C050d9…4e0F5`:
+
+| Step | Tx | Verified |
+|---|---|---|
+| `createJob` | `0xc35eec33792abcf1ab1e6f6d825a3f2531c68de20e9a5a9cdb2a17d0c70bdfc0` | success, block 55726311 |
+| `fund` | `0xfaa93bdd479d312fe1e89e393be41bc2b6b8eb740b16c7ee844ad4d696c73e7c` | success — **0.02 USDC `0x182c8643…` → escrow** |
+| `submit` | `0x0385d604dfee77504d39762b95d6fc314beae15e0a3e1f896324fc34089e0443` | success, block 55726348 |
+| `complete` | `0x3ca56d8657ca8e10adad9acaea773d4cddcb43004b73f2ef7f86a307dd6735fa` | success — **0.02 USDC escrow → `0x51b9fe84…`** |
+
+The two `Transfer` logs are the point: funds genuinely left the client into the **escrow contract**, sat there
+across `submitted`, and were released to the provider only on `complete`. That is the proof-of-funding claim
+S8 said was the *only* honest escrow claim — demonstrated here, not asserted.
+
+**Step 10 — reputation, earned only from a settled completion.**
+Prerequisite: `onEscrowCompleted` writes on-chain feedback only if the **provider** has an ERC-8004 identity, so
+DataFetcher was registered first — token id `864672`, tx
+`0x2ac62d9f1c6ef740c062573bda7da7d6698d0042de0e5733bf7eda88984d15bb`, verified against the real Identity
+Registry `0x8004A818…BD9e`. Completing the job then fired the hook post-commit:
+
+- DB event `repev_04b362b6…`, score 100, `UNIQUE(escrow_job_id)` so one completion can only ever earn once.
+- On-chain `giveFeedback` tx `0x885467500b8e370bd9dd5dce5285ef7e311b83258329d26f5992ed35b120fe10` — verified
+  against the real Reputation Registry `0x8004B663…8713`.
+
+Nothing here can be self-asserted: the hook re-reads the job's own state and refuses any state but `completed`,
+and the **client** submits the feedback (ERC-8004 reverts self-feedback).
+
+**Step 11 / Moment 3 — reputation moves capital, both directions, bounded.**
+
+| Agent | Reputation | Allocation before → after | Why |
+|---|---|---|---|
+| DataFetcher | 100 (one settled completion) | **1.50 → 1.65 USDC** | ceiling raised to 3.00 by the *operator*; K-6's 10% max step moved allocation `1.50 × 0.10 = 0.15` toward it |
+| Writer | 0 (earned nothing) | **1.50 → 1.35 USDC** | same formula, opposite direction |
+
+The DataFetcher move is exactly `maxStepBps = 1000` — reputation cannot jump an allocation from floor to
+ceiling in one adjustment, which is the runaway-feedback bound K-6 exists to enforce.
+
+**Two honest notes on how this was set up, because both look like workarounds and are not:**
+1. **The ceiling raise is an operator act, not a reputation act.** `demo/reset.mjs` seeds `allocated == ceiling`,
+   leaving zero headroom, so reputation would have been a silent no-op. Reputation moves allocation *within*
+   operator-set bounds; it never moves the bounds.
+2. **Narrowing required lowering Writer's low-water mark first.** `agent_allocations` enforces
+   `CHECK (allocated_usdc >= low_water_mark_usdc)`, and reset seeds `low_water == allocated`, which pins the
+   allocation and makes any downward move impossible. This is a real invariant worth knowing: **an agent whose
+   low-water mark equals its allocation can never be narrowed by reputation**, no matter how badly it performs.
+
+**Still not done — K.4 step 3.** "DataFetcher buys external data via x402 `exact` (Lane 1) from a real paid
+endpoint." The only `runtime_payment_attempts` row in this database is Phase 3 · Task 4's ceiling proof, with
+`providerMode: simulation` and recipient `0x1111…1111` — a fixture, not a merchant. No real third-party x402
+endpoint has ever been paid from this system. Lane 2 (Permit2, agent-to-agent) is fully proven; **Lane 1
+against a real external merchant is not**, and should not be claimed until an actual x402 endpoint is paid.
+K.4 step 4 (auto-topup at low-water mark) *is* covered — it is how every agent wallet in the run above got
+funded, via the circle-worker's real top-up transfers.
 
 ---
 
@@ -774,6 +840,10 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 | Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc. Re-verified from chain state 2026-08-07 — see "Manifest §K.4 fleet demo" above | ✅ base tx `0x738e4229...4e05594716e` |
 | Manifest §K.4 — five-agent fleet, steps 1–8 | 5 payments (4 Arc + 1 Base), all receipts `status: success`, `Transfer` logs decoded to confirm payer/payee. Second hop originates from the Analyst's own wallet. See "Manifest §K.4 fleet demo" above | ✅ |
 | Circle native-balance indexing defect (Base Sepolia) | Isolated to Circle's indexed-balance pre-flight; Circle-originated transfer forces a rescan. See "Circle native-balance indexing misses externally-received ETH" above | ✅ reported upstream · tx `0xb2e85f40...af4167333` |
+| Manifest §K.4 step 9 — escrowed hire | ERC-8183 `Open → Funded → Submitted → Completed`, 0.02 USDC into the escrow contract and released to the provider on completion. See "§K.4 steps 9–11" above | ✅ complete tx `0x3ca56d86...7dd6735fa` |
+| Manifest §K.4 step 10 / `[D4]` — payment-gated reputation | First on-chain reputation write, gated on a settled escrow completion; identity token `864672` registered first. Verified against the real ERC-8004 registries | ✅ feedback tx `0x88546750...5b120fe10` |
+| Manifest §K.4 step 11 / §K.5 Moment 3 / `[D5]` — reputation → allocation | DataFetcher 1.50 → 1.65 (rep 100), Writer 1.50 → 1.35 (rep 0); both bounded by K-6's 10% max step. See "§K.4 steps 9–11" above | ✅ |
+| Manifest §K.4 step 3 — Lane 1 x402 `exact` against a real external merchant | Only attempt on record is Phase 3 · Task 4's `simulation`-mode fixture (recipient `0x1111…1111`). No real third-party x402 endpoint has been paid | ⬜ **not proven — do not claim** |
 | Piece 4 · Task 6 — escrow-to-Permit2 graduation demo | 2 completed escrow jobs (6 tx each), promotion (2 tx), 1-tx drawdown. See "Piece 4 · Task 6 proof" above | ✅ tx `0xef084b9e...93640722e04` |
 | Phase 8 · Task 1 — ERC-8004 identity registration | Real agent registered via `registerAgentIdentity`, token id `863468`. See "Phase 8 · Task 1" above | ✅ tx `0x7fc58f44...34ebaa539` |
 | Phase 9 · Task 5 — Google ADK binding | Real `google-adk` `McpToolset` connected to our real MCP server, listed 8 real tools, called `agentops.onboard` end to end. See "Phase 9 · Task 5" below | ✅ |

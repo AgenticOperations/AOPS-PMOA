@@ -95,7 +95,7 @@ export function TreasuryLiquidity({ bridgeTopUpAction, cancelLiquidityJobAction,
 
   return (
     <div className="treasury-workbench treasury-liquidity-workbench">
-      <TreasurySectionNav active="liquidity" orgSlug={orgSlug} />
+      <TreasurySectionNav active="liquidity" orgSlug={orgSlug} showAdvanced />
       <TreasuryPageHeader
         actions={<><form action={reconcileJobsAction}><button className="treasury-button" disabled={!providerReady || !anyReconcilable} type="submit">Reconcile provider</button></form><button className="treasury-button treasury-button-primary" disabled={!providerReady} onClick={() => openRecommendation()} type="button">Move liquidity</button></>}
         description="Monitor preparation work, resolve provider failures, and move exact-wallet liquidity through an explicit review step."

@@ -3,6 +3,7 @@ import { IconArrowLeft, IconArrowRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ConsoleShell } from '@/components/ConsoleShell';
+import { AgentAvatar } from '@/components/agents/AgentAvatar';
 import { AgentCreateDrawer } from '@/components/agents/AgentCreateDrawer';
 import { AgentRegistryFilters } from '@/components/agents/AgentRegistryFilters';
 import { formatConnectionHealth, formatStatus } from '@/components/agents/format';
@@ -116,11 +117,9 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
       <main className="registry-page" id="main-content">
         <header className="registry-page-header">
           <div>
-            <p className="registry-eyebrow">Identity / registry</p>
+            <p className="registry-eyebrow">Identity</p>
             <h1>Agents</h1>
-            <p className="registry-page-copy">
-              Authorize identities, inspect control coverage and open one agent&apos;s complete operating history.
-            </p>
+            <p className="registry-page-copy">Register identities and open one to manage credentials and policy.</p>
           </div>
           <AgentCreateDrawer action={createAgentAction.bind(null, org.id, org.slug)} />
         </header>
@@ -130,11 +129,11 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
         {agentPage.agents.length === 0 ? (
           <section className="registry-empty-state">
             <span className="registry-empty-mark" aria-hidden="true">AO</span>
-            <h2>{hasFilters ? 'No agents match these filters' : 'No agents registered'}</h2>
+            <h2>{hasFilters ? 'No matching agents' : 'No agents yet'}</h2>
             <p>
               {hasFilters
-                ? 'Change or clear the current filters to return to the complete registry.'
-                : 'Add the first agent identity, then open it to create a runtime credential.'}
+                ? 'Clear filters to see the full registry.'
+                : 'Create an agent, then issue an MCP credential.'}
             </p>
             {hasFilters ? <Link className="button-secondary" href={`/app/${org.slug}/agents`}>Clear filters</Link> : null}
           </section>
@@ -160,7 +159,7 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
                       <TableRow key={agent.id}>
                         <TableCell data-label="Agent">
                           <div className="registry-agent-cell">
-                            <span className="registry-agent-mark" aria-hidden="true">{agent.name.slice(0, 2).toUpperCase()}</span>
+                            <AgentAvatar agentId={agent.id} name={agent.name} size="sm" />
                             <div>
                               <Link href={href}>{agent.name}</Link>
                               <code>{agent.id}</code>

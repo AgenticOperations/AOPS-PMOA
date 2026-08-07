@@ -51,6 +51,6 @@ describe('TreasuryActivity', () => {
       <TreasuryActivity activeTab="payments" auditEvents={[]} orgSlug="sample-qa-workspace" paymentEvents={[]} providerJobs={[]} reservations={[]} routeObservations={[]} />,
     );
 
-    expect(screen.getByText('No payments evidence')).toBeInTheDocument();
+    expect(screen.getByText('No payments yet')).toBeInTheDocument();
   });
 });

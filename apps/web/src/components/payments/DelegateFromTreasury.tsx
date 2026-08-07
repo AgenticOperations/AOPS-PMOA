@@ -131,7 +131,7 @@ export function DelegateFromTreasury({ orgSlug, agents, agentWallets }: Props) {
               A delegation names the agent&apos;s wallet as the spender, so the agent needs one on
               this chain first. Grant payment access with a dedicated wallet on a{' '}
               {CHAIN_LABELS[chainKey]} rail from{' '}
-              <Link className="underline" href={`/app/${orgSlug}/payments/agent-access`}>
+              <Link className="underline" href={`/app/${orgSlug}/payments/empower#access`}>
                 Agent access
               </Link>
               , then wait for provisioning to finish.

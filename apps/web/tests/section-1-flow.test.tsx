@@ -37,6 +37,10 @@ vi.mock('@/lib/server/payments-client.js', () => ({
   getTreasuryOverview: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('@/lib/server/mcp-public-url.js', () => ({
+  resolveMcpPublicUrl: vi.fn().mockReturnValue('http://127.0.0.1:8070/mcp'),
+}));
+
 vi.mock('next/navigation', () => ({
   redirect: vi.fn(),
   usePathname: () => '/app/acme-agent-ops/overview',
@@ -201,10 +205,11 @@ describe('Section 1 product flow', () => {
 
     render(await OverviewPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
 
-    expect(screen.getByRole('heading', { name: 'Operational posture, without the noise.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Connect via MCP' })).toBeInTheDocument();
     expect(screen.getAllByText('Acme Agent Ops').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Switch to dark theme/ })).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'Open registry' })[0]).toHaveAttribute('href', '/app/acme-agent-ops/agents');
+    expect(screen.getAllByRole('link', { name: '+ New agent' })[0]).toHaveAttribute('href', '/app/acme-agent-ops/agents');
   });
 
   it('shows only evidence-backed overview metrics and recent organization evidence', async () => {
@@ -256,12 +261,13 @@ describe('Section 1 product flow', () => {
 
     expect(screen.getByText('Active agents').nextElementSibling).toHaveTextContent('1');
     expect(screen.getByText('Pending approvals').nextElementSibling).toHaveTextContent('1');
-    expect(screen.getByText('Research agent')).toBeInTheDocument();
+    expect(screen.getAllByText('Research agent').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Agent registered')).toBeInTheDocument();
     expect(screen.queryByText(/connected now/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Agent roster' })).not.toBeInTheDocument();
   });
 
-  it('shows the newest registered agent first', async () => {
+  it('shows fleet cards for registered agents on home', async () => {
     vi.mocked(getOrgBySlug).mockResolvedValueOnce({
       id: 'org_acme', name: 'Acme Agent Ops', slug: 'acme-agent-ops', default_team_id: 'team_default', settings: {}, status: 'active',
     });
@@ -280,10 +286,8 @@ describe('Section 1 product flow', () => {
 
     render(await OverviewPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
 
-    const agentLinks = screen.getAllByRole('link').filter((link) => link.classList.contains('canonical-overview-agent-cell'));
-    expect(agentLinks.map((link) => link.textContent)).toEqual([
-      expect.stringContaining('Newer agent'),
-      expect.stringContaining('Older agent'),
-    ]);
+    expect(screen.getByRole('heading', { name: 'Agent fleet' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Older agent/i })).toHaveAttribute('href', '/app/acme-agent-ops/agents/agt_old');
+    expect(screen.getByRole('link', { name: /Newer agent/i })).toHaveAttribute('href', '/app/acme-agent-ops/agents/agt_new');
   });
 });

@@ -374,20 +374,17 @@ export function ControlsLibrary({
   const activeCount = policies.length;
   const draftCount = visibleDrafts.length;
   const activityCount = policyActivity.length;
-  const viewMeta: Record<TableView, { readonly title: string; readonly description: string; readonly count: string }> = {
+  const viewMeta: Record<TableView, { readonly title: string; readonly count: string }> = {
     library: {
-      title: 'Policy library',
-      description: 'Active reusable rules. Open a policy to inspect its effect, conditions, evidence, or archive state.',
+      title: 'Policies',
       count: `${activeCount} active`,
     },
     drafts: {
       title: 'Drafts',
-      description: 'Policies being prepared. Drafts do not enforce until validated and activated.',
       count: `${draftCount} draft${draftCount === 1 ? '' : 's'}`,
     },
     activity: {
       title: 'Change log',
-      description: 'Policy creation, validation, activation, archive, and simulation audit records only.',
       count: `${activityCount} event${activityCount === 1 ? '' : 's'}`,
     },
   };
@@ -440,9 +437,9 @@ export function ControlsLibrary({
 
         <header className="controls-page-header">
           <div>
-            <p className="controls-eyebrow">Policy / control plane</p>
+            <p className="controls-eyebrow">Identity</p>
             <h1>Controls</h1>
-            <p>Author, test, activate, and trace the policies that govern managed agent actions.</p>
+            <p>Policies that govern managed agent actions.</p>
           </div>
           <button className="controls-primary-action" onClick={() => setDrawer({ kind: 'create' })} type="button">
             New policy
@@ -481,7 +478,6 @@ export function ControlsLibrary({
             <div className="controls-library-heading">
               <div>
                 <h2 id="policy-library-title">{currentMeta.title}</h2>
-                <p>{currentMeta.description}</p>
               </div>
               <span className="controls-muted-count">{currentMeta.count}</span>
             </div>

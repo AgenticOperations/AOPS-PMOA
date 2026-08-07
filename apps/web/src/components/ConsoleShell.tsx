@@ -12,7 +12,7 @@ type ConsoleShellProps = {
 };
 
 const ACTIVE_LABELS: Record<ConsoleShellProps['active'], string> = {
-  overview: 'Overview',
+  overview: 'Home',
   agents: 'Agents',
   controls: 'Controls',
   operations: 'Operations',

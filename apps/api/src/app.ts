@@ -68,7 +68,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   }
 
   if (options.identity !== undefined) {
-    registerIdentityRoutes(app, { ...options.identity, policy: options.policy });
+    registerIdentityRoutes(app, options.identity);
   }
 
   if (options.evidence !== undefined) {

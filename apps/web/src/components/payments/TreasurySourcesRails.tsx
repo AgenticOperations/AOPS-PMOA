@@ -42,7 +42,7 @@ export function TreasurySourcesRails({ capabilities, circleTreasuryAction, circl
 
   return (
     <div className="treasury-workbench">
-      <TreasurySectionNav active="sources" orgSlug={orgSlug} />
+      <TreasurySectionNav active="networks" orgSlug={orgSlug} showAdvanced />
       <TreasuryPageHeader
         actions={(
           <>
@@ -56,7 +56,7 @@ export function TreasurySourcesRails({ capabilities, circleTreasuryAction, circl
           </>
         )}
         description="Inspect one chain as a complete funding and settlement surface. Wallets, balances, proofs, and sources remain evidence-backed."
-        eyebrow="Treasury / sources & rails"
+        eyebrow="Treasury / networks"
         title="One treasury. Five settlement networks."
       />
 

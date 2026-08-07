@@ -13,6 +13,7 @@ import { EscrowLivenessBanner, type EscrowLivenessRiskSummary } from './EscrowLi
 import { TrustAgentPanel, type EscrowEvidence, type TrustInput } from './TrustAgentPanel';
 import { TrustedBadge } from './TrustedBadge';
 import { PRIMARY_RAILS, accountState, formatMoney, formatRail, railIsSettlementVerified } from '@/lib/payments-format';
+import { AgentAvatar } from '@/components/agents/AgentAvatar';
 import type { AgentPaymentAccountRecord, CircleChainCapabilityRecord, PaymentRail } from '@/lib/payments-types';
 import type { AgentRosterItem } from '@/lib/identity-spine-types';
 import type { SupportedChainKey } from '@/lib/wallet-chains';
@@ -38,6 +39,8 @@ type TreasuryAgentAccessProps = {
   readonly agents: readonly AgentRosterItem[];
   readonly atRiskEscrowJobs?: readonly EscrowLivenessRiskSummary[];
   readonly capabilities: readonly CircleChainCapabilityRecord[];
+  /** Hide page chrome when composed inside Treasury → Empower. */
+  readonly embedded?: boolean;
   readonly externalAgents?: readonly ExternalEscrowAgent[];
   readonly orgSlug: string;
 };
@@ -51,16 +54,13 @@ function numeric(value: string | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function initials(name: string): string {
-  return name.split(/\s+/g).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-}
-
 export function TreasuryAgentAccess({
   accessAction,
   accounts,
   agents,
   atRiskEscrowJobs = [],
   capabilities,
+  embedded = false,
   externalAgents = [],
   orgSlug,
 }: TreasuryAgentAccessProps) {
@@ -133,16 +133,31 @@ export function TreasuryAgentAccess({
     setOpen(true);
   };
 
+  const grantButton = (
+    <button
+      className="treasury-button treasury-button-primary"
+      disabled={assignableAgents.length === 0}
+      onClick={() => openEditor()}
+      type="button"
+    >
+      Grant access
+    </button>
+  );
+
   return (
-    <div className="treasury-workbench treasury-access-workbench">
-      <TreasurySectionNav active="access" orgSlug={orgSlug} />
+    <div className={embedded ? 'treasury-access-embedded' : 'treasury-workbench treasury-access-workbench'}>
+      {embedded ? null : <TreasurySectionNav active="empower" orgSlug={orgSlug} />}
       <EscrowLivenessBanner atRisk={atRiskEscrowJobs} />
-      <TreasuryPageHeader
-        actions={<button className="treasury-button treasury-button-primary" disabled={assignableAgents.length === 0} onClick={() => openEditor()} type="button">Grant access</button>}
-        description="Payment access is off by default. Audit delegation, budgets, caps, approval thresholds, and settlement-verified rails at a glance."
-        eyebrow="Treasury / agent access"
-        title="Who can spend, and how much."
-      />
+      {embedded ? (
+        <div className="treasury-embedded-toolbar">{grantButton}</div>
+      ) : (
+        <TreasuryPageHeader
+          actions={grantButton}
+          description="Payment access is off by default. Audit budgets, caps, approval thresholds, and settlement-verified rails at a glance."
+          eyebrow="Treasury / empower"
+          title="Who can spend, and how much"
+        />
+      )}
 
       <div className="treasury-table-toolbar">
         <label className="treasury-search-field"><IconSearch aria-hidden="true" size={15} stroke={1.8} /><span className="sr-only">Search agents</span><input onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search agent or ID…" value={query} /></label>
@@ -151,9 +166,9 @@ export function TreasuryAgentAccess({
       </div>
 
       <section aria-labelledby="treasury-agent-access-title" className="treasury-table-section">
-        <div className="treasury-section-heading"><div><h2 id="treasury-agent-access-title">Agent payment access</h2><p>Only settlement-verified rails can be assigned.</p></div><span>{visibleAgents.length} of {agents.length}</span></div>
+        <div className="treasury-section-heading"><div><h2 id="treasury-agent-access-title">Agents</h2></div><span>{visibleAgents.length}</span></div>
         {agents.length === 0 ? (
-          <div className="treasury-empty-state"><strong>No agents yet</strong><p>Create an agent before enabling payment access.</p></div>
+          <div className="treasury-empty-state"><strong>No agents yet</strong><p>Create an agent first.</p></div>
         ) : (
           <>
             <TableShell className="treasury-table-shell">
@@ -165,7 +180,7 @@ export function TreasuryAgentAccess({
                   const state = accountState(account);
                   return (
                     <TableRow key={agent.id}>
-                      <TableCell><div className="treasury-primary-cell"><span>{initials(agent.name)}</span><div><strong>{agent.name}</strong><small>{agent.id}</small></div></div></TableCell>
+                      <TableCell><div className="treasury-primary-cell"><AgentAvatar agentId={agent.id} name={agent.name} size="sm" /><div><strong>{agent.name}</strong><small>{agent.id}</small></div></div></TableCell>
                       <TableCell><StatusBadge label={state === 'On' ? 'Active' : account === null ? 'Not configured' : 'Disabled'} status={state === 'On' ? 'active' : 'inactive'} /></TableCell>
                       <TableCell>{formatMoney(account?.budget_usdc ?? null)}</TableCell>
                       <TableCell><div className="treasury-spend-cell"><strong>{formatMoney(account?.spent_usdc ?? null)}</strong><span><i style={{ width: `${spentPercent}%` }} /></span><small>{formatMoney(account?.reserved_usdc ?? null)} reserved</small></div></TableCell>

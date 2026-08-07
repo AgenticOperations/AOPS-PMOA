@@ -197,9 +197,9 @@ export function OperationsWorkbench({
 
         <header className="ops-page-header operations-header">
           <div>
-            <p className="operations-eyebrow">Runtime / operations</p>
+            <p className="operations-eyebrow">Runtime</p>
             <h1>Operations</h1>
-            <p>Manage tools, request limits, and persisted runtime decisions without mixing their workflows.</p>
+            <p>Tools, limits, and runtime decisions.</p>
           </div>
           {activeTab === 'tools' ? (
             <button className="console-primary-button" onClick={() => setCreateMode('tool')} type="button">Import tool</button>
@@ -218,8 +218,7 @@ export function OperationsWorkbench({
               </div>
               <div className="ops-surface-heading">
                 <div>
-                  <h2 id="tool-catalog-title">Tool catalog</h2>
-                  <p>Imported tools become named operational policy surfaces.</p>
+                  <h2 id="tool-catalog-title">Tools</h2>
                 </div>
                 <div className="operations-heading-actions">
                   <span className="ops-count-pill">{filteredTools.length} tool{filteredTools.length === 1 ? '' : 's'}</span>
@@ -278,7 +277,6 @@ export function OperationsWorkbench({
               <div className="ops-surface-heading">
                 <div>
                   <h2 id="rate-limits-title">Rate limits</h2>
-                  <p>Runtime counters for repeated API and tool checks.</p>
                 </div>
                 <div className="operations-heading-actions">
                   <span className="ops-count-pill">{filteredLimits.length} limit{filteredLimits.length === 1 ? '' : 's'}</span>
@@ -366,8 +364,7 @@ export function OperationsWorkbench({
 
             <div className="ops-surface-heading">
               <div>
-                <h2 id="operation-decisions-title">Runtime decisions</h2>
-                <p>Allowed, denied, observed, approval-gated, and rate-limited operations.</p>
+                <h2 id="operation-decisions-title">Decisions</h2>
               </div>
               <span className="ops-count-pill">{filteredDecisions.length} shown</span>
             </div>

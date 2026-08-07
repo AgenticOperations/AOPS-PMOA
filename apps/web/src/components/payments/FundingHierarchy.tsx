@@ -1,13 +1,26 @@
 'use client';
 
-import { CHAIN_LABELS } from '@/lib/payments-format';
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { AgentAvatar } from '@/components/agents/AgentAvatar';
+import { CHAIN_LABELS, FIELD_CLASS } from '@/lib/payments-format';
 import { CopyableAddress } from './CopyableAddress';
+import { TreasuryInfoCallout } from './TreasuryChrome';
 import type { AgentWalletFundingRecord } from '@/lib/server/payments-client';
-import type { CircleChainWalletRecord } from '@/lib/payments-types';
+import type { CircleChainWalletRecord, PaymentChain } from '@/lib/payments-types';
 
 type Props = {
   readonly treasuryWallets: readonly CircleChainWalletRecord[];
   readonly agentWallets: readonly AgentWalletFundingRecord[];
+  readonly orgSlug: string;
+};
+
+type AgentFundingGroup = {
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly address: string;
+  readonly byChain: ReadonlyMap<PaymentChain, AgentWalletFundingRecord>;
+  readonly chains: readonly PaymentChain[];
 };
 
 function usdc(micros: string | null): string {
@@ -16,112 +29,155 @@ function usdc(micros: string | null): string {
   return `${(value / 1_000_000n).toString()}.${(value % 1_000_000n).toString().padStart(6, '0').slice(0, 2)}`;
 }
 
+function groupAgentWallets(agentWallets: readonly AgentWalletFundingRecord[]): AgentFundingGroup[] {
+  const groups = new Map<string, {
+    agentId: string;
+    agentName: string;
+    address: string;
+    byChain: Map<PaymentChain, AgentWalletFundingRecord>;
+  }>();
+
+  for (const wallet of agentWallets) {
+    const existing = groups.get(wallet.agentId);
+    if (existing === undefined) {
+      groups.set(wallet.agentId, {
+        agentId: wallet.agentId,
+        agentName: wallet.agentName,
+        address: wallet.address,
+        byChain: new Map([[wallet.chain, wallet]]),
+      });
+      continue;
+    }
+    existing.byChain.set(wallet.chain, wallet);
+  }
+
+  return [...groups.values()].map((group) => ({
+    agentId: group.agentId,
+    agentName: group.agentName,
+    address: group.address,
+    byChain: group.byChain,
+    chains: [...group.byChain.keys()].sort((left, right) => left.localeCompare(right)),
+  }));
+}
+
 /**
- * The funding hierarchy, top to bottom:
- *
- *   org treasury  ->  agent wallet  ->  the agent spending it
- *
- * Each tier shows the address to send funds to, because none of them were
- * reachable from the console before -- agent wallet addresses were not
- * exposed over HTTP at all.
+ * Fund surface: treasury deposit + agent balances.
+ * Caps live under Empower — not repeated here.
  */
-export function FundingHierarchy({ treasuryWallets, agentWallets }: Props) {
+export function FundingHierarchy({ treasuryWallets, agentWallets, orgSlug }: Props) {
   const fundedChains = treasuryWallets.filter((wallet) => wallet.status === 'active');
+  const [treasuryChain, setTreasuryChain] = useState<PaymentChain | ''>(fundedChains[0]?.chain ?? '');
+  const activeTreasury = fundedChains.find((wallet) => wallet.chain === treasuryChain) ?? fundedChains[0];
+  const agentGroups = useMemo(() => groupAgentWallets(agentWallets), [agentWallets]);
+  const hasBase = agentWallets.some((wallet) => wallet.chain === 'base');
 
   return (
-    <div className="grid gap-6">
-      <section className="rounded-lg border p-4">
-        <header className="mb-3">
-          <h2 className="font-medium">1 · Org treasury</h2>
-          <p className="text-sm text-muted-foreground">
-            Send test USDC here to fund the fleet. Each chain has its OWN treasury address — they
-            are created independently, so send to the row for the chain your agents operate on.
-          </p>
+    <div className="treasury-stack">
+      <section className="treasury-panel">
+        <header className="treasury-panel-header">
+          <h2>Org treasury</h2>
         </header>
-        {fundedChains.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No treasury yet. Finish workspace setup to provision one.
-          </p>
+        {fundedChains.length === 0 || activeTreasury === undefined ? (
+          <TreasuryInfoCallout>
+            No treasury yet.{' '}
+            <Link href={`/app/${orgSlug}/payments/sources`}>Open Networks</Link>
+            {' '}to provision one.
+          </TreasuryInfoCallout>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left">
-                <th className="p-2 font-medium">Chain</th>
-                <th className="p-2 font-medium">Deposit address</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fundedChains.map((wallet) => (
-                <tr key={`${wallet.chain}-${wallet.address}`} className="border-b last:border-0">
-                  <td className="p-2">{CHAIN_LABELS[wallet.chain] ?? wallet.chain}</td>
-                  <td className="p-2"><CopyableAddress address={wallet.address} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="rounded-lg border p-4">
-        <header className="mb-3">
-          <h2 className="font-medium">2 · Agent wallets</h2>
-          <p className="text-sm text-muted-foreground">
-            Topped up from the treasury against each agent&apos;s delegation ceiling. This is the
-            balance an agent actually spends from. Unlike the treasury, an agent keeps one address
-            shared across chains.
-          </p>
-        </header>
-        {agentWallets.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No agent wallets yet. Grant an agent payment access to provision one.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left">
-                  <th className="p-2 font-medium">Agent</th>
-                  <th className="p-2 font-medium">Chain</th>
-                  <th className="p-2 font-medium">Address</th>
-                  <th className="p-2 font-medium">Balance</th>
-                  <th className="p-2 font-medium">Allocated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agentWallets.map((wallet) => (
-                  <tr key={`${wallet.agentId}-${wallet.chain}`} className="border-b last:border-0">
-                    <td className="p-2">{wallet.agentName}</td>
-                    <td className="p-2">{CHAIN_LABELS[wallet.chain] ?? wallet.chain}</td>
-                    <td className="p-2"><CopyableAddress address={wallet.address} /></td>
-                    <td className="p-2">{usdc(wallet.usdcMicros)}</td>
-                    <td className="p-2">
-                      {wallet.allocatedUsdc === null
-                        ? <span className="text-muted-foreground">not allocated</span>
-                        : wallet.allocatedUsdc}
-                    </td>
-                  </tr>
+          <div className="treasury-fund-grid">
+            <label className="treasury-field-stack">
+              <span className="treasury-field-label">Chain</span>
+              <select
+                className={FIELD_CLASS}
+                onChange={(event) => setTreasuryChain(event.target.value as PaymentChain)}
+                value={activeTreasury.chain}
+              >
+                {fundedChains.map((wallet) => (
+                  <option key={wallet.chain} value={wallet.chain}>
+                    {CHAIN_LABELS[wallet.chain] ?? wallet.chain}
+                  </option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+            </label>
+            <div className="treasury-field-stack">
+              <span className="treasury-field-label">Deposit address</span>
+              <CopyableAddress address={activeTreasury.address} />
+            </div>
           </div>
         )}
-        {agentWallets.some((wallet) => wallet.chain === 'base') ? (
-          <p className="mt-3 text-sm text-muted-foreground">
-            Base agents also need a little ETH for gas — USDC alone is not enough there. Arc needs
-            none, because its gas asset is USDC.
-          </p>
-        ) : null}
       </section>
 
-      <section className="rounded-lg border p-4">
-        <header>
-          <h2 className="font-medium">3 · Your fleet</h2>
-          <p className="text-sm text-muted-foreground">
-            Agents spend from their own wallet, within the cap you set. Nothing they do can exceed
-            it, and you can revoke at any time.
-          </p>
+      <section className="treasury-panel">
+        <header className="treasury-panel-header treasury-panel-header-row">
+          <h2>Agent wallets</h2>
+          <Link className="treasury-text-action" href={`/app/${orgSlug}/payments/empower`}>
+            Set spend limits →
+          </Link>
         </header>
+        {agentGroups.length === 0 ? (
+          <TreasuryInfoCallout>
+            No agent wallets yet. Grant access under{' '}
+            <Link href={`/app/${orgSlug}/payments/empower`}>Empower</Link>.
+          </TreasuryInfoCallout>
+        ) : (
+          <div className="treasury-agent-list">
+            {agentGroups.map((group) => (
+              <AgentWalletCard group={group} key={group.agentId} />
+            ))}
+          </div>
+        )}
+        {hasBase ? (
+          <TreasuryInfoCallout>
+            Base needs a little ETH for gas. Arc uses USDC for gas — no extra token.
+          </TreasuryInfoCallout>
+        ) : null}
       </section>
+    </div>
+  );
+}
+
+function AgentWalletCard({ group }: { readonly group: AgentFundingGroup }) {
+  const initialChain = group.chains[0];
+  const [chain, setChain] = useState<PaymentChain | null>(initialChain ?? null);
+  if (initialChain === undefined || chain === null) return null;
+  const selected = group.byChain.get(chain) ?? group.byChain.get(initialChain);
+  if (selected === undefined) return null;
+
+  return (
+    <div className="treasury-agent-row">
+      <div className="treasury-agent-row-identity">
+        <AgentAvatar agentId={group.agentId} name={group.agentName} size="sm" />
+        <div className="min-w-0">
+          <p className="treasury-agent-name">{group.agentName}</p>
+          <CopyableAddress address={group.address} />
+        </div>
+      </div>
+      <label className="treasury-field-stack">
+        <span className="treasury-field-label">Chain</span>
+        <select
+          className={FIELD_CLASS}
+          onChange={(event) => setChain(event.target.value as PaymentChain)}
+          value={selected.chain}
+        >
+          {group.chains.map((value) => (
+            <option key={value} value={value}>
+              {CHAIN_LABELS[value] ?? value}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="treasury-field-stack">
+        <span className="treasury-field-label">Balance</span>
+        <p className="treasury-metric-value">{usdc(selected.usdcMicros)}</p>
+      </div>
+      <div className="treasury-field-stack">
+        <span className="treasury-field-label">Allocated</span>
+        <p className="treasury-metric-value">
+          {selected.allocatedUsdc === null
+            ? <span className="text-muted-foreground">—</span>
+            : selected.allocatedUsdc}
+        </p>
+      </div>
     </div>
   );
 }

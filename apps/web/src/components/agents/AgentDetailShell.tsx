@@ -13,6 +13,7 @@ import type {
 import type { AgentAllowedActionRecord, BlockedOperationRecord } from '@/lib/operations-types';
 import type { AgentPolicyAssignment, PolicyVersion } from '@/lib/policy-types';
 import { formatStatus } from './format';
+import { AgentAvatar } from './AgentAvatar';
 import { ConnectionPanel } from './ConnectionPanel';
 import { AgentActivityWorkspace } from './AgentActivityWorkspace';
 import { WalletRefsPanel } from './WalletRefsPanel';
@@ -60,10 +61,6 @@ function formatOperationalDecision(value: string): string {
 
 function blockedOperationLabel(operation: BlockedOperationRecord): string {
   return `Blocked ${operation.tool_name ?? operation.resource_label ?? operation.action}`;
-}
-
-function agentInitials(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') || 'AG';
 }
 
 export function AgentDetailShell({
@@ -156,18 +153,17 @@ export function AgentDetailShell({
 
   return (
     <div className="agent-detail-page">
-      <Link className="agent-detail-back" href={`/app/${orgSlug}/agents`}>← Agent registry</Link>
+      <Link className="agent-detail-back" href={`/app/${orgSlug}/agents`}>← Agents</Link>
       <header className="agent-detail-page-header">
         <div>
-          <p className="registry-eyebrow">Identity / agent detail</p>
+          <p className="registry-eyebrow">Identity</p>
           <h1>{agent.name}</h1>
-          <p>One identity workspace for metadata, policies, credentials, wallets, and evidence.</p>
         </div>
       </header>
 
       <section className="agent-identity-band" aria-label="Agent identity summary">
         <div className="agent-identity-lead">
-          <span className="agent-identity-mark">{agentInitials(agent.name)}</span>
+          <AgentAvatar agentId={agent.id} name={agent.name} size="md" />
           <div><strong>{agent.name}</strong><code>{agent.id} · {agent.default_environment ?? 'environment not set'}</code></div>
         </div>
         <div className="agent-identity-stat"><span>Status</span><strong><i className={`agent-status-badge is-${agent.status === 'active' ? 'active' : agent.status === 'paused' ? 'warning' : 'danger'}`}>{formatStatus(agent.status)}</i></strong></div>

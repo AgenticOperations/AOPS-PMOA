@@ -39,7 +39,7 @@ describe('ConsoleShell', () => {
       '/landing/aops-wordmark-nav.png',
     );
 
-    expect(screen.getAllByRole('link', { name: 'Overview' })[0]).toHaveAttribute(
+    expect(screen.getAllByRole('link', { name: 'Home' })[0]).toHaveAttribute(
       'href',
       '/app/acme-agent-ops/overview',
     );
@@ -55,27 +55,20 @@ describe('ConsoleShell', () => {
       'href',
       '/app/acme-agent-ops/operations',
     );
-    expect(screen.getByRole('link', { name: 'Treasury' })).toHaveAttribute(
-      'href',
-      '/app/acme-agent-ops/payments',
-    );
+    expect(screen.getByText('Treasury')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Approvals/i })).toHaveAttribute(
       'href',
       '/app/acme-agent-ops/approvals',
     );
-    expect(screen.getByRole('link', { name: /Sources & Rails/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /^Fund$/i })).toHaveAttribute(
       'href',
-      '/app/acme-agent-ops/payments/sources',
+      '/app/acme-agent-ops/payments/funding',
     );
-    expect(screen.getByRole('link', { name: /Agent Access/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /^Empower$/i })).toHaveAttribute(
       'href',
-      '/app/acme-agent-ops/payments/agent-access',
+      '/app/acme-agent-ops/payments/empower',
     );
-    expect(screen.getByRole('link', { name: /Liquidity/i })).toHaveAttribute(
-      'href',
-      '/app/acme-agent-ops/payments/liquidity',
-    );
-    expect(screen.getByRole('link', { name: /Activity & Evidence/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /^Activity$/i })).toHaveAttribute(
       'href',
       '/app/acme-agent-ops/payments/activity',
     );
@@ -87,10 +80,7 @@ describe('ConsoleShell', () => {
     expect(settingsLink).toHaveClass('sidebar-footer-link');
     expect(screen.getByRole('button', { name: 'Logout' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open navigation' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Expand Treasury navigation/i })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    );
+    expect(screen.queryByRole('button', { name: /Expand Treasury navigation/i })).not.toBeInTheDocument();
     expect(screen.queryByTitle(/Coming in Section/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Wallets')).not.toBeInTheDocument();
   });
@@ -141,7 +131,7 @@ describe('ConsoleShell', () => {
     vi.useRealTimers();
   });
 
-  it('opens Treasury navigation and marks nested payment route active from pathname', () => {
+  it('marks nested Treasury Fund route active when viewing advanced networks', () => {
     pathname = '/app/acme-agent-ops/payments/sources';
 
     render(
@@ -150,17 +140,13 @@ describe('ConsoleShell', () => {
       </ConsoleShell>,
     );
 
-    expect(screen.getByRole('button', { name: /Collapse Treasury navigation/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    expect(screen.getByRole('link', { name: /Sources & Rails/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /^Fund$/i })).toHaveAttribute(
       'aria-current',
       'page',
     );
   });
 
-  it('keeps mobile navigation open while expanding Treasury and closes after a route is chosen', async () => {
+  it('keeps mobile navigation open and closes after a Treasury route is chosen', async () => {
     pathname = '/app/acme-agent-ops/controls';
     const user = userEvent.setup();
 
@@ -173,14 +159,7 @@ describe('ConsoleShell', () => {
     await user.click(screen.getByRole('button', { name: 'Open navigation' }));
     const dialog = screen.getByRole('dialog', { name: 'Workspace navigation' });
 
-    await user.click(within(dialog).getByRole('button', { name: 'Expand Treasury navigation' }));
-    expect(dialog).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Collapse Treasury navigation' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-
-    await user.click(within(dialog).getByRole('link', { name: 'Sources & Rails' }));
+    await user.click(within(dialog).getByRole('link', { name: /^Empower$/i }));
     expect(screen.queryByRole('dialog', { name: 'Workspace navigation' })).not.toBeInTheDocument();
   });
 
@@ -199,12 +178,12 @@ describe('ConsoleShell', () => {
 
     const dialog = screen.getByRole('dialog', { name: /Page jump/i });
     expect(dialog).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/Jump to a console page/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Jump to a console page/i )).toBeInTheDocument();
     expect(screen.queryByText(/Search agents/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Search policies/i)).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('option', { name: /Agent Access/i }));
-    expect(push).toHaveBeenCalledWith('/app/acme-agent-ops/payments/agent-access');
+    await user.click(within(dialog).getByRole('option', { name: /^Empower$/i }));
+    expect(push).toHaveBeenCalledWith('/app/acme-agent-ops/payments/empower');
   });
 
   it('closes the page-jump palette with Escape and restores focus to its launcher', async () => {

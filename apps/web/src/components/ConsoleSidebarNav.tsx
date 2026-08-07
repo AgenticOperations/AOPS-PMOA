@@ -6,9 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import {
   IconActivity,
-  IconChevronDown,
   IconChecks,
-  IconCreditCard,
   IconDatabaseDollar,
   IconKey,
   IconLayoutDashboard,
@@ -17,7 +15,6 @@ import {
   IconRobot,
   IconSettings,
   IconShieldCheck,
-  IconWallet,
 } from '@tabler/icons-react';
 import type { Org } from '@/lib/identity-spine-types';
 import { cn } from '@/lib/utils';
@@ -39,9 +36,7 @@ const iconProps = {
 export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, org }: ConsoleSidebarNavProps) {
   const pathname = usePathname();
   const base = `/app/${org.slug}`;
-  const paymentsActive = pathname?.startsWith(`${base}/payments`) ?? false;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(collapsible);
-  const [treasuryOpen, setTreasuryOpen] = useState(paymentsActive);
   const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastPointerActivityRef = useRef(0);
 
@@ -59,12 +54,6 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       setSidebarCollapsed(true);
     }, SIDEBAR_IDLE_TIMEOUT_MS);
   }, [clearCollapseTimer, collapsible, sidebarCollapsed]);
-
-  useEffect(() => {
-    if (paymentsActive) {
-      setTreasuryOpen(true);
-    }
-  }, [paymentsActive]);
 
   useEffect(() => {
     scheduleCollapse();
@@ -100,7 +89,7 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
           {
             href: `${base}/overview`,
             icon: <IconLayoutDashboard aria-hidden="true" className="nav-icon" {...iconProps} />,
-            label: 'Overview',
+            label: 'Home',
           },
         ],
       },
@@ -138,41 +127,21 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
     [base],
   );
 
-  const treasuryItems = [
-    {
-      href: `${base}/payments`,
-      icon: <IconCreditCard aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Overview',
-    },
-    {
-      href: `${base}/payments/sources`,
-      icon: <IconWallet aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Sources & Rails',
-    },
-    {
-      href: `${base}/payments/agent-access`,
-      icon: <IconKey aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Agent Access',
-    },
+  const moneyItems = [
     {
       href: `${base}/payments/funding`,
-      icon: <IconDatabaseDollar aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Funding',
+      icon: <IconDatabaseDollar aria-hidden="true" className="nav-icon" {...iconProps} />,
+      label: 'Fund',
     },
     {
-      href: `${base}/payments/delegations`,
-      icon: <IconKey aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Delegations',
-    },
-    {
-      href: `${base}/payments/liquidity`,
-      icon: <IconDatabaseDollar aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Liquidity',
+      href: `${base}/payments/empower`,
+      icon: <IconKey aria-hidden="true" className="nav-icon" {...iconProps} />,
+      label: 'Empower',
     },
     {
       href: `${base}/payments/activity`,
-      icon: <IconListDetails aria-hidden="true" className="nav-sub-icon" size={15} stroke={1.8} />,
-      label: 'Activity & Evidence',
+      icon: <IconListDetails aria-hidden="true" className="nav-icon" {...iconProps} />,
+      label: 'Activity',
     },
   ];
 
@@ -181,15 +150,24 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       return false;
     }
 
-    if (href === `${base}/payments`) {
-      return pathname === href;
+    if (href === `${base}/payments/funding`) {
+      return pathname === href
+        || pathname === `${base}/payments`
+        || pathname.startsWith(`${base}/payments/sources`)
+        || pathname.startsWith(`${base}/payments/liquidity`);
+    }
+
+    if (href === `${base}/payments/empower`) {
+      return pathname === href
+        || pathname.startsWith(`${base}/payments/agent-access`)
+        || pathname.startsWith(`${base}/payments/delegations`);
     }
 
     if (href === `${base}/agents`) {
       return pathname === href || pathname.startsWith(`${href}/`);
     }
 
-    return pathname === href;
+    return pathname === href || pathname.startsWith(`${href}/`);
   };
 
   const handleSidebarClick = (event: MouseEvent<HTMLElement>) => {
@@ -254,41 +232,18 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
         <div className="sidebar-section">
           <p className="sidebar-section-label">Treasury</p>
           <div className="sidebar-nav">
-            <div className={cn('sidebar-nav-parent', paymentsActive && 'nav-active')}>
+            {moneyItems.map((item) => (
               <Link
-                aria-current={pathname === `${base}/payments` ? 'page' : undefined}
-                className="sidebar-nav-link sidebar-nav-parent-link"
-                href={`${base}/payments`}
-                title="Treasury"
+                aria-current={isActive(item.href) ? 'page' : undefined}
+                className={cn('sidebar-nav-link', isActive(item.href) && 'nav-active')}
+                href={item.href}
+                key={item.href}
+                title={item.label}
               >
-                <IconCreditCard aria-hidden="true" className="nav-icon" {...iconProps} />
-                <span className="sidebar-link-label">Treasury</span>
+                {item.icon}
+                <span className="sidebar-link-label">{item.label}</span>
               </Link>
-              <button
-                aria-controls="treasury-subnav"
-                aria-expanded={treasuryOpen}
-                aria-label={treasuryOpen ? 'Collapse Treasury navigation' : 'Expand Treasury navigation'}
-                className="sidebar-nav-disclosure"
-                onClick={() => setTreasuryOpen((open) => !open)}
-                type="button"
-              >
-                <IconChevronDown aria-hidden="true" size={15} stroke={2} />
-              </button>
-            </div>
-            <div className={cn('sidebar-subnav', treasuryOpen && 'subnav-open')} id="treasury-subnav">
-              {treasuryItems.map((item) => (
-                <Link
-                  aria-current={isActive(item.href) ? 'page' : undefined}
-                  className={cn('sidebar-subnav-link', isActive(item.href) && 'nav-active')}
-                  href={item.href}
-                  key={item.href}
-                  title={item.label}
-                >
-                  {item.icon}
-                  <span className="sidebar-link-label">{item.label}</span>
-                </Link>
-              ))}
-            </div>
+            ))}
           </div>
         </div>
 
