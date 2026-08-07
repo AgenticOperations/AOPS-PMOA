@@ -668,3 +668,45 @@ export async function listAgentWalletFunding(orgId: string): Promise<readonly Ag
   );
   return body.wallets;
 }
+
+export type AgentOnchainIdentityRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly agent_id: string;
+  readonly mode: string;
+  readonly chain: string;
+  readonly registry_address: string;
+  readonly token_id: string | null;
+  readonly agent_uri: string;
+  readonly register_tx_hash: string | null;
+  readonly status: 'pending' | 'registered' | 'failed';
+};
+
+export async function getAgentOnchainIdentity(
+  orgId: string,
+  agentId: string,
+): Promise<AgentOnchainIdentityRecord | null> {
+  const body = await apiFetch<{ readonly identity: AgentOnchainIdentityRecord | null }>(
+    `/v1/orgs/${orgId}/agents/${agentId}/identity`,
+  );
+  return body.identity;
+}
+
+export async function registerAgentOnchainIdentity(
+  orgId: string,
+  agentId: string,
+  input: { readonly endpoint_url: string; readonly agent_uri?: string | undefined },
+): Promise<AgentOnchainIdentityRecord> {
+  const body = await apiFetch<{ readonly identity: AgentOnchainIdentityRecord }>(
+    `/v1/orgs/${orgId}/agents/${agentId}/identity/register`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        endpoint_url: input.endpoint_url,
+        agent_uri: input.agent_uri,
+        chain: 'arc',
+      }),
+    },
+  );
+  return body.identity;
+}

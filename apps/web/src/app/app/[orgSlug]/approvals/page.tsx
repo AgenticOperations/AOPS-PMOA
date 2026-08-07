@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { ApprovalIndex } from '@/components/approvals/ApprovalIndex';
 import { ApprovalFilters } from '@/components/approvals/ApprovalFilters';
 import { approveApprovalAction, denyApprovalAction } from '@/app/actions/approvals';
@@ -90,7 +89,6 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
   }]));
 
   return (
-    <ConsoleShell active="approvals" org={org}>
       <div className="approvals-workbench">
         <nav aria-label="Approval sections" className="approval-subnav">
           <Link aria-current={activeTab === 'inbox' ? 'page' : undefined} className={activeTab === 'inbox' ? 'is-active' : ''} href={`/app/${org.slug}/approvals`}>Inbox</Link>
@@ -138,7 +136,6 @@ export default async function ApprovalsPage({ params, searchParams }: ApprovalsP
           />
         </section>
       </div>
-    </ConsoleShell>
   );
 }
 

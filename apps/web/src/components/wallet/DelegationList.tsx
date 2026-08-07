@@ -23,14 +23,9 @@ export function DelegationList({ orgSlug, delegations }: Props) {
       const response = await fetch(`/api/app/${orgSlug}/delegations/${delegation.id}/revoke`, { method: 'POST' });
       if (!response.ok) throw new Error(await response.text());
       const { onChainRevoked } = await response.json() as { onChainRevoked: boolean };
-      // Be exact about what happened. For a user-owned payer this platform
-      // cannot call Permit2's lockdown() -- only the owner can -- so the
-      // on-chain allowance is still live. Saying "revoked" here would tell
-      // the operator they are safe when they are not.
       setNotice(onChainRevoked
-        ? 'Revoked. The on-chain allowance is closed.'
-        : 'Stopped in agentOps: this agent can no longer draw through us. The on-chain '
-          + 'Permit2 allowance is still open until you sign a lockdown from your own wallet.');
+        ? 'Revoked. On-chain allowance closed.'
+        : 'Stopped in agentOps. On-chain Permit2 may still be open until you lockdown from your wallet.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Revoke failed.');
     } finally {
@@ -39,60 +34,53 @@ export function DelegationList({ orgSlug, delegations }: Props) {
   }
 
   if (delegations.length === 0) {
-    return (
-      <p className="treasury-inline-meta">No delegations yet.</p>
-    );
+    return <p className="delegation-form-meta">None yet.</p>;
   }
 
   return (
-    <div className="grid gap-3">
-      {notice !== null ? <p className="rounded-md border p-3 text-sm">{notice}</p> : null}
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left">
-              <th className="p-2 font-medium">Payer</th>
-              <th className="p-2 font-medium">Agent</th>
-              <th className="p-2 font-medium">Chain</th>
-              <th className="p-2 font-medium">Cap</th>
-              <th className="p-2 font-medium">Drawn</th>
-              <th className="p-2 font-medium">Remaining</th>
-              <th className="p-2 font-medium">Status</th>
-              <th className="p-2" />
+    <div className="delegation-list">
+      {notice === null ? null : <p className="delegation-form-meta">{notice}</p>}
+      <table className="delegation-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Agent</th>
+            <th>Chain</th>
+            <th>Cap</th>
+            <th>Left</th>
+            <th>Status</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {delegations.map((delegation) => (
+            <tr key={delegation.id}>
+              <td>
+                {delegation.platformControlsPayer
+                  ? 'Treasury'
+                  : shortAddress(delegation.payerAddress)}
+              </td>
+              <td>{delegation.payeeAgentId ?? shortAddress(delegation.payeeAddress)}</td>
+              <td>{delegation.chain}</td>
+              <td>{delegation.ceilingUsdc}</td>
+              <td>{delegation.remainingUsdc}</td>
+              <td>{delegation.status}</td>
+              <td className="delegation-table-action">
+                {delegation.status === 'active' ? (
+                  <button
+                    className="treasury-text-action"
+                    disabled={revoking === delegation.id}
+                    onClick={() => void handleRevoke(delegation)}
+                    type="button"
+                  >
+                    {revoking === delegation.id ? 'Revoking…' : 'Revoke'}
+                  </button>
+                ) : null}
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {delegations.map((delegation) => (
-              <tr key={delegation.id} className="border-b last:border-0">
-                <td className="p-2">
-                  {shortAddress(delegation.payerAddress)}
-                  {delegation.platformControlsPayer ? null : (
-                    <span className="ml-1 text-xs text-muted-foreground">(your wallet)</span>
-                  )}
-                </td>
-                <td className="p-2">{delegation.payeeAgentId ?? shortAddress(delegation.payeeAddress)}</td>
-                <td className="p-2">{delegation.chain}</td>
-                <td className="p-2">{delegation.ceilingUsdc}</td>
-                <td className="p-2">{delegation.drawnUsdc}</td>
-                <td className="p-2">{delegation.remainingUsdc}</td>
-                <td className="p-2">{delegation.status}</td>
-                <td className="p-2 text-right">
-                  {delegation.status === 'active' ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleRevoke(delegation)}
-                      disabled={revoking === delegation.id}
-                      className="rounded-md border px-2 py-1 text-xs disabled:opacity-60"
-                    >
-                      {revoking === delegation.id ? 'Revoking…' : 'Revoke'}
-                    </button>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

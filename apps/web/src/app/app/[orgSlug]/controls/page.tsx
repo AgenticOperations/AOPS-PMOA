@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { ControlsLibrary } from '@/components/controls/ControlsLibrary';
 import {
   activatePolicyDraftAction,
@@ -68,7 +67,6 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
   ];
 
   return (
-    <ConsoleShell active="controls" org={org}>
       <ControlsLibrary
         activateAction={activatePolicyDraftAction.bind(null, org.id, org.slug)}
         activateRevisionAction={activatePolicyRevisionDraftAction.bind(null, org.id, org.slug)}
@@ -91,6 +89,5 @@ export default async function ControlsPage({ params }: ControlsPageProps) {
         updateDraftAction={updatePolicyDraftAction.bind(null, org.id, org.slug)}
         validateAction={validatePolicyDraftAction.bind(null, org.id, org.slug)}
       />
-    </ConsoleShell>
   );
 }

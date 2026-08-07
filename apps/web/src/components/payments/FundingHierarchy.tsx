@@ -18,7 +18,6 @@ type Props = {
 type AgentFundingGroup = {
   readonly agentId: string;
   readonly agentName: string;
-  readonly address: string;
   readonly byChain: ReadonlyMap<PaymentChain, AgentWalletFundingRecord>;
   readonly chains: readonly PaymentChain[];
 };
@@ -33,7 +32,6 @@ function groupAgentWallets(agentWallets: readonly AgentWalletFundingRecord[]): A
   const groups = new Map<string, {
     agentId: string;
     agentName: string;
-    address: string;
     byChain: Map<PaymentChain, AgentWalletFundingRecord>;
   }>();
 
@@ -43,7 +41,6 @@ function groupAgentWallets(agentWallets: readonly AgentWalletFundingRecord[]): A
       groups.set(wallet.agentId, {
         agentId: wallet.agentId,
         agentName: wallet.agentName,
-        address: wallet.address,
         byChain: new Map([[wallet.chain, wallet]]),
       });
       continue;
@@ -54,37 +51,56 @@ function groupAgentWallets(agentWallets: readonly AgentWalletFundingRecord[]): A
   return [...groups.values()].map((group) => ({
     agentId: group.agentId,
     agentName: group.agentName,
-    address: group.address,
     byChain: group.byChain,
     chains: [...group.byChain.keys()].sort((left, right) => left.localeCompare(right)),
   }));
 }
 
 /**
- * Fund surface: treasury deposit + agent balances.
- * Caps live under Empower — not repeated here.
+ * Fund: pick one of two paths. Treasury deposit only for path 1.
+ * Agents listed as balances only — inspect, not deposit targets.
  */
 export function FundingHierarchy({ treasuryWallets, agentWallets, orgSlug }: Props) {
   const fundedChains = treasuryWallets.filter((wallet) => wallet.status === 'active');
   const [treasuryChain, setTreasuryChain] = useState<PaymentChain | ''>(fundedChains[0]?.chain ?? '');
   const activeTreasury = fundedChains.find((wallet) => wallet.chain === treasuryChain) ?? fundedChains[0];
   const agentGroups = useMemo(() => groupAgentWallets(agentWallets), [agentWallets]);
-  const hasBase = agentWallets.some((wallet) => wallet.chain === 'base');
+  const walletPathHref = `/app/${orgSlug}/payments/empower?tab=delegations&source=wallet&from=fund`;
 
   return (
-    <div className="treasury-stack">
-      <section className="treasury-panel">
-        <header className="treasury-panel-header">
-          <h2>Org treasury</h2>
-        </header>
+    <div className="fund-surface">
+      <section className="fund-paths" aria-label="Funding paths">
+        <p className="fund-paths-label">Choose one path</p>
+        <div className="fund-path-toggle" role="tablist">
+          <button
+            aria-selected
+            className="is-active"
+            role="tab"
+            type="button"
+          >
+            <span className="fund-path-title">Org treasury</span>
+            <span className="fund-path-sub">Deposit here</span>
+          </button>
+          <Link
+            aria-selected={false}
+            className="fund-path-link"
+            href={walletPathHref}
+            role="tab"
+          >
+            <span className="fund-path-title">Your wallet</span>
+            <span className="fund-path-sub">Skip deposit → Empower</span>
+          </Link>
+        </div>
+      </section>
+
+      <section className="fund-body" role="tabpanel">
         {fundedChains.length === 0 || activeTreasury === undefined ? (
           <TreasuryInfoCallout>
             No treasury yet.{' '}
             <Link href={`/app/${orgSlug}/payments/sources`}>Open Networks</Link>
-            {' '}to provision one.
           </TreasuryInfoCallout>
         ) : (
-          <div className="treasury-fund-grid">
+          <div className="fund-deposit">
             <label className="treasury-field-stack">
               <span className="treasury-field-label">Chain</span>
               <select
@@ -100,43 +116,39 @@ export function FundingHierarchy({ treasuryWallets, agentWallets, orgSlug }: Pro
               </select>
             </label>
             <div className="treasury-field-stack">
-              <span className="treasury-field-label">Deposit address</span>
+              <span className="treasury-field-label">Send USDC here</span>
               <CopyableAddress address={activeTreasury.address} />
             </div>
           </div>
         )}
       </section>
 
-      <section className="treasury-panel">
-        <header className="treasury-panel-header treasury-panel-header-row">
-          <h2>Agent wallets</h2>
-          <Link className="treasury-text-action" href={`/app/${orgSlug}/payments/empower`}>
-            Set spend limits →
-          </Link>
-        </header>
-        {agentGroups.length === 0 ? (
-          <TreasuryInfoCallout>
-            No agent wallets yet. Grant access under{' '}
-            <Link href={`/app/${orgSlug}/payments/empower`}>Empower</Link>.
-          </TreasuryInfoCallout>
-        ) : (
-          <div className="treasury-agent-list">
-            {agentGroups.map((group) => (
-              <AgentWalletCard group={group} key={group.agentId} />
-            ))}
-          </div>
-        )}
-        {hasBase ? (
-          <TreasuryInfoCallout>
-            Base needs a little ETH for gas. Arc uses USDC for gas — no extra token.
-          </TreasuryInfoCallout>
-        ) : null}
+      <section className="fund-roster" aria-label="Balances">
+        <h2>Balances</h2>
+        <ul className="fund-roster-list">
+          <li className="fund-roster-row is-treasury">
+            <span className="fund-roster-name">Org treasury</span>
+            <span className="fund-roster-meta">
+              {activeTreasury === undefined
+                ? '—'
+                : (CHAIN_LABELS[activeTreasury.chain] ?? activeTreasury.chain)}
+            </span>
+            <span className="fund-roster-balance">—</span>
+          </li>
+          {agentGroups.length === 0 ? (
+            <li className="fund-roster-empty">No agents with wallets yet</li>
+          ) : (
+            agentGroups.map((group) => (
+              <AgentBalanceRow group={group} key={group.agentId} />
+            ))
+          )}
+        </ul>
       </section>
     </div>
   );
 }
 
-function AgentWalletCard({ group }: { readonly group: AgentFundingGroup }) {
+function AgentBalanceRow({ group }: { readonly group: AgentFundingGroup }) {
   const initialChain = group.chains[0];
   const [chain, setChain] = useState<PaymentChain | null>(initialChain ?? null);
   if (initialChain === undefined || chain === null) return null;
@@ -144,18 +156,15 @@ function AgentWalletCard({ group }: { readonly group: AgentFundingGroup }) {
   if (selected === undefined) return null;
 
   return (
-    <div className="treasury-agent-row">
-      <div className="treasury-agent-row-identity">
+    <li className="fund-roster-row">
+      <span className="fund-roster-identity">
         <AgentAvatar agentId={group.agentId} name={group.agentName} size="sm" />
-        <div className="min-w-0">
-          <p className="treasury-agent-name">{group.agentName}</p>
-          <CopyableAddress address={group.address} />
-        </div>
-      </div>
-      <label className="treasury-field-stack">
-        <span className="treasury-field-label">Chain</span>
+        <span className="fund-roster-name">{group.agentName}</span>
+      </span>
+      {group.chains.length > 1 ? (
         <select
-          className={FIELD_CLASS}
+          aria-label={`${group.agentName} chain`}
+          className="fund-roster-chain"
           onChange={(event) => setChain(event.target.value as PaymentChain)}
           value={selected.chain}
         >
@@ -165,19 +174,10 @@ function AgentWalletCard({ group }: { readonly group: AgentFundingGroup }) {
             </option>
           ))}
         </select>
-      </label>
-      <div className="treasury-field-stack">
-        <span className="treasury-field-label">Balance</span>
-        <p className="treasury-metric-value">{usdc(selected.usdcMicros)}</p>
-      </div>
-      <div className="treasury-field-stack">
-        <span className="treasury-field-label">Allocated</span>
-        <p className="treasury-metric-value">
-          {selected.allocatedUsdc === null
-            ? <span className="text-muted-foreground">—</span>
-            : selected.allocatedUsdc}
-        </p>
-      </div>
-    </div>
+      ) : (
+        <span className="fund-roster-meta">{CHAIN_LABELS[selected.chain] ?? selected.chain}</span>
+      )}
+      <span className="fund-roster-balance">{usdc(selected.usdcMicros)} USDC</span>
+    </li>
   );
 }

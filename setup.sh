@@ -280,7 +280,7 @@ start_application() {
 
   log 'Starting API, Hosted MCP, Circle worker, and web console.'
   start_service api npm run dev:api
-  start_service mcp env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005 npm run dev:mcp:http
+  start_service mcp env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005,http://127.0.0.1:3005 npm run dev:mcp:http
   start_service circle-worker npm run dev:circle-worker
   start_service web env MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp npm --workspace @agentops-pmoa/web run dev -- --port 3005
 

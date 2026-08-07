@@ -80,7 +80,7 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
     ['api', 'npm run dev:api'],
     [
       'mcp',
-      'env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005 npm run dev:mcp:http',
+      'env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005,http://127.0.0.1:3005 npm run dev:mcp:http',
     ],
     ['circle-worker', 'npm run dev:circle-worker'],
     ['web', 'env MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp npm --workspace @agentops-pmoa/web run dev -- --port 3005'],

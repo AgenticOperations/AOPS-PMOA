@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { OperationsWorkbench } from '@/components/operations/OperationsWorkbench';
 import {
   archiveToolAction,
@@ -40,7 +39,6 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
   const activeAgents = agents.filter((agent) => agent.status !== 'deactivated');
 
   return (
-    <ConsoleShell active="operations" org={org}>
       <OperationsWorkbench
         agents={activeAgents.map((agent) => ({ id: agent.id, name: agent.name }))}
         archiveToolAction={archiveToolAction.bind(null, org.id, org.slug)}
@@ -53,6 +51,5 @@ export default async function OperationsPage({ params }: OperationsPageProps) {
         updateRateLimitAction={updateOperationLimitAction.bind(null, org.id, org.slug)}
         updateToolAction={updateToolAction.bind(null, org.id, org.slug)}
       />
-    </ConsoleShell>
   );
 }

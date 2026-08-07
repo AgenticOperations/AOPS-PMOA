@@ -17,6 +17,7 @@ import { AgentAvatar } from './AgentAvatar';
 import { ConnectionPanel } from './ConnectionPanel';
 import { AgentActivityWorkspace } from './AgentActivityWorkspace';
 import { WalletRefsPanel } from './WalletRefsPanel';
+import { AgentPublishPanel, type AgentOnchainIdentityView } from './AgentPublishPanel';
 import { formatUtcDateTime } from '@/lib/date-format';
 import {
   Sheet,
@@ -27,7 +28,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 
-export type AgentDetailTab = 'overview' | 'access' | 'credentials' | 'activity';
+export type AgentDetailTab = 'overview' | 'access' | 'credentials' | 'publish' | 'activity';
 
 const agentDetailTabs: ReadonlyArray<{
   readonly id: AgentDetailTab;
@@ -37,6 +38,7 @@ const agentDetailTabs: ReadonlyArray<{
   { id: 'overview', label: 'Overview', description: 'Identity, status, and editable metadata.' },
   { id: 'access', label: 'Policies & access', description: 'Effective policy bindings and runtime operation controls.' },
   { id: 'credentials', label: 'Credentials & wallets', description: 'Agent credentials and external wallet references.' },
+  { id: 'publish', label: 'Publish', description: 'Arc nanopayments template, public URL, ERC-8004 identity.' },
   { id: 'activity', label: 'Activity', description: 'Recorded runtime history and an on-demand live monitor.' },
 ];
 
@@ -79,6 +81,8 @@ export function AgentDetailShell({
   availablePolicies = [],
   allowedActions = [],
   blockedOperations = [],
+  templateRepoUrl = 'https://github.com/circlefin/arc-nanopayments',
+  onchainIdentity = null,
   actions,
 }: {
   readonly orgId: string;
@@ -96,6 +100,8 @@ export function AgentDetailShell({
   readonly availablePolicies?: PolicyVersion[] | undefined;
   readonly allowedActions?: AgentAllowedActionRecord[] | undefined;
   readonly blockedOperations?: BlockedOperationRecord[] | undefined;
+  readonly templateRepoUrl?: string | undefined;
+  readonly onchainIdentity?: AgentOnchainIdentityView | undefined;
   readonly actions?: {
     readonly pause?: (() => Promise<void>) | undefined;
     readonly activate?: (() => Promise<void>) | undefined;
@@ -108,6 +114,8 @@ export function AgentDetailShell({
     readonly updateAgent?: ((formData: FormData) => Promise<void>) | undefined;
     readonly bindPolicy?: ((formData: FormData) => Promise<void>) | undefined;
     readonly removePolicyBinding?: ((formData: FormData) => Promise<void>) | undefined;
+    readonly savePublishListing?: ((formData: FormData) => Promise<void>) | undefined;
+    readonly registerOnchainIdentity?: ((formData: FormData) => Promise<void>) | undefined;
   } | undefined;
 }) {
   const [drawer, setDrawer] = useState<'edit' | 'lifecycle' | 'policy' | null>(null);
@@ -379,6 +387,26 @@ export function AgentDetailShell({
             walletRefs={walletRefs}
           />
         </div>
+      ) : null}
+
+      {activeTab === 'publish' ? (
+        <AgentPublishPanel
+          endpointUrl={typeof agent.metadata.public_endpoint_url === 'string' ? agent.metadata.public_endpoint_url : ''}
+          identity={onchainIdentity}
+          registerIdentityAction={
+            actions?.registerOnchainIdentity
+            ?? (async () => {
+              throw new Error('Identity registration is unavailable.');
+            })
+          }
+          saveListingAction={
+            actions?.savePublishListing
+            ?? (async () => {
+              throw new Error('Listing save is unavailable.');
+            })
+          }
+          templateRepoUrl={templateRepoUrl}
+        />
       ) : null}
 
       {activeTab === 'activity' ? (

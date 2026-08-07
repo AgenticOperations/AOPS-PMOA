@@ -9,7 +9,7 @@ describe('readHostedMcpEnv', () => {
       port: 8070,
       publicUrl: 'http://127.0.0.1:8070/mcp',
       allowedHosts: ['127.0.0.1:8070', 'localhost:8070'],
-      allowedOrigins: ['http://localhost:3005'],
+      allowedOrigins: ['http://localhost:3005', 'http://127.0.0.1:3005'],
       timeoutMs: 10_000,
       maxBodyBytes: 1_048_576,
       maxInFlight: 100,

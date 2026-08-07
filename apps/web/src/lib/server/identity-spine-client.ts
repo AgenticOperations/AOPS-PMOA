@@ -1,4 +1,5 @@
 import 'server-only';
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { readWebEnv } from '../env';
 import type {
@@ -116,10 +117,10 @@ export async function listOrgs(): Promise<Org[]> {
   return body.orgs;
 }
 
-export async function getOrgBySlug(slug: string): Promise<Org> {
+export const getOrgBySlug = cache(async (slug: string): Promise<Org> => {
   const body = await apiFetch<{ readonly org: Org }>(`/v1/orgs/by-slug/${slug}`);
   return body.org;
-}
+});
 
 export async function createOrg(input: {
   readonly name: string;
@@ -253,6 +254,7 @@ export async function createAgent(
     readonly description?: string | undefined;
     readonly labels?: string[] | undefined;
     readonly default_environment?: string | null | undefined;
+    readonly metadata?: Record<string, unknown> | undefined;
   },
 ): Promise<AgentRosterItem> {
   const body = await apiFetch<{ readonly agent: AgentRosterItem }>(`/v1/orgs/${orgId}/agents`, {
@@ -288,6 +290,7 @@ export async function updateAgent(
     readonly description?: string | undefined;
     readonly labels?: string[] | undefined;
     readonly default_environment?: string | null | undefined;
+    readonly metadata?: Record<string, unknown> | undefined;
   },
 ): Promise<AgentDetailBundle['agent']> {
   const body = await apiFetch<{ readonly agent: AgentDetailBundle['agent'] }>(`/v1/orgs/${orgId}/agents/${agentId}`, {

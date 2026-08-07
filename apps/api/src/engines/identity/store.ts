@@ -1591,7 +1591,18 @@ const agentRosterSelect = `SELECT
          agent_id,
          count(*) AS total_connections,
          count(*) FILTER (WHERE status = 'active') AS active_connections,
-         count(*) FILTER (WHERE status = 'active' AND last_tested_at > now() - interval '24 hours') AS active_recent
+         count(*) FILTER (
+           WHERE status = 'active'
+             AND (
+               last_tested_at > now() - interval '24 hours'
+               OR last_used_at > now() - interval '24 hours'
+               OR (
+                 last_tested_at IS NULL
+                 AND last_used_at IS NULL
+                 AND created_at > now() - interval '24 hours'
+               )
+             )
+         ) AS active_recent
        FROM connections
        WHERE org_id = $1
        GROUP BY agent_id
@@ -1762,7 +1773,18 @@ export async function getAgentDetail(
          agent_id,
          count(*) AS total_connections,
          count(*) FILTER (WHERE status = 'active') AS active_connections,
-         count(*) FILTER (WHERE status = 'active' AND last_tested_at > now() - interval '24 hours') AS active_recent
+         count(*) FILTER (
+           WHERE status = 'active'
+             AND (
+               last_tested_at > now() - interval '24 hours'
+               OR last_used_at > now() - interval '24 hours'
+               OR (
+                 last_tested_at IS NULL
+                 AND last_used_at IS NULL
+                 AND created_at > now() - interval '24 hours'
+               )
+             )
+         ) AS active_recent
        FROM connections
        WHERE org_id = $1
        GROUP BY agent_id
@@ -2059,9 +2081,9 @@ export async function createConnection(
     const secretLast4 = secret === null ? null : secret.slice(-4);
     const result = await client.query<ConnectionRow>(
       `INSERT INTO connections (
-         id, org_id, agent_id, created_by, kind, name, status, secret_last4, secret_revealed_at
+         id, org_id, agent_id, created_by, kind, name, status, secret_last4, secret_revealed_at, last_tested_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, now())
+       VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, now(), now())
        RETURNING *`,
       [connectionId, orgId, agentId, operator.actorId, input.kind, input.name, secretLast4],
     );
@@ -2160,6 +2182,7 @@ export async function rotateConnection(
       `UPDATE connections
           SET secret_last4 = $3,
               secret_revealed_at = now(),
+              last_tested_at = now(),
               updated_at = now()
         WHERE org_id = $1 AND id = $2
         RETURNING *`,
@@ -2250,9 +2273,10 @@ export async function authenticateConnection(
   const row = result.rows[0];
   if (row === undefined) return null;
 
-  await pool.query('UPDATE connections SET last_used_at = now(), updated_at = now() WHERE id = $1', [
-    row.connection_id,
-  ]);
+  await pool.query(
+    'UPDATE connections SET last_used_at = now(), last_tested_at = COALESCE(last_tested_at, now()), updated_at = now() WHERE id = $1',
+    [row.connection_id],
+  );
 
   return row;
 }

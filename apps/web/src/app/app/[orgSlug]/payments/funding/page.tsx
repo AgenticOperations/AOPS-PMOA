@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { FundingHierarchy } from '@/components/payments/FundingHierarchy';
 import { TreasuryWorkbench } from '@/components/payments/TreasuryChrome';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
@@ -27,13 +26,11 @@ export default async function PaymentsFundingPage({ params }: FundingPageProps) 
   ]);
 
   return (
-    <ConsoleShell active="payments" org={org}>
       <TreasuryWorkbench
         active="fund"
-        description="Deposit USDC, then inspect agent balances by chain."
+        description="Pick one path: deposit to the org treasury, or grant from your wallet."
         info={
           <>
-            Advanced:{' '}
             <Link href={`/app/${org.slug}/payments/sources`}>Networks</Link>
             {' · '}
             <Link href={`/app/${org.slug}/payments/liquidity`}>Liquidity</Link>
@@ -48,6 +45,5 @@ export default async function PaymentsFundingPage({ params }: FundingPageProps) 
           treasuryWallets={treasuryWallets}
         />
       </TreasuryWorkbench>
-    </ConsoleShell>
   );
 }

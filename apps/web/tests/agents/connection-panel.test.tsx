@@ -3,13 +3,12 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionPanel } from '../../src/components/agents/ConnectionPanel.js';
 
-const { verifyHostedMcpMock } = vi.hoisted(() => ({
-  verifyHostedMcpMock: vi.fn(),
+const { verifyHostedMcpActionMock } = vi.hoisted(() => ({
+  verifyHostedMcpActionMock: vi.fn(),
 }));
 
-vi.mock('@/lib/mcp-verification', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/lib/mcp-verification.js')>()),
-  verifyHostedMcp: verifyHostedMcpMock,
+vi.mock('@/app/actions/mcp-verification', () => ({
+  verifyHostedMcpAction: verifyHostedMcpActionMock,
 }));
 
 const mcpEndpoint = 'https://mcp.agentops.test/mcp';
@@ -45,7 +44,7 @@ function localAdapterConfig(secret: string): string {
 
 describe('ConnectionPanel', () => {
   beforeEach(() => {
-    verifyHostedMcpMock.mockReset();
+    verifyHostedMcpActionMock.mockReset();
   });
 
   it('reveals the complete hosted MCP setup once for a new credential', () => {
@@ -400,15 +399,18 @@ describe('ConnectionPanel', () => {
     await waitFor(() => expect(within(rotationDialog).getByRole('button', { name: 'Close panel' })).toBeEnabled());
   });
 
-  it('verifies the exact hosted endpoint and credential and renders the resolved identity', async () => {
+  it('verifies the credential through the server action and renders the resolved identity', async () => {
     let finishVerification: ((result: {
-      status: 'verified';
-      toolCount: number;
-      agentName: string;
-      connectionId: string;
-      contractVersion: string;
+      ok: true;
+      result: {
+        status: 'verified';
+        toolCount: number;
+        agentName: string;
+        connectionId: string;
+        contractVersion: string;
+      };
     }) => void) | undefined;
-    verifyHostedMcpMock.mockReturnValueOnce(new Promise((resolve) => {
+    verifyHostedMcpActionMock.mockReturnValueOnce(new Promise((resolve) => {
       finishVerification = resolve;
     }));
     const user = userEvent.setup();
@@ -426,20 +428,19 @@ describe('ConnectionPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
 
-    expect(verifyHostedMcpMock).toHaveBeenCalledOnce();
-    expect(verifyHostedMcpMock).toHaveBeenCalledWith(expect.objectContaining({
-      credential: 'conn_verify_once',
-      endpoint: mcpEndpoint,
-      signal: expect.any(AbortSignal),
-    }));
+    expect(verifyHostedMcpActionMock).toHaveBeenCalledOnce();
+    expect(verifyHostedMcpActionMock).toHaveBeenCalledWith({ credential: 'conn_verify_once' });
     expect(screen.getByRole('button', { name: 'Verifying...' })).toBeDisabled();
 
     finishVerification?.({
-      status: 'verified',
-      toolCount: 8,
-      agentName: 'Research agent',
-      connectionId: 'conn_live',
-      contractVersion: '2026-07-12',
+      ok: true,
+      result: {
+        status: 'verified',
+        toolCount: 8,
+        agentName: 'Research agent',
+        connectionId: 'conn_live',
+        contractVersion: '2026-07-12',
+      },
     });
 
     expect(await screen.findByText('Authenticated')).toBeInTheDocument();
@@ -450,14 +451,17 @@ describe('ConnectionPanel', () => {
   });
 
   it('shows a safe verification failure and retries with the same secret', async () => {
-    verifyHostedMcpMock
-      .mockRejectedValueOnce(new Error('credential conn_private leaked upstream'))
+    verifyHostedMcpActionMock
+      .mockResolvedValueOnce({ ok: false, message: 'MCP verification failed. Try again.' })
       .mockResolvedValueOnce({
-        status: 'verified',
-        toolCount: 8,
-        agentName: 'Research agent',
-        connectionId: 'conn_live',
-        contractVersion: '2026-07-12',
+        ok: true,
+        result: {
+          status: 'verified',
+          toolCount: 8,
+          agentName: 'Research agent',
+          connectionId: 'conn_live',
+          contractVersion: '2026-07-12',
+        },
       });
     const user = userEvent.setup();
 
@@ -474,19 +478,11 @@ describe('ConnectionPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
     expect(await screen.findByText('MCP verification failed. Try again.')).toBeInTheDocument();
-    expect(screen.queryByText(/conn_private leaked/)).not.toBeInTheDocument();
-    const firstSignal = verifyHostedMcpMock.mock.calls[0]?.[0]?.signal as AbortSignal;
-    expect(firstSignal.aborted).toBe(false);
 
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Authenticated')).toBeInTheDocument();
-    expect(firstSignal.aborted).toBe(true);
-    expect(verifyHostedMcpMock).toHaveBeenCalledTimes(2);
-    expect(verifyHostedMcpMock).toHaveBeenLastCalledWith(expect.objectContaining({
-      credential: 'conn_retry_once',
-      endpoint: mcpEndpoint,
-      signal: expect.any(AbortSignal),
-    }));
+    expect(verifyHostedMcpActionMock).toHaveBeenCalledTimes(2);
+    expect(verifyHostedMcpActionMock).toHaveBeenLastCalledWith({ credential: 'conn_retry_once' });
   });
 
   it('copies each setup value only when its accessible button is clicked', async () => {
@@ -555,8 +551,20 @@ describe('ConnectionPanel', () => {
     expect(document.querySelector('.mcp-copy-status')).toBe(liveRegion);
   });
 
-  it('aborts an in-flight verification when the setup unmounts', async () => {
-    verifyHostedMcpMock.mockReturnValueOnce(new Promise(() => {}));
+  it('ignores an in-flight verification result after the setup unmounts', async () => {
+    let finishVerification: ((result: {
+      ok: true;
+      result: {
+        status: 'verified';
+        toolCount: number;
+        agentName: string;
+        connectionId: string;
+        contractVersion: string;
+      };
+    }) => void) | undefined;
+    verifyHostedMcpActionMock.mockReturnValueOnce(new Promise((resolve) => {
+      finishVerification = resolve;
+    }));
     const user = userEvent.setup();
     const view = render(
       <ConnectionPanel
@@ -570,15 +578,22 @@ describe('ConnectionPanel', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
-    const signal = verifyHostedMcpMock.mock.calls[0]?.[0]?.signal as AbortSignal;
-    expect(signal.aborted).toBe(false);
-
     view.unmount();
-    expect(signal.aborted).toBe(true);
+    finishVerification?.({
+      ok: true,
+      result: {
+        status: 'verified',
+        toolCount: 8,
+        agentName: 'Research agent',
+        connectionId: 'conn_live',
+        contractVersion: '2026-07-12',
+      },
+    });
+    expect(screen.queryByText('Authenticated')).not.toBeInTheDocument();
   });
 
-  it('aborts an in-flight verification when the revealed secret changes', async () => {
-    verifyHostedMcpMock.mockReturnValue(new Promise(() => {}));
+  it('resets verification when the revealed secret changes', async () => {
+    verifyHostedMcpActionMock.mockReturnValue(new Promise(() => {}));
     const user = userEvent.setup();
     const view = render(
       <ConnectionPanel
@@ -592,7 +607,6 @@ describe('ConnectionPanel', () => {
     );
 
     await user.click(screen.getByRole('button', { name: 'Verify MCP connection' }));
-    const signal = verifyHostedMcpMock.mock.calls[0]?.[0]?.signal as AbortSignal;
     view.rerender(
       <ConnectionPanel
         agentId="agt_research"
@@ -604,7 +618,6 @@ describe('ConnectionPanel', () => {
       />,
     );
 
-    expect(signal.aborted).toBe(true);
     expect(screen.getByRole('button', { name: 'Verify MCP connection' })).toBeInTheDocument();
   });
 

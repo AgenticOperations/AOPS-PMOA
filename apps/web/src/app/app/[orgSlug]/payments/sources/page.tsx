@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { TreasurySourcesRails } from '@/components/payments/TreasurySourcesRails';
 import {
   createCircleTreasuryAction,
@@ -43,7 +42,6 @@ export default async function PaymentsSourcesPage({ params }: SourcesPageProps) 
   ]);
 
   return (
-    <ConsoleShell active="payments" org={org}>
       <TreasurySourcesRails
         capabilities={capabilities}
         circleTreasuryAction={createCircleTreasuryAction.bind(null, org.id, org.slug)}
@@ -60,6 +58,5 @@ export default async function PaymentsSourcesPage({ params }: SourcesPageProps) 
         verifyRailAction={verifyPaymentRailAction.bind(null, org.id, org.slug)}
         verifyUnverifiedRailsAction={verifyUnverifiedPaymentRailsAction.bind(null, org.id, org.slug)}
       />
-    </ConsoleShell>
   );
 }

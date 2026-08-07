@@ -136,14 +136,314 @@
 }
 
 .treasury-panel-header p {
-  display: none;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.45;
 }
 
 .treasury-panel-header-row {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.treasury-panel-header-row > div:first-child {
+  min-width: 0;
+}
+
+.treasury-path-strip {
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+
+.treasury-path-strip-kicker {
+  margin: 0 0 10px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.treasury-path-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: fund-path;
+}
+
+.treasury-path-list li {
+  display: grid;
+  gap: 2px;
+  padding-left: 28px;
+  position: relative;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  counter-increment: fund-path;
+}
+
+.treasury-path-list li::before {
+  content: counter(fund-path);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.treasury-path-list strong {
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.treasury-path-list a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fund-surface {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.fund-paths {
+  display: grid;
+  gap: 10px;
+}
+
+.fund-paths-label {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fund-path-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.fund-path-toggle button,
+.fund-path-toggle .fund-path-link {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  min-height: 56px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.fund-path-toggle button.is-active,
+.fund-path-toggle .fund-path-link:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-soft);
+  color: var(--text-primary);
+}
+
+.fund-path-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.fund-path-sub {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.fund-body {
+  min-width: 0;
+}
+
+.fund-deposit {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.fund-wallet-path {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.fund-wallet-path p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.fund-continue {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: var(--console-action);
+  color: var(--text-on-accent);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.fund-roster {
+  display: grid;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.fund-roster h2 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fund-roster-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fund-roster-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 7rem) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.fund-roster-row:last-child {
+  border-bottom: 0;
+}
+
+.fund-roster-row.is-treasury {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 7rem) auto;
+}
+
+.fund-roster-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fund-roster-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fund-roster-meta,
+.fund-roster-hint {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+}
+
+.fund-roster-hint {
+  justify-self: end;
+}
+
+.fund-roster-balance {
+  justify-self: end;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fund-roster-chain {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.fund-roster-empty {
+  padding: 10px 0;
+  color: var(--text-faint);
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 640px) {
+  .fund-path-toggle,
+  .fund-deposit {
+    grid-template-columns: 1fr;
+  }
+
+  .fund-roster-row,
+  .fund-roster-row.is-treasury {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .fund-roster-meta,
+  .fund-roster-chain {
+    grid-column: 1;
+  }
+
+  .fund-roster-hint,
+  .fund-roster-balance {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+.treasury-agent-gas-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  line-height: 1.4;
 }
 
 .treasury-stack {
@@ -267,6 +567,225 @@
 
 .empower-panel {
   min-width: 0;
+}
+
+.delegations-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.delegations-skip-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.delegations-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.delegations-panel-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.delegations-panel-header p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.delegations-source-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.delegations-source-toggle button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.delegations-source-toggle button.is-active {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-panel);
+}
+
+.delegations-source-hint {
+  margin: -4px 0 0;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.delegation-form {
+  display: grid;
+  gap: 14px;
+}
+
+.delegation-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.delegation-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.delegation-wallet-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.delegation-wallet-bar code {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.delegation-primary-button,
+.delegation-secondary-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.delegation-primary-button {
+  border: 0;
+  background: var(--console-action);
+  color: var(--text-on-accent);
+}
+
+.delegation-primary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.delegation-secondary-button {
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
+  color: var(--text-primary);
+}
+
+.delegation-form-meta {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.delegation-form-meta.is-ok {
+  color: var(--state-success, #1f7a4d);
+}
+
+.delegation-form-meta.is-warn {
+  color: var(--state-warning, #9a6b16);
+}
+
+.delegation-form-meta.is-error {
+  color: var(--state-danger);
+}
+
+.delegations-active {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.delegations-active h3 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.delegation-list {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.delegation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.delegation-table th {
+  padding: 8px 10px 8px 0;
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.delegation-table td {
+  padding: 10px 10px 10px 0;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.delegation-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.delegation-table-action {
+  text-align: right;
+  padding-right: 0 !important;
+}
+
+@media (max-width: 800px) {
+  .delegation-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .delegations-panel-header {
+    flex-direction: column;
+  }
 }
 
 .treasury-field-label {

@@ -146,6 +146,21 @@ export type RegisterAgentIdentityInput = {
   readonly readReceiptLogs?: ReadReceiptLogs | undefined;
 };
 
+export async function getAgentOnchainIdentity(
+  pool: pg.Pool,
+  orgId: string,
+  agentId: string,
+  mode: PaymentMode,
+  chain: PaymentChain,
+): Promise<AgentOnchainIdentityRow | null> {
+  const result = await pool.query<AgentOnchainIdentityRow>(
+    `SELECT * FROM agent_onchain_identities
+      WHERE org_id = $1 AND agent_id = $2 AND mode = $3 AND chain = $4`,
+    [orgId, agentId, mode, chain],
+  );
+  return result.rows[0] ?? null;
+}
+
 /**
  * Registers an agent's ERC-8004 identity (an ERC-721 mint) and mirrors the
  * result locally.

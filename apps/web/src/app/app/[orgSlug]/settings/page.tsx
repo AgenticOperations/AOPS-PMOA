@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { SettingsCreateDrawer } from '@/components/settings/SettingsCreateDrawer';
 import { SettingsMemberTable, SettingsTeamTable } from '@/components/settings/SettingsEntityTables';
 import { StatusBadge } from '@/components/ui/status-badge';
@@ -64,7 +63,6 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
       : { title: 'Profile & setup', description: 'Workspace identity and optional activation progress backed by the current organization record.', action: null };
 
   return (
-    <ConsoleShell active="settings" org={org}>
       <div className="settings-workbench">
         <nav aria-label="Settings sections" className="settings-subnav">
           {[{ key: 'members' as const, label: 'Members' }, { key: 'teams' as const, label: 'Teams' }, { key: 'profile' as const, label: 'Profile & setup' }].map((tab) => <Link aria-current={activeTab === tab.key ? 'page' : undefined} className={activeTab === tab.key ? 'is-active' : undefined} href={settingsTabHref(org.slug, tab.key)} key={tab.key}>{tab.label}</Link>)}
@@ -110,6 +108,5 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
           </div>
         ) : null}
       </div>
-    </ConsoleShell>
   );
 }

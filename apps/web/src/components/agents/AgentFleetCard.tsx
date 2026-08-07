@@ -15,7 +15,8 @@ type AgentFleetCardProps = {
  */
 export function AgentFleetCard({ agent, orgSlug, index = 0 }: AgentFleetCardProps) {
   const tint = agentTint(agent.id);
-  const ready = agent.status === 'active' && agent.connection_health === 'healthy';
+  const ready = agent.status === 'active'
+    && (agent.connection_health === 'healthy' || agent.connection_health === 'stale');
   const displayName = agent.name.length > 20
     ? `${agent.name.slice(0, 12)}…${agent.name.slice(-5)}`
     : agent.name;

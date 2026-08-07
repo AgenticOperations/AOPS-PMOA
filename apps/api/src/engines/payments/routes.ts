@@ -47,6 +47,7 @@ import {
   verifyPaymentRail,
 } from './store.js';
 import { revokeAgent } from './agent-revocation.js';
+import { getAgentOnchainIdentity, registerAgentIdentity } from '../identity/erc8004.js';
 import { listAgentWalletFunding, nativeBalanceMicros } from './agent-wallets.js';
 import { outstandingHeadroomMicros } from './delegation-ceiling.js';
 import { setAllocation } from './allocations.js';
@@ -275,6 +276,12 @@ const resolveUnknownAttemptSchema = z.object({
 
 const revokeAgentSchema = z.object({
   reason: z.string().trim().min(1).max(500),
+});
+
+const registerAgentIdentitySchema = z.object({
+  endpoint_url: z.string().trim().url().max(2048),
+  agent_uri: z.string().trim().url().max(2048).optional(),
+  chain: z.literal('arc').default('arc'),
 });
 
 const intraFleetPaymentSchema = z.object({
@@ -1160,6 +1167,30 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
     await revokeAgent(deps.pool, operator, params.orgId, params.agentId, mode, body.reason);
     return { revoked: true };
+  });
+
+  app.get('/v1/orgs/:orgId/agents/:agentId/identity', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly agentId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const identity = await getAgentOnchainIdentity(deps.pool, params.orgId, params.agentId, mode, 'arc');
+    return { identity };
+  });
+
+  app.post('/v1/orgs/:orgId/agents/:agentId/identity/register', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly agentId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'operator');
+    const body = parseBody(registerAgentIdentitySchema, request);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const agentUri = body.agent_uri ?? body.endpoint_url;
+    const identity = await registerAgentIdentity(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId,
+      agentId: params.agentId,
+      mode,
+      chain: body.chain,
+      agentUri,
+    });
+    return { identity };
   });
 
   app.post('/v1/runtime/payments/x402', async (request) => {

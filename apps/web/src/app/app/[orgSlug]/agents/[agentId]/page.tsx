@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { AgentDetailShell } from '@/components/agents/AgentDetailShell';
 import {
   bindAgentPolicyAction,
@@ -61,7 +60,6 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
   ]);
 
   return (
-    <ConsoleShell active="agents" org={org}>
       <AgentDetailShell
         activity={detail.activity}
         activityFeed={activityFeed}
@@ -92,6 +90,5 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
           removePolicyBinding: removeAgentPolicyBindingAction.bind(null, org.id, org.slug, agentId),
         }}
       />
-    </ConsoleShell>
   );
 }

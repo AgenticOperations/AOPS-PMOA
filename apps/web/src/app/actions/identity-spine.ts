@@ -10,12 +10,14 @@ import {
   createOrg,
   deactivateAgent,
   detachWalletRef,
+  getAgentDetail,
   pauseAgent,
   revokeConnection,
   rotateConnection,
   testConnection,
   updateAgent,
 } from '@/lib/server/identity-spine-client';
+import { registerAgentOnchainIdentity } from '@/lib/server/payments-client';
 
 export type ConnectionActionState = {
   readonly error?: string;
@@ -87,11 +89,16 @@ export async function createOrgAction(formData: FormData): Promise<void> {
 }
 
 export async function createAgentAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
-  await createAgent(orgId, {
+  const setupMode = stringField(formData, 'setup_mode');
+  const mode = setupMode === 'publish' ? 'publish' : 'mcp';
+  const agent = await createAgent(orgId, {
     name: stringField(formData, 'name'),
+    metadata: { setup_mode: mode },
   });
 
   revalidatePath(agentListPath(orgSlug));
+  const nextTab = mode === 'publish' ? 'publish' : 'credentials';
+  redirect(`/app/${orgSlug}/agents/${agent.id}?tab=${nextTab}`);
 }
 
 export async function updateAgentAction(orgId: string, orgSlug: string, agentId: string, formData: FormData): Promise<void> {
@@ -313,5 +320,43 @@ export async function detachWalletRefFromFormAction(formData: FormData): Promise
   const agentId = requiredStringField(formData, 'agentId');
   const walletRefId = requiredStringField(formData, 'walletRefId');
   await detachWalletRef(orgId, agentId, walletRefId);
+  revalidatePath(agentDetailPath(orgSlug, agentId));
+}
+
+export async function savePublishListingAction(
+  orgId: string,
+  orgSlug: string,
+  agentId: string,
+  formData: FormData,
+): Promise<void> {
+  const endpointUrl = requiredStringField(formData, 'endpoint_url');
+  const detail = await getAgentDetail(orgId, agentId);
+  await updateAgent(orgId, agentId, {
+    metadata: {
+      ...detail.agent.metadata,
+      public_endpoint_url: endpointUrl,
+      setup_mode: 'publish',
+    },
+  });
+  revalidatePath(agentDetailPath(orgSlug, agentId));
+}
+
+export async function registerOnchainIdentityAction(
+  orgId: string,
+  orgSlug: string,
+  agentId: string,
+  formData: FormData,
+): Promise<void> {
+  const endpointUrl = requiredStringField(formData, 'endpoint_url');
+  const { registerAgentOnchainIdentity } = await import('@/lib/server/payments-client');
+  const detail = await getAgentDetail(orgId, agentId);
+  await updateAgent(orgId, agentId, {
+    metadata: {
+      ...detail.agent.metadata,
+      public_endpoint_url: endpointUrl,
+      setup_mode: 'publish',
+    },
+  });
+  await registerAgentOnchainIdentity(orgId, agentId, { endpoint_url: endpointUrl });
   revalidatePath(agentDetailPath(orgSlug, agentId));
 }

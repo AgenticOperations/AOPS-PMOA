@@ -2,23 +2,15 @@ import type { ReactNode } from 'react';
 import { CommandPalette } from './CommandPalette';
 import { ConsoleSidebarNav } from './ConsoleSidebarNav';
 import { ConsoleMobileNavigation } from './ConsoleMobileNavigation';
+import { ConsoleHeaderBreadcrumb, type ConsoleSection } from './ConsoleHeaderBreadcrumb';
 import { ThemeToggle } from './ThemeToggle';
 import type { Org } from '@/lib/identity-spine-types';
 
 type ConsoleShellProps = {
-  readonly active: 'overview' | 'agents' | 'controls' | 'operations' | 'payments' | 'approvals' | 'settings';
+  /** Optional override for tests; otherwise derived from the current pathname. */
+  readonly active?: ConsoleSection | undefined;
   readonly children: ReactNode;
   readonly org: Org;
-};
-
-const ACTIVE_LABELS: Record<ConsoleShellProps['active'], string> = {
-  overview: 'Home',
-  agents: 'Agents',
-  controls: 'Controls',
-  operations: 'Operations',
-  payments: 'Treasury',
-  approvals: 'Approvals',
-  settings: 'Settings',
 };
 
 export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
@@ -30,9 +22,7 @@ export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
         <header className="app-header">
           <div className="app-header-left">
             <ConsoleMobileNavigation org={org} />
-            <span className="header-breadcrumb">Console</span>
-            <span className="header-breadcrumb-divider">/</span>
-            <span className="header-breadcrumb-current">{ACTIVE_LABELS[active]}</span>
+            <ConsoleHeaderBreadcrumb active={active} />
           </div>
           <div className="app-header-actions">
             <CommandPalette orgSlug={org.slug} />

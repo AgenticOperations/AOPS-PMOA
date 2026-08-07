@@ -1,11 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import {
-  safeMcpVerificationMessage,
-  verifyHostedMcp,
-  type McpVerificationResult,
-} from '@/lib/mcp-verification';
+import { verifyHostedMcpAction } from '@/app/actions/mcp-verification';
+import type { McpVerificationResult } from '@/lib/mcp-verification';
 import { buildLocalAdapterCommand } from '@/lib/local-adapter-command';
 
 type CredentialMcpSetupProps = {
@@ -96,16 +93,17 @@ export function CredentialMcpSetup({ mcpEndpoint, secret, title }: CredentialMcp
     verificationController.current = controller;
     setVerification({ state: 'connecting' });
     try {
-      const result = await verifyHostedMcp({
-        endpoint: mcpEndpoint,
-        credential: secret.secret,
-        signal: controller.signal,
-      });
+      // Server-side verify avoids Chrome blocking browser → 127.0.0.1 MCP.
+      const outcome = await verifyHostedMcpAction({ credential: secret.secret });
       if (verificationAttempt.current !== attempt || controller.signal.aborted) return;
-      setVerification({ state: 'verified', result });
-    } catch (error) {
+      if (outcome.ok) {
+        setVerification({ state: 'verified', result: outcome.result });
+        return;
+      }
+      setVerification({ state: 'failed', message: outcome.message });
+    } catch {
       if (verificationAttempt.current !== attempt || controller.signal.aborted) return;
-      setVerification({ state: 'failed', message: safeMcpVerificationMessage(error) });
+      setVerification({ state: 'failed', message: 'MCP verification failed. Try again.' });
     }
   }
 

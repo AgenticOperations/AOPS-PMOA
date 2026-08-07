@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { TreasuryLiquidity } from '@/components/payments/TreasuryLiquidity';
 import {
   bridgeExactWalletTopUpAction,
@@ -38,7 +37,6 @@ export default async function PaymentsLiquidityPage({ params }: LiquidityPagePro
       : 'disconnected';
 
   return (
-    <ConsoleShell active="payments" org={org}>
       <TreasuryLiquidity
         bridgeTopUpAction={bridgeExactWalletTopUpAction.bind(null, org.id, org.slug)}
         cancelLiquidityJobAction={cancelLiquidityJobAction.bind(null, org.id, org.slug)}
@@ -50,6 +48,5 @@ export default async function PaymentsLiquidityPage({ params }: LiquidityPagePro
         rebalanceRecommendations={rebalanceRecommendations}
         retryLiquidityJobAction={retryLiquidityJobAction.bind(null, org.id, org.slug)}
       />
-    </ConsoleShell>
   );
 }

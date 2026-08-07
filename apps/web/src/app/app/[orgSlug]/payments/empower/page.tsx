@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { DelegateFromTreasury } from '@/components/payments/DelegateFromTreasury';
+import { DelegationsPanel } from '@/components/payments/DelegationsPanel';
 import { EmpowerWorkbench } from '@/components/payments/EmpowerWorkbench';
 import { OrgCeilingForm } from '@/components/payments/OrgCeilingForm';
 import { TreasuryAgentAccess } from '@/components/payments/TreasuryAgentAccess';
@@ -27,14 +27,25 @@ export const dynamic = 'force-dynamic';
 
 type EmpowerPageProps = {
   readonly params: Promise<{ readonly orgSlug: string }>;
+  readonly searchParams: Promise<{
+    readonly tab?: string;
+    readonly source?: string;
+    readonly from?: string;
+  }>;
 };
 
 function isSupportedEscrowChain(chain: PaymentChain): chain is SupportedChainKey {
   return chain === 'arc' || chain === 'base';
 }
 
-export default async function PaymentsEmpowerPage({ params }: EmpowerPageProps) {
+export default async function PaymentsEmpowerPage({ params, searchParams }: EmpowerPageProps) {
   const { orgSlug } = await params;
+  const query = await searchParams;
+  const initialTab = query.tab === 'caps' || query.tab === 'delegations' || query.tab === 'access'
+    ? query.tab
+    : 'access';
+  const initialSource = query.source === 'wallet' ? 'wallet' : 'treasury';
+  const skipDepositNotice = query.from === 'fund' && initialSource === 'wallet';
   let org;
   try {
     org = await getOrgBySlug(orgSlug);
@@ -89,15 +100,23 @@ export default async function PaymentsEmpowerPage({ params }: EmpowerPageProps) 
   const agentOptions = agents.map((agent) => ({ id: agent.id, name: agent.name }));
 
   return (
-    <ConsoleShell active="payments" org={org}>
       <TreasuryWorkbench
         active="empower"
-        description="Grant rails, set ceilings, then delegate spend headroom."
-        info="Caps constrain agents drawing from this platform treasury — not the platform itself."
+        description={
+          skipDepositNotice
+            ? 'Deposit skipped — grant from your wallet on Delegations.'
+            : 'Grant rails, then pick a spend source: treasury (after Fund deposit) or your own wallet.'
+        }
+        info={
+          skipDepositNotice
+            ? 'Non-custodial Permit2 — funds stay in MetaMask until an agent draws.'
+            : 'Path 1: Fund deposit → From treasury. Path 2: From your wallet (Permit2) — no treasury deposit.'
+        }
         orgSlug={org.slug}
         title="Empower"
       >
         <EmpowerWorkbench
+          initialTab={initialTab}
           access={
             <TreasuryAgentAccess
               accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
@@ -112,11 +131,11 @@ export default async function PaymentsEmpowerPage({ params }: EmpowerPageProps) 
           }
           caps={<OrgCeilingForm ceilings={ceilings} orgSlug={org.slug} />}
           delegations={
-            <div className="treasury-stack">
-              <section className="treasury-panel">
-                <header className="treasury-panel-header">
-                  <h2>From treasury</h2>
-                </header>
+            <DelegationsPanel
+              activeList={<DelegationList delegations={delegations} orgSlug={org.slug} />}
+              initialSource={initialSource}
+              skipDepositNotice={skipDepositNotice}
+              treasuryForm={(
                 <DelegateFromTreasury
                   agentWallets={agentWallets.map((wallet) => ({
                     agentId: wallet.agentId,
@@ -126,25 +145,23 @@ export default async function PaymentsEmpowerPage({ params }: EmpowerPageProps) 
                   agents={agentOptions}
                   orgSlug={org.slug}
                 />
-              </section>
-              <section className="treasury-panel">
-                <header className="treasury-panel-header">
-                  <h2>From your wallet</h2>
-                </header>
+              )}
+              walletForm={(
                 <WalletProvider>
-                  <DelegateToAgent agents={agentOptions} orgSlug={org.slug} />
+                  <DelegateToAgent
+                    agentWallets={agentWallets.map((wallet) => ({
+                      agentId: wallet.agentId,
+                      chain: wallet.chain,
+                      status: wallet.status,
+                    }))}
+                    agents={agentOptions}
+                    orgSlug={org.slug}
+                  />
                 </WalletProvider>
-              </section>
-              <section className="treasury-panel">
-                <header className="treasury-panel-header">
-                  <h2>Active delegations</h2>
-                </header>
-                <DelegationList delegations={delegations} orgSlug={org.slug} />
-              </section>
-            </div>
+              )}
+            />
           }
         />
       </TreasuryWorkbench>
-    </ConsoleShell>
   );
 }

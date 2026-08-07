@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { TreasuryActivity, type TreasuryActivityTab } from '@/components/payments/TreasuryActivity';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { listAuditEvents } from '@/lib/server/audit-client';
@@ -40,7 +39,6 @@ export default async function PaymentsActivityPage({ params, searchParams }: Act
   ]);
 
   return (
-    <ConsoleShell active="payments" org={org}>
       <TreasuryActivity
         activeTab={activeTab}
         auditEvents={auditEvents.events}
@@ -50,6 +48,5 @@ export default async function PaymentsActivityPage({ params, searchParams }: Act
         reservations={reservations}
         routeObservations={routeObservations}
       />
-    </ConsoleShell>
   );
 }

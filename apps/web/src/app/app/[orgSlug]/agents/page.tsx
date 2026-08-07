@@ -2,7 +2,6 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import { IconArrowLeft, IconArrowRight } from '@tabler/icons-react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { AgentAvatar } from '@/components/agents/AgentAvatar';
 import { AgentCreateDrawer } from '@/components/agents/AgentCreateDrawer';
 import { AgentRegistryFilters } from '@/components/agents/AgentRegistryFilters';
@@ -113,7 +112,6 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
   const activeTeams = teams.filter((team) => team.archived_at === null);
 
   return (
-    <ConsoleShell active="agents" org={org}>
       <main className="registry-page" id="main-content">
         <header className="registry-page-header">
           <div>
@@ -213,6 +211,5 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
           </>
         )}
       </main>
-    </ConsoleShell>
   );
 }

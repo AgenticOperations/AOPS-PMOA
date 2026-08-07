@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { IconArrowRight } from '@tabler/icons-react';
-import { ConsoleShell } from '@/components/ConsoleShell';
 import { AgentFleetStrip } from '@/components/agents/AgentFleetCard';
 import { HomeConnectGuide } from '@/components/home/HomeConnectGuide';
 import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
@@ -42,8 +41,10 @@ export default async function OverviewPage({ params }: OverviewPageProps) {
   ]);
   const mcpEndpoint = resolveMcpPublicUrl();
   const activeAgents = agents.filter((agent) => agent.status === 'active').length;
-  const connectedAgents = agents.filter(
-    (agent) => agent.status === 'active' && agent.connection_health === 'healthy',
+  const agentsWithCredentials = agents.filter(
+    (agent) =>
+      agent.status === 'active'
+      && (agent.connection_health === 'healthy' || agent.connection_health === 'stale'),
   ).length;
   const pendingApprovals = approvalList.approvals.filter((approval) => approval.status === 'pending');
   const recentEvidence = auditList.events.slice(0, 4);
@@ -67,10 +68,12 @@ export default async function OverviewPage({ params }: OverviewPageProps) {
       detail: treasuryFunded ? 'USDC available' : 'Deposit USDC',
     },
     {
-      done: connectedAgents > 0,
+      done: agentsWithCredentials > 0,
       href: `/app/${org.slug}/agents`,
       label: 'Issue credential',
-      detail: connectedAgents > 0 ? `${connectedAgents} healthy` : 'Agents → Connections',
+      detail: agentsWithCredentials > 0
+        ? `${agentsWithCredentials} with credentials`
+        : 'Agents → Credentials & wallets',
     },
     {
       done: agents.some((agent) => agent.status === 'active' && agent.policy_coverage > 0),
@@ -81,7 +84,6 @@ export default async function OverviewPage({ params }: OverviewPageProps) {
   ];
 
   return (
-    <ConsoleShell active="overview" org={org}>
       <div className="canonical-overview-page">
         <header className="canonical-overview-header">
           <div>
@@ -102,7 +104,7 @@ export default async function OverviewPage({ params }: OverviewPageProps) {
           <div className="canonical-overview-metric">
             <span>Active agents</span>
             <strong>{activeAgents}</strong>
-            <small>{connectedAgents} credential-ready</small>
+            <small>{agentsWithCredentials} with credentials</small>
           </div>
           <div className="canonical-overview-metric">
             <span>Pending approvals</span>
@@ -213,7 +215,6 @@ export default async function OverviewPage({ params }: OverviewPageProps) {
           orgSlug={org.slug}
         />
       </div>
-    </ConsoleShell>
   );
 }
 
@@ -224,8 +225,13 @@ function buildAttentionItems(input: {
   readonly treasuryOverview: TreasuryOverviewRecord | null;
 }): AttentionItem[] {
   const items: AttentionItem[] = [];
-  const unhealthyAgents = input.agents.filter(
-    (agent) => agent.status === 'active' && agent.connection_health !== 'healthy',
+  const missingCredentialAgents = input.agents.filter(
+    (agent) =>
+      agent.status === 'active'
+      && (agent.connection_health === 'not_connected' || agent.connection_health === 'revoked'),
+  );
+  const staleCredentialAgents = input.agents.filter(
+    (agent) => agent.status === 'active' && agent.connection_health === 'stale',
   );
   const uncoveredAgents = input.agents.filter(
     (agent) => agent.status === 'active' && agent.policy_coverage === 0,
@@ -248,11 +254,19 @@ function buildAttentionItems(input: {
       tone: 'warning',
     });
   }
-  if (unhealthyAgents.length > 0) {
+  if (missingCredentialAgents.length > 0) {
     items.push({
-      title: `${unhealthyAgents.length} ${unhealthyAgents.length === 1 ? 'agent needs' : 'agents need'} a credential`,
-      copy: 'Active identity without a healthy MCP credential.',
-      href: `/app/${input.orgSlug}/agents/${unhealthyAgents[0]?.id ?? ''}`,
+      title: `${missingCredentialAgents.length} ${missingCredentialAgents.length === 1 ? 'agent needs' : 'agents need'} a credential`,
+      copy: 'Active identity without an MCP credential.',
+      href: `/app/${input.orgSlug}/agents/${missingCredentialAgents[0]?.id ?? ''}`,
+      tone: 'warning',
+    });
+  }
+  if (staleCredentialAgents.length > 0) {
+    items.push({
+      title: `${staleCredentialAgents.length} ${staleCredentialAgents.length === 1 ? 'credential is' : 'credentials are'} stale`,
+      copy: 'Re-verify MCP or use the credential so health refreshes.',
+      href: `/app/${input.orgSlug}/agents/${staleCredentialAgents[0]?.id ?? ''}?tab=credentials`,
       tone: 'warning',
     });
   }

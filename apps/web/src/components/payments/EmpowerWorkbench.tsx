@@ -14,14 +14,24 @@ type EmpowerWorkbenchProps = {
   readonly access: ReactNode;
   readonly caps: ReactNode;
   readonly delegations: ReactNode;
+  readonly initialTab?: EmpowerTab;
 };
+
+function isEmpowerTab(value: string | undefined): value is EmpowerTab {
+  return value === 'access' || value === 'caps' || value === 'delegations';
+}
 
 /**
  * One job at a time — mirrors Home’s scannable density instead of stacking
  * access + ceilings + three delegation surfaces on one scroll.
  */
-export function EmpowerWorkbench({ access, caps, delegations }: EmpowerWorkbenchProps) {
-  const [tab, setTab] = useState<EmpowerTab>('access');
+export function EmpowerWorkbench({
+  access,
+  caps,
+  delegations,
+  initialTab = 'access',
+}: EmpowerWorkbenchProps) {
+  const [tab, setTab] = useState<EmpowerTab>(isEmpowerTab(initialTab) ? initialTab : 'access');
 
   return (
     <div className="empower-workbench">
