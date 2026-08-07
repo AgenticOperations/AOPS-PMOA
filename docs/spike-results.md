@@ -358,7 +358,11 @@ The entity secret authorizes signing on developer-controlled wallets, so every s
 code (Circle's public error list skips 155257–155263) that points at balances rather than credentials.
 
 **Wrong turns this caused, recorded so they aren't repeated:**
-- *"Circle can't index externally-sent ETH"* — false. It spends it fine once the entity secret is registered.
+- *"Circle can't index externally-sent ETH"* — false **for a wallet Circle already tracks a native
+  balance for**. It spends it fine once the entity secret is registered. ⚠️ **Narrowed 2026-08-07:** this
+  bullet was over-generalised. For a *newly created* Base Sepolia wallet Circle may never index an
+  externally-sent native balance at all, and then rejects with this same `155258`. See "Circle native-balance
+  indexing misses externally-received ETH" below before reusing this conclusion.
 - *"The faucet API is required"* — false. The demo funds via manual USDC transfer + `gateway-deposits`;
   the faucet is never called. (Its `403` is real — Circle's OpenAPI states `/v1/faucet/drips` requires a
   mainnet-upgraded account — but it is irrelevant to this flow.)
@@ -673,6 +677,90 @@ what was already assumed correct.
 
 ---
 
+## Circle native-balance indexing misses externally-received ETH — Base Sepolia (2026-08-07)
+
+**Verdict: a Circle-side defect, not ours. Circle's transaction-creation pre-flight validates against its own
+*indexed* native balance, not chain state. A plain inbound ETH transfer emits no event log, so for a newly
+created BASE-SEPOLIA wallet that balance stays invisible and every transaction is rejected as "insufficient" —
+including zero-value ones. Reported to Circle; the workaround is to fund Base gas from another Circle wallet
+rather than from an external EOA.**
+
+**Symptom.** `POST /v1/w3s/developer/transactions/contractExecution` on wallet
+`d6843b9d-dcc4-53f4-b676-b008ac8f0aca` (`0x3aaa56cf…c158`, BASE-SEPOLIA, EOA) failed on every attempt over
+~45 minutes with `155258 "the asset amount owned by the wallet is insufficient for the transaction."` — the
+same undocumented code Phase 6 · Task 7 already flagged as misleading. It surfaced through the product as
+`gateway.deposit` → `circle_gateway_deposit_failed`, blocking the demo's Base leg.
+
+**How it was isolated.** Each row rules out one hypothesis:
+
+| Probe | Result | Rules out |
+|---|---|---|
+| `eth_getBalance` on public Base Sepolia RPC | **0.0029 ETH present on-chain** | wallet genuinely unfunded |
+| `POST /transactions/contractExecution/estimateFee` | needs **0.00000054 ETH** (`l1Fee` 7.5e-9 — negligible) | gas cost / OP-stack L1 data fee too high |
+| zero-value `approve(spender, 0)` | same failure | token amount / USDC shortfall |
+| explicit `gasLimit` override instead of `feeLevel` | same failure | fee-estimation path |
+| `GET /wallets/{id}/balances?includeAll=true` | **no native entry at all**, USDC only | — (this is the finding) |
+| identical call on ARC-TESTNET wallet, same wallet set + entity secret | **succeeds, `INITIATED`** | entity secret, API key, account-level block |
+| 5 other BASE-SEPOLIA wallets on the same account | **do** have indexed native ETH (2.3e-5 – 1.3e-4) and work | Base-Sepolia disabled for this account |
+| send 0.00004 ETH from a donor holding 0.0000395 | correctly rejected as insufficient | — confirms the gate works *when* a balance is indexed |
+
+Note the sixth row: Arc passes only because Arc's native gas asset **is** USDC, which Circle already indexes as
+an ERC-20. Arc's success was therefore never evidence that signing worked in general — it masked the defect.
+
+**What confirmed the cause.** A Circle-*originated* native transfer of 0.00005 ETH into the same wallet
+(tx `0xb2e85f4064fa6933b59e99bf44c99e8b76a9dde2ae6869c8f320ccbaf4167333`, `CONFIRMED`) made
+`/balances` immediately report **0.00295 ETH** — the 0.00005 Circle sent *plus* the 0.0029 sent externally
+that it had been unable to see. One Circle-mediated transaction forces a rescan that surfaces the whole
+balance. The next `contractExecution` succeeded.
+
+Native token id for BASE-SEPOLIA ETH, needed for that transfer: `f2ab11ae-53fa-5373-86e5-8b38447b65fb`
+("Base Ethereum-Sepolia", `isNative: true`).
+
+**Honest limit of the claim.** We observed non-indexing across ~45 minutes and ~6 retries; Circle publishes no
+indexing SLA, so "never indexed" is not proven — "not indexed within 45 minutes, then indexed instantly on
+Circle-originated activity" is. That is enough to make external funding unusable for a scripted demo either way.
+
+**Product consequence.** This is the concrete mechanism behind `change-manifest.md` L.5's "Base gas
+provisioning is manual". `ensureAgentGasFloor` is already a deliberate no-op off Arc (`agent-funding.ts`); the
+path to closing that gap is a **Circle-originated** native top-up, since that is the only funding route Circle
+reliably sees. Funding Base gas by external transfer will appear to work on-chain and still fail at submit time.
+
+**Claim discipline.** Do not describe Base gas as "fund the wallet and it works". The accurate statement is:
+*a Base agent wallet must be funded with native ETH from another Circle wallet; an externally-funded wallet can
+hold ETH on-chain and still be rejected as insufficient.*
+
+---
+
+## Manifest §K.4 fleet demo — full five-agent run, re-verified end to end (2026-08-07)
+
+**Verdict: manifest steps K.4 1–8 run end to end on real testnets, with every payment independently confirmed
+from chain state (receipt status + decoded `Transfer` logs), not from the runner's own return values.**
+Org `org_9add7cd3-03eb-471f-85db-7024a9a0a5bd`, treasury `0xd7e0b42a…d551`, via `demo/reset.mjs` +
+`demo/run.mjs` against a live `dev:api` and `dev:circle-worker`.
+
+| # | Payment | Chain | Amount | Tx | Receipt |
+|---|---|---|---|---|---|
+| 1 | Orchestrator → DataFetcher | Arc | 0.01 | `0x68c135624c3909b754a1a66246925f032906d62308c027e4611682d3ad9565ee` | success, block 55712050 |
+| 2 | Orchestrator → Analyst | Arc | 0.05 | `0x96867c7c5493d250fdc0daeff05c6d91f457fd4f75e4de26ee282dd1bce9ceb0` | success, block 55712095 |
+| 3 | **Analyst → DataFetcher (second hop)** | Arc | 0.01 | `0x576be257d15dfeddcab8801ef0187115076dde6e346c0388ca52adaceae6abfa` | success, block 55712143 |
+| 4 | Orchestrator → Writer | Arc | 0.02 | `0x9939df2b2c5d694802e1c53cccd5bb933cc01c01965bcb4b4f0ec548e2275822` | success, block 55712181 |
+| 5 | **Orchestrator → SeniorReviewer (cross-chain)** | **Base** | 0.03 | `0x738e4229f6a35e953e647cca23ed102399abe871704461423aefa4e05594716e` | success, block 45152242 |
+
+Amounts match Section L's original run exactly. Verified beyond the hashes: payment 3's decoded `Transfer`
+originates from the **Analyst's** wallet (`0x663a7dbb…1026` → `0x51b9fe84…16e5`), so the second hop is a real
+agent acting as both seller and buyer — not the hub paying a leaf. Payment 5 settles on Base while 1–4 sit on
+Arc, from the same Orchestrator address (`0x182c8643…430d`) funded separately per chain.
+
+**Reading Arc receipts.** Each Arc tx carries **two** `Transfer` logs for one payment — Arc's native (18-dec)
+and ERC-20 (6-dec) views of the same USDC (`1e16` == `0.01`). This is Arc's dual-view behaviour, not a double
+transfer; a naive log count will double-report every Arc amount.
+
+**Not covered by this run:** K.4 steps 9–11 (escrow hire → reputation → allocation feedback). Those engines
+exist and are tested, but no route or agent triggers them, so they remain outside the runnable demo — the same
+gap `validation/spike-escrow-console-demo.mts` states in its own header.
+
+---
+
 ## Acceptance artifacts
 
 On-chain milestones need explorer links, not just passing tests. A claim whose entire value is third-party verifiability cannot be evidenced by our own test suite.
@@ -683,7 +771,9 @@ On-chain milestones need explorer links, not just passing tests. A claim whose e
 | Phase 3 · Task 3 — distinct agent wallets | Two real addresses via Circle SDK: `0xecf2...9b48f` (Agent A) vs `0x216c...9367e` (Agent B) — see above | ✅ |
 | Phase 4 · Task 5 — sweep-revocation | Balance drains to treasury, tx hash | ✅ tx `0x566966b...f3d5627` — see "Phase 4 · Task 5 proof test" above |
 | Phase 6 · Task 2 — Permit2 drawdown | Real drawdown + `lockdown()` via `permit2.ts`'s actual functions, tx `0x8232550...dae86f25`, allowance confirmed `0n` after lockdown. See "Phase 6 · Task 2 proof test" above. | ✅ |
-| Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc | ⬜ |
+| Phase 6 · Task 6 — cross-chain hop | Settlement on Base's explorer while fleet runs on Arc. Re-verified from chain state 2026-08-07 — see "Manifest §K.4 fleet demo" above | ✅ base tx `0x738e4229...4e05594716e` |
+| Manifest §K.4 — five-agent fleet, steps 1–8 | 5 payments (4 Arc + 1 Base), all receipts `status: success`, `Transfer` logs decoded to confirm payer/payee. Second hop originates from the Analyst's own wallet. See "Manifest §K.4 fleet demo" above | ✅ |
+| Circle native-balance indexing defect (Base Sepolia) | Isolated to Circle's indexed-balance pre-flight; Circle-originated transfer forces a rescan. See "Circle native-balance indexing misses externally-received ETH" above | ✅ reported upstream · tx `0xb2e85f40...af4167333` |
 | Piece 4 · Task 6 — escrow-to-Permit2 graduation demo | 2 completed escrow jobs (6 tx each), promotion (2 tx), 1-tx drawdown. See "Piece 4 · Task 6 proof" above | ✅ tx `0xef084b9e...93640722e04` |
 | Phase 8 · Task 1 — ERC-8004 identity registration | Real agent registered via `registerAgentIdentity`, token id `863468`. See "Phase 8 · Task 1" above | ✅ tx `0x7fc58f44...34ebaa539` |
 | Phase 9 · Task 5 — Google ADK binding | Real `google-adk` `McpToolset` connected to our real MCP server, listed 8 real tools, called `agentops.onboard` end to end. See "Phase 9 · Task 5" below | ✅ |

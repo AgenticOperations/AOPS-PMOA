@@ -190,8 +190,7 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
     }
   });
 
-  app.setErrorHandler((error, request, reply) => {
-    request.log.error({ err: error }, 'circle_worker_operation_failed_debug');
+  app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
       return reply.code(400).send({ error: 'circle_worker_validation_error' });
     }
