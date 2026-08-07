@@ -64,19 +64,30 @@ export function AgentPublishPanel({
           <div>
             <h2 id="publish-template-title">1. Host from Arc template</h2>
             <p>
-              Use Circle&apos;s official nanopayments sample — seller x402 endpoints buyers can pay.
-              AgentOps adds credential, policy, and on-chain identity.
+              AgentOps is the control plane on Arc — not another Circle SDK. Keep the official
+              nanopayments seller (x402 + Gateway); use AgentOps for credential, policy, and identity.
             </p>
           </div>
         </div>
         <ol className="agent-publish-steps">
-          <li>Clone the template and follow its README (Supabase, wallets, <code>npm run dev</code>).</li>
+          <li>
+            Clone{' '}
+            <a href="https://github.com/circlefin/arc-nanopayments" rel="noreferrer" target="_blank">
+              circlefin/arc-nanopayments
+            </a>{' '}
+            and follow its README (seller stays on Circle rails).
+          </li>
+          <li>
+            For the buyer, use the AgentOps overlay (
+            <code>templates/arc-nanopayments-agentops</code>
+            ) — credential + thin runtime client, not a local spend key.
+          </li>
           <li>Issue an AgentOps credential on the Credentials tab if this agent will spend.</li>
           <li>Deploy or tunnel a public HTTPS URL for the seller app.</li>
           <li>Paste that URL below and register ERC-8004 identity.</li>
         </ol>
         <a className="agent-primary-button agent-publish-repo-link" href={templateRepoUrl} rel="noreferrer" target="_blank">
-          Open arc-nanopayments
+          Open template repo
           <IconExternalLink aria-hidden="true" size={16} stroke={1.8} />
         </a>
       </section>
@@ -171,6 +182,18 @@ export function AgentPublishPanel({
             </button>
           </form>
         )}
+      </section>
+
+      <section className="agent-detail-section" aria-labelledby="publish-hire-title">
+        <div className="agent-section-heading">
+          <div>
+            <h2 id="publish-hire-title">4. Get hired</h2>
+            <p>
+              After publish, operators hire this listing from Empower → Hire published agent (ERC-8183).
+              Buyers can also pay the endpoint via MCP / thin client <code>paymentX402</code>.
+            </p>
+          </div>
+        </div>
       </section>
     </div>
   );

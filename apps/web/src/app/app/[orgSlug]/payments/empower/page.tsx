@@ -8,7 +8,12 @@ import { TreasuryWorkbench } from '@/components/payments/TreasuryChrome';
 import { DelegateToAgent } from '@/components/wallet/DelegateToAgent';
 import { DelegationList } from '@/components/wallet/DelegationList';
 import { WalletProvider } from '@/components/wallet/WalletProvider';
-import { revokeTrustAction, setAgentPaymentAccessAction, trustExternalAgentAction } from '@/app/actions/payments';
+import {
+  hirePublishedAgentAction,
+  revokeTrustAction,
+  setAgentPaymentAccessAction,
+  trustExternalAgentAction,
+} from '@/app/actions/payments';
 import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
 import {
   getTrustEvidence,
@@ -19,7 +24,9 @@ import {
   listEscrowLivenessRisks,
   listOrgCeilings,
   listPaymentCapabilities,
+  listPublishedAgentListings,
 } from '@/lib/server/payments-client';
+import { HireFromListingPanel } from '@/components/payments/HireFromListingPanel';
 import type { PaymentChain } from '@/lib/payments-types';
 import type { SupportedChainKey } from '@/lib/wallet-chains';
 
@@ -62,6 +69,7 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
     delegations,
     ceilings,
     agentWallets,
+    publishedListings,
   ] = await Promise.all([
     listAgents(org.id),
     listAgentPaymentAccounts(org.id),
@@ -71,6 +79,7 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
     listDelegations(org.id).catch(() => []),
     listOrgCeilings(org.id).catch(() => []),
     listAgentWalletFunding(org.id).catch(() => []),
+    listPublishedAgentListings(org.id, 'arc').catch(() => []),
   ]);
 
   const externalAgents = await Promise.all(
@@ -118,16 +127,32 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
         <EmpowerWorkbench
           initialTab={initialTab}
           access={
-            <TreasuryAgentAccess
-              accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
-              accounts={agentAccounts.accounts}
-              agents={agents}
-              atRiskEscrowJobs={atRiskEscrowJobs}
-              capabilities={capabilities}
-              embedded
-              externalAgents={externalAgents}
-              orgSlug={org.slug}
-            />
+            <>
+              <HireFromListingPanel
+                clients={agents
+                  .filter((agent) => agent.status !== 'deactivated')
+                  .map((agent) => ({ id: agent.id, name: agent.name }))}
+                hireAction={hirePublishedAgentAction.bind(null, org.id, org.slug)}
+                listings={publishedListings.map((listing) => ({
+                  agentId: listing.agentId,
+                  name: listing.name,
+                  publicEndpointUrl: listing.publicEndpointUrl,
+                  providerAddress: listing.providerAddress,
+                  identityStatus: listing.identityStatus,
+                  chain: listing.chain,
+                }))}
+              />
+              <TreasuryAgentAccess
+                accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
+                accounts={agentAccounts.accounts}
+                agents={agents}
+                atRiskEscrowJobs={atRiskEscrowJobs}
+                capabilities={capabilities}
+                embedded
+                externalAgents={externalAgents}
+                orgSlug={org.slug}
+              />
+            </>
           }
           caps={<OrgCeilingForm ceilings={ceilings} orgSlug={org.slug} />}
           delegations={

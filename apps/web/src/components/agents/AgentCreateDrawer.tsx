@@ -106,7 +106,8 @@ export function AgentCreateDrawer({
               </button>
             </div>
             <p className="agent-setup-mode-footnote">
-              Template repo:{' '}
+              AgentOps is the control plane + MCP on Arc primitives — not a Circle SDK replacement.
+              Template:{' '}
               <a href={templateRepoUrl} rel="noreferrer" target="_blank">
                 {templateRepoUrl.replace(/^https?:\/\//, '')}
               </a>

@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentops-pmoa/runtime-client": "*",
     "@modelcontextprotocol/sdk": "^1.24.0",
     "zod": "^3.25.76"
   },

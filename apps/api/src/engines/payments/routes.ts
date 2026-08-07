@@ -48,7 +48,7 @@ import {
 } from './store.js';
 import { revokeAgent } from './agent-revocation.js';
 import { getAgentOnchainIdentity, registerAgentIdentity } from '../identity/erc8004.js';
-import { listAgentWalletFunding, nativeBalanceMicros } from './agent-wallets.js';
+import { findAgentWallet, listAgentWalletFunding, nativeBalanceMicros } from './agent-wallets.js';
 import { outstandingHeadroomMicros } from './delegation-ceiling.js';
 import { setAllocation } from './allocations.js';
 import { payIntraFleet } from './intra-fleet.js';
@@ -63,7 +63,6 @@ import {
 import { getTrustEvidence, revokeTrust, trustExternalAgent } from './trust.js';
 import { createEscrowJob, listEscrowCounterparties, listEscrowLivenessRisks } from './escrow.js';
 import { listPublishedAgentListings } from './listings.js';
-import { findAgentWallet } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain } from './types.js';
@@ -214,8 +213,8 @@ const publishedListingsQuerySchema = z.object({
 });
 
 // Hire-from-listing: ERC-8183 createJob. Prefer provider_agent_id (org
- // listing) so we resolve the seller wallet; provider_address covers
- // external counterparties already known by address.
+// listing) so we resolve the seller wallet; provider_address covers
+// external counterparties already known by address.
 const createEscrowJobSchema = z.object({
   client_agent_id: z.string().trim().min(1),
   provider_agent_id: z.string().trim().min(1).optional(),
@@ -1133,6 +1132,65 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     const query = escrowLivenessQuerySchema.parse(request.query ?? {});
     const risks = await listEscrowLivenessRisks(deps.pool, { orgId: params.orgId, withinHours: query.within_hours });
     return { risks };
+  });
+
+  // --- Publish listings + ERC-8183 hire ------------------------------------
+  //
+  // Org directory of agents with a public_endpoint_url. Hire creates an
+  // on-chain ERC-8183 job (not arc-escrow Refund Protocol). x402 micropay
+  // hire stays on runtime/MCP via paymentX402 against the listing URL.
+
+  app.get('/v1/orgs/:orgId/agents/listings', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = publishedListingsQuerySchema.parse(request.query ?? {});
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const listings = await listPublishedAgentListings(deps.pool, {
+      orgId: params.orgId,
+      mode,
+      chain: query.chain,
+    });
+    return { listings };
+  });
+
+  app.post('/v1/orgs/:orgId/payments/escrow/jobs', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
+    const body = parseBody(createEscrowJobSchema, request);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+
+    let providerAddress = body.provider_address;
+    if (body.provider_agent_id !== undefined) {
+      const wallet = await findAgentWallet(deps.pool, body.provider_agent_id, mode, body.chain);
+      if (wallet === null) {
+        throw new IdentityError(
+          'provider_wallet_missing',
+          400,
+          'Published provider agent has no active wallet on this chain. Provision payment access first.',
+        );
+      }
+      providerAddress = wallet.address;
+    }
+    if (providerAddress === undefined) {
+      throw new IdentityError('provider_required', 400, 'provider_agent_id or provider_address is required.');
+    }
+
+    const expiresAt = body.expires_at
+      ?? new Date(Date.now() + body.expires_in_hours * 60 * 60 * 1000);
+
+    const job = await createEscrowJob(deps.pool, providerForOrg(params.orgId), {
+      orgId: params.orgId,
+      clientAgentId: body.client_agent_id,
+      providerAddress,
+      ...(body.evaluator_address === undefined ? {} : { evaluatorAddress: body.evaluator_address }),
+      mode,
+      chain: body.chain,
+      budgetUsdc: body.budget_usdc,
+      expiresAt,
+      createdBy: operator.actorId,
+      ...(body.description === undefined ? {} : { description: body.description }),
+    });
+    return reply.code(201).send({ job });
   });
 
   // --- Trust graduation ----------------------------------------------------

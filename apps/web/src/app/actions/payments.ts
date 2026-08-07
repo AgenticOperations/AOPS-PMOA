@@ -5,6 +5,7 @@ import {
   bridgeExactWalletTopUp,
   cancelLiquidityJob,
   createCircleTreasury,
+  createEscrowJob,
   createTreasury,
   initiateGatewayDeposit,
   reconcileCircleProviderJobs,
@@ -244,6 +245,18 @@ export async function setAgentPaymentAccessAction(orgId: string, orgSlug: string
     approval_threshold_usdc: optionalMoneyField(formData, 'approvalThreshold'),
     per_request_cap_usdc: moneyField(formData, 'perRequestCap'),
     status: statusField(formData),
+  });
+  revalidatePayments(orgSlug);
+}
+
+export async function hirePublishedAgentAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
+  await createEscrowJob(orgId, {
+    client_agent_id: requiredStringField(formData, 'clientAgentId'),
+    provider_agent_id: requiredStringField(formData, 'providerAgentId'),
+    chain: (formData.get('chain')?.toString().trim() || 'arc') as PaymentChain,
+    budget_usdc: moneyField(formData, 'budgetUsdc'),
+    expires_in_hours: Number.parseInt(formData.get('expiresInHours')?.toString() ?? '72', 10) || 72,
+    description: formData.get('description')?.toString().trim() || undefined,
   });
   revalidatePayments(orgSlug);
 }

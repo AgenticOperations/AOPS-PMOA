@@ -994,6 +994,26 @@
 .treasury-calm-state p,
 .treasury-empty-state p { max-width: 56ch; margin: 6px 0 0; color: var(--text-muted); font-size: 9px; line-height: 1.5; }
 
+.hire-listing-form {
+  display: grid;
+  gap: 12px;
+  max-width: 42rem;
+  margin-top: 12px;
+}
+
+.hire-listing-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.treasury-empty-hint {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 56ch;
+}
+
 .chain-mark { display: block; flex: none; }
 .chain-mark-large { width: clamp(132px, 14vw, 190px); height: clamp(132px, 14vw, 190px); }
 .chain-mark-small { width: 36px; height: 36px; }
