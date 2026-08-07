@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useState } from 'react';
+import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { IconPlus, IconPlugConnected, IconWorldWww } from '@tabler/icons-react';
 import {
   Sheet,
@@ -41,6 +42,7 @@ export function AgentCreateDrawer({
       setSetupMode(null);
       return initialState;
     } catch (error) {
+      if (isRedirectError(error)) throw error;
       return { error: error instanceof Error ? error.message : 'Agent creation failed.' };
     }
   }, initialState);

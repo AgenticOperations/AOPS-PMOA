@@ -1837,3 +1837,150 @@ html[data-theme="dark"] .agent-fleet-card-body dd {
   }
 }
 
+
+/* —— Agent setup mode chooser + Publish tab —— */
+
+.agent-setup-mode-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-setup-mode-card {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-raised, var(--bg-elevated, transparent));
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.agent-setup-mode-card:hover {
+  border-color: color-mix(in oklch, var(--text-primary) 28%, var(--border-subtle));
+}
+
+.agent-setup-mode-card:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.agent-setup-mode-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.agent-setup-mode-card strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.agent-setup-mode-card > span:last-of-type {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-setup-mode-repo {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.agent-setup-mode-footnote {
+  margin: 14px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.agent-setup-mode-footnote a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.agent-setup-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.agent-publish-canvas {
+  gap: 16px;
+}
+
+.agent-publish-steps {
+  margin: 0 0 16px;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.agent-publish-steps li + li {
+  margin-top: 6px;
+}
+
+.agent-publish-steps code {
+  font-size: 11px;
+}
+
+.agent-publish-repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.agent-publish-form {
+  display: grid;
+  gap: 12px;
+  max-width: 36rem;
+}
+
+.agent-publish-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.agent-publish-ok {
+  margin: 0;
+  color: var(--state-success, #1f7a4c);
+  font-size: 12px;
+}
+
+.agent-publish-identity-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.agent-publish-identity-card.is-registered {
+  border-color: color-mix(in oklch, var(--state-success, #1f7a4c) 35%, var(--border-subtle));
+  background: color-mix(in oklch, var(--state-success, #1f7a4c) 6%, transparent);
+}
+
+.agent-publish-identity-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--state-success, #1f7a4c);
+}
+
+.agent-publish-identity-card a {
+  color: var(--text-primary);
+  word-break: break-all;
+}

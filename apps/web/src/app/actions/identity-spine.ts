@@ -348,7 +348,6 @@ export async function registerOnchainIdentityAction(
   formData: FormData,
 ): Promise<void> {
   const endpointUrl = requiredStringField(formData, 'endpoint_url');
-  const { registerAgentOnchainIdentity } = await import('@/lib/server/payments-client');
   const detail = await getAgentDetail(orgId, agentId);
   await updateAgent(orgId, agentId, {
     metadata: {

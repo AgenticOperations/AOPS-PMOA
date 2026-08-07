@@ -119,7 +119,10 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
             <h1>Agents</h1>
             <p className="registry-page-copy">Register identities and open one to manage credentials and policy.</p>
           </div>
-          <AgentCreateDrawer action={createAgentAction.bind(null, org.id, org.slug)} />
+          <AgentCreateDrawer
+            action={createAgentAction.bind(null, org.id, org.slug)}
+            templateRepoUrl={process.env.NEXT_PUBLIC_AGENT_TEMPLATE_REPO_URL?.trim() || 'https://github.com/circlefin/arc-nanopayments'}
+          />
         </header>
 
         <AgentRegistryFilters applied={filters} orgSlug={org.slug} pageSizes={supportedPageSizes} statuses={agentStatuses} teams={activeTeams} />

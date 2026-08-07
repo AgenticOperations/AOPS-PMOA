@@ -61,7 +61,9 @@ import {
   revokeDelegation,
 } from './permit2.js';
 import { getTrustEvidence, revokeTrust, trustExternalAgent } from './trust.js';
-import { listEscrowCounterparties, listEscrowLivenessRisks } from './escrow.js';
+import { createEscrowJob, listEscrowCounterparties, listEscrowLivenessRisks } from './escrow.js';
+import { listPublishedAgentListings } from './listings.js';
+import { findAgentWallet } from './agent-wallets.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain } from './types.js';
@@ -205,6 +207,33 @@ const escrowLivenessQuerySchema = z.object({
   // Default matches EscrowLivenessBanner's intent: warn with enough runway
   // left to actually act on it, not the moment expiry is imminent.
   within_hours: z.coerce.number().positive().max(720).default(24),
+});
+
+const publishedListingsQuerySchema = z.object({
+  chain: chainSchema.default('arc'),
+});
+
+// Hire-from-listing: ERC-8183 createJob. Prefer provider_agent_id (org
+ // listing) so we resolve the seller wallet; provider_address covers
+ // external counterparties already known by address.
+const createEscrowJobSchema = z.object({
+  client_agent_id: z.string().trim().min(1),
+  provider_agent_id: z.string().trim().min(1).optional(),
+  provider_address: addressSchema.optional(),
+  evaluator_address: addressSchema.optional(),
+  chain: chainSchema.default('arc'),
+  budget_usdc: moneySchema,
+  expires_at: z.coerce.date().optional(),
+  expires_in_hours: z.coerce.number().positive().max(720).default(72),
+  description: z.string().trim().max(2000).optional(),
+}).superRefine((value, ctx) => {
+  if (value.provider_agent_id === undefined && value.provider_address === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'provider_agent_id or provider_address is required',
+      path: ['provider_agent_id'],
+    });
+  }
 });
 
 type OrgCeilingRow = {
