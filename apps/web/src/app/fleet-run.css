@@ -1,0 +1,390 @@
+.fleet-run-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 0.25rem 0 2rem;
+}
+
+.fleet-run-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.5rem;
+  align-items: flex-end;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.fleet-run-eyebrow {
+  margin: 0 0 0.35rem;
+  font-size: var(--type-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.fleet-run-hero h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 2vw, 2rem);
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.fleet-run-lede {
+  margin: 0.55rem 0 0;
+  max-width: 42rem;
+  color: var(--text-muted);
+  font-size: var(--type-body);
+  line-height: 1.55;
+}
+
+.fleet-run-hero-links {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.fleet-run-hero-links a {
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.fleet-run-hero-links a:hover {
+  color: var(--text-primary);
+}
+
+.fleet-run-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.85fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.fleet-run-main,
+.fleet-run-side-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+.fleet-run-main {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 70vh;
+}
+
+.fleet-run-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  font: inherit;
+  font-size: var(--type-body);
+  line-height: 1.5;
+  background: var(--bg-soft);
+  color: var(--text-primary);
+}
+
+.fleet-run-composer textarea:focus {
+  outline: 2px solid var(--accent-tint);
+  border-color: var(--accent-blue);
+}
+
+.fleet-run-composer-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.fleet-run-primary,
+.fleet-run-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.55rem 0.9rem;
+  font-size: var(--type-ui);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fleet-run-primary {
+  background: var(--console-action);
+  color: var(--text-on-dark);
+}
+
+.fleet-run-primary:hover:not(:disabled) {
+  background: var(--console-action-hover);
+}
+
+.fleet-run-secondary {
+  background: var(--bg-panel);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.fleet-run-primary:disabled,
+.fleet-run-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fleet-run-thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding-top: 0.25rem;
+}
+
+.fleet-run-empty {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 1.25rem;
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+}
+
+.fleet-run-user-goal {
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  background: var(--accent-tint);
+  border: 1px solid #dfe3ff;
+}
+
+.fleet-run-user-goal span {
+  display: block;
+  font-size: var(--type-caption);
+  font-weight: 600;
+  color: var(--accent-ink);
+  margin-bottom: 0.35rem;
+}
+
+.fleet-run-user-goal pre,
+.fleet-run-md,
+.fleet-run-json {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-ui);
+  font-size: var(--type-body-sm);
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.fleet-run-bubble {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 0.8rem 0.95rem;
+  background: var(--bg-soft);
+  animation: fleet-run-in 280ms ease-out;
+}
+
+.fleet-run-bubble header {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.45rem;
+  font-size: var(--type-caption);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.fleet-run-bubble code,
+.fleet-run-checklist code,
+.fleet-run-hints code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent-ink);
+  background: var(--accent-tint);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.fleet-run-bubble-payment {
+  border-color: #c9efd8;
+  background: var(--state-success-tint);
+}
+
+.fleet-run-bubble-fruit,
+.fleet-run-fruit {
+  border-color: #dfe3ff;
+  background: #f7f8ff;
+}
+
+.fleet-run-fruit {
+  border: 1px solid #dfe3ff;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.fleet-run-fruit h2 {
+  margin: 0 0 0.6rem;
+  font-size: var(--type-title);
+}
+
+.fleet-run-error {
+  color: var(--state-danger);
+  background: var(--state-danger-tint);
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+  margin: 0.5rem 0 0;
+  font-size: var(--type-body-sm);
+}
+
+.fleet-run-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.fleet-run-side-card {
+  padding: 0.95rem 1rem;
+}
+
+.fleet-run-side-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.75rem;
+}
+
+.fleet-run-side-head h2,
+.fleet-run-wire h3,
+.fleet-run-hints h3 {
+  margin: 0;
+  font-size: var(--type-body);
+}
+
+.fleet-run-muted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-body-sm);
+}
+
+.fleet-run-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.fleet-run-checklist li {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.fleet-run-check-mark {
+  width: 10px;
+  height: 10px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.fleet-run-checklist .is-done .fleet-run-check-mark {
+  background: var(--state-success);
+}
+
+.fleet-run-checklist .is-running .fleet-run-check-mark {
+  background: var(--accent-blue);
+  box-shadow: 0 0 0 4px var(--accent-tint);
+}
+
+.fleet-run-checklist .is-failed .fleet-run-check-mark {
+  background: var(--state-danger);
+}
+
+.fleet-run-checklist strong {
+  display: block;
+  font-size: var(--type-body-sm);
+}
+
+.fleet-run-checklist p {
+  margin: 0.2rem 0 0;
+  color: var(--text-faint);
+  font-size: var(--type-caption);
+}
+
+.fleet-run-wire ul,
+.fleet-run-hints ul {
+  list-style: none;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.fleet-run-wire li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.5rem;
+  font-size: var(--type-caption);
+}
+
+.fleet-run-wire-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fleet-run-wire-chain {
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fleet-run-wire code {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.fleet-run-hints li {
+  font-size: var(--type-caption);
+  color: var(--text-muted);
+}
+
+@keyframes fleet-run-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 980px) {
+  .fleet-run-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fleet-run-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fleet-run-bubble {
+    animation: none;
+  }
+}
