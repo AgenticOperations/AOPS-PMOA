@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { PublicMarketplaceListing } from '@/lib/server/marketplace-public-client';
+import { MarketplaceChainChip, MarketplaceListingMark } from './MarketplaceMarks';
 import { MarketplaceSparkline } from './MarketplaceSparkline';
 
 type MarketplaceBoardProps = {
@@ -157,26 +158,42 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
               <li key={listing.id}>
                 <Link className="amkt-card" href={`/marketplace/${encodeURIComponent(listing.id)}`}>
                   <div className="amkt-card-top">
-                    <span className={`amkt-mark is-${listing.kind}`} aria-hidden="true">
-                      {listing.kind === 'agent' ? listing.name.slice(0, 1).toUpperCase() : '◇'}
-                    </span>
+                    <MarketplaceListingMark
+                      agentId={listing.agentId}
+                      kind={listing.kind}
+                      listingId={listing.id}
+                      name={listing.name}
+                      size="md"
+                    />
                     <div className="amkt-card-id">
                       <strong>{listing.name}</strong>
-                      <span>{listing.kind} · {listing.chain}</span>
+                      <p className="amkt-card-sub">
+                        <span className="amkt-card-kind">{listing.kind}</span>
+                        <span className="amkt-card-dot" aria-hidden="true">·</span>
+                        <MarketplaceChainChip chain={listing.chain} />
+                      </p>
                     </div>
                   </div>
-                  <div className="amkt-card-metric">
-                    <strong>{activity?.reputationScore ?? 0}</strong>
-                    <span className="amkt-card-delta">
-                      {formatUsdc(activity?.settledUsdc ?? '0')} settled
-                    </span>
+
+                  <div className="amkt-card-body">
+                    <div className="amkt-card-metric">
+                      <strong>{activity?.reputationScore ?? 0}</strong>
+                      <span className="amkt-card-delta">
+                        {formatUsdc(activity?.settledUsdc ?? '0')} settled
+                      </span>
+                    </div>
+                    <div className="amkt-card-meta">
+                      <span className="amkt-card-rails">
+                        {listing.rails.slice(0, 2).join(' · ') || 'Open rails'}
+                      </span>
+                      <span className="amkt-card-price">
+                        {listing.priceHint ?? 'Quote on hire'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="amkt-card-meta">
-                    <span>{listing.rails.slice(0, 2).join(' · ') || 'Open rails'}</span>
-                    <span>{listing.priceHint ?? 'Quote on hire'}</span>
-                  </div>
-                  <div className="amkt-card-chart">
-                    <MarketplaceSparkline height={64} values={spark} width={320} />
+
+                  <div className="amkt-card-chart" aria-hidden="true">
+                    <MarketplaceSparkline height={56} values={spark} width={320} />
                   </div>
                 </Link>
               </li>
@@ -206,9 +223,13 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                     <td className="amkt-rank">{index + 1}</td>
                     <td>
                       <Link className="amkt-identity" href={`/marketplace/${encodeURIComponent(listing.id)}`}>
-                        <span className={`amkt-mark is-${listing.kind}`} aria-hidden="true">
-                          {listing.kind === 'agent' ? listing.name.slice(0, 1).toUpperCase() : '◇'}
-                        </span>
+                        <MarketplaceListingMark
+                          agentId={listing.agentId}
+                          kind={listing.kind}
+                          listingId={listing.id}
+                          name={listing.name}
+                          size="sm"
+                        />
                         <span className="amkt-identity-text">
                           <strong>{listing.name}</strong>
                           <small>
@@ -225,7 +246,7 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                         ))}
                       </div>
                     </td>
-                    <td><span className="amkt-chip is-chain">{listing.chain}</span></td>
+                    <td><MarketplaceChainChip chain={listing.chain} /></td>
                     <td className="amkt-num">{activity?.reputationScore ?? 0}</td>
                     <td className="amkt-num">{formatUsdc(activity?.settledUsdc ?? '0')}</td>
                     <td><MarketplaceSparkline values={spark} /></td>

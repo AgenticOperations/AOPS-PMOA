@@ -1024,9 +1024,13 @@
   max-width: 56ch;
 }
 
-.chain-mark { display: block; flex: none; }
+.chain-mark { display: block; flex: none; object-fit: contain; }
 .chain-mark-large { width: clamp(132px, 14vw, 190px); height: clamp(132px, 14vw, 190px); }
 .chain-mark-small { width: 36px; height: 36px; }
+
+html[data-theme="dark"] .chain-mark[src*="/landing/chains/arc.png"] {
+  filter: invert(1);
+}
 
 .treasury-provider-alert {
   display: flex;

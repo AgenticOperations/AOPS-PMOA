@@ -267,6 +267,7 @@ export async function authorizeMarketplaceDestinationAction(
     label: formData.get('label')?.toString().trim() || 'Marketplace seller',
   });
   revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+  revalidatePath('/marketplace', 'layout');
   revalidatePayments(orgSlug);
 }
 
@@ -275,12 +276,14 @@ export async function hireMarketplaceX402Action(
   orgSlug: string,
   formData: FormData,
 ): Promise<void> {
+  const listingId = requiredStringField(formData, 'listingId');
   await hireMarketplaceX402(orgId, {
     client_agent_id: requiredStringField(formData, 'clientAgentId'),
-    listing_id: requiredStringField(formData, 'listingId'),
+    listing_id: listingId,
     idempotency_key: formData.get('idempotencyKey')?.toString().trim() || `mkt-x402-${randomUUID()}`,
   });
   revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+  revalidatePath(`/marketplace/${encodeURIComponent(listingId)}`, 'page');
   revalidatePayments(orgSlug);
 }
 
@@ -306,6 +309,7 @@ export async function hireMarketplaceEscrowAction(
   });
   revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
   revalidatePath(`/app/${orgSlug}/payments/activity`, 'page');
+  revalidatePath('/marketplace', 'layout');
   revalidatePayments(orgSlug);
   return { jobId: job.id };
 }

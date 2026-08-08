@@ -58,99 +58,55 @@
   border: 0;
 }
 
-/* ─── Nav ─────────────────────────────────────────────────────────────── */
+/* ─── Nav (landing-parity: logo + auth CTA, transparent over hero) ────── */
 
 .amkt-nav {
-  position: sticky;
+  position: fixed;
   top: 0;
+  right: 0;
+  left: 0;
   z-index: 40;
-  background: rgba(247, 248, 250, 0.86);
-  backdrop-filter: blur(12px);
+  background: transparent;
   border-bottom: 1px solid transparent;
+  pointer-events: none;
 }
 
 .amkt-nav[data-scrolled='true'] {
-  border-bottom-color: var(--amkt-line);
-  background: rgba(255, 255, 255, 0.92);
+  background: transparent;
+  border-bottom-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .amkt-nav-inner {
   width: var(--amkt-wrap);
   margin: 0 auto;
-  min-height: 64px;
-  display: grid;
-  grid-template-columns: 1fr minmax(180px, 280px) auto;
-  align-items: center;
-  gap: 20px;
-}
-
-.amkt-nav-left {
+  min-height: 72px;
   display: flex;
   align-items: center;
-  gap: 28px;
-  min-width: 0;
+  justify-content: space-between;
+  gap: 20px;
+  pointer-events: auto;
+}
+
+.amkt-nav[data-scrolled='true'] .amkt-nav-inner {
+  min-height: 72px;
 }
 
 .amkt-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--amkt-ink);
-}
-
-.amkt-brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  background: linear-gradient(145deg, var(--amkt-accent) 0%, #163a5f 100%);
-  flex: 0 0 auto;
-}
-
-.amkt-nav-links {
   display: flex;
+  width: 122px;
+  height: 34px;
   align-items: center;
-  gap: 18px;
+  overflow: visible;
 }
 
-.amkt-nav-links a {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--amkt-muted);
-  letter-spacing: -0.01em;
-}
-
-.amkt-nav-links a:hover,
-.amkt-nav-links a[aria-current='page'] {
-  color: var(--amkt-ink);
-}
-
-.amkt-nav-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: var(--amkt-well);
-  color: var(--amkt-faint);
-}
-
-.amkt-nav-search input {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  outline: none;
-  font: inherit;
-  font-size: 13.5px;
-  font-weight: 500;
-  color: var(--amkt-ink);
-}
-
-.amkt-nav-search input::placeholder {
-  color: var(--amkt-faint);
+/* Landing wordmark is light-on-dark artwork — invert for daylight marketplace. */
+.amkt-brand-wordmark {
+  display: block;
+  width: 118px;
+  height: auto;
+  filter: invert(1) brightness(0.12);
 }
 
 .amkt-nav-actions {
@@ -160,46 +116,49 @@
   gap: 8px;
 }
 
-.amkt-btn-ghost,
-.amkt-btn-solid {
+.amkt-nav-cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 40px;
   padding: 0 16px;
   border-radius: 999px;
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.amkt-btn-ghost {
-  border: 1px solid var(--amkt-line-strong);
-  background: var(--amkt-surface);
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: transparent;
   color: var(--amkt-ink);
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
-.amkt-btn-solid {
-  background: var(--amkt-ink);
+.amkt-nav-cta:hover {
+  background: #152033;
+  border-color: #152033;
   color: #fff;
 }
 
-/* ─── Shell / Hero (Axiona-style: full-bleed sky, left-aligned, fade) ── */
+/* ─── Shell / Hero (Axiona-style: full-bleed sky under fixed nav) ─────── */
 
 .amkt-shell {
   width: var(--amkt-wrap);
   margin: 0 auto;
-  padding: 8px 0 72px;
+  padding: 88px 0 72px;
+}
+
+/* Home board sits under the hero — no extra nav offset. */
+.amkt-hero ~ .amkt-shell {
+  padding-top: 8px;
 }
 
 .amkt-hero {
   position: relative;
   width: 100%;
-  min-height: clamp(420px, 58vh, 560px);
+  min-height: clamp(480px, 64vh, 620px);
   margin: 0 0 8px;
   padding: 0;
   overflow: hidden;
-  background: var(--amkt-paper);
+  background: #dceef8;
   border: 0;
   border-radius: 0;
   text-align: left;
@@ -212,15 +171,14 @@
   background-size: cover;
   background-position: center top;
   background-repeat: no-repeat;
-  transform: scale(1.02);
 }
 
 .amkt-hero-fade {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(247, 248, 250, 0.08) 0%, rgba(247, 248, 250, 0.28) 42%, rgba(247, 248, 250, 0.82) 78%, var(--amkt-paper) 100%),
-    linear-gradient(90deg, rgba(247, 248, 250, 0.55) 0%, rgba(247, 248, 250, 0.18) 42%, transparent 72%);
+    linear-gradient(180deg, rgba(247, 248, 250, 0.02) 0%, rgba(247, 248, 250, 0.18) 48%, rgba(247, 248, 250, 0.78) 82%, var(--amkt-paper) 100%),
+    linear-gradient(90deg, rgba(247, 248, 250, 0.42) 0%, rgba(247, 248, 250, 0.12) 40%, transparent 70%);
   pointer-events: none;
 }
 
@@ -229,7 +187,7 @@
   z-index: 1;
   width: var(--amkt-wrap);
   margin: 0 auto;
-  padding: 56px 0 48px;
+  padding: 96px 0 52px;
   display: grid;
   justify-items: start;
   gap: 0;
@@ -504,7 +462,7 @@
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
 }
 
-/* ─── Cards (Ondo-style) ──────────────────────────────────────────────── */
+/* ─── Cards (Ondo-style, strict alignment) ────────────────────────────── */
 
 .amkt-grid {
   margin: 0;
@@ -513,14 +471,23 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
+  align-items: stretch;
+}
+
+.amkt-grid > li {
+  display: flex;
+  min-width: 0;
 }
 
 .amkt-card {
-  display: grid;
-  grid-template-rows: auto auto auto 1fr;
-  gap: 18px;
-  min-height: 268px;
-  padding: 18px 18px 0;
+  --amkt-card-pad: 16px;
+  --amkt-card-gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--amkt-card-gap);
+  width: 100%;
+  min-height: 256px;
+  padding: var(--amkt-card-pad) var(--amkt-card-pad) 0;
   border-radius: var(--amkt-radius);
   background: var(--amkt-surface);
   border: 1px solid var(--amkt-line);
@@ -534,75 +501,158 @@
 }
 
 .amkt-card-top {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 12px;
+  display: flex;
   align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .amkt-card-id {
   min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 4px;
 }
 
 .amkt-card-id strong {
   display: block;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14.5px;
   font-weight: 700;
   letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--amkt-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.amkt-card-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  line-height: 1;
+}
+
+.amkt-card-kind {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--amkt-faint);
+  text-transform: capitalize;
+  letter-spacing: -0.01em;
+}
+
+.amkt-card-dot {
+  flex: 0 0 auto;
+  color: var(--amkt-faint);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.amkt-card-sub .amkt-chain-chip {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--amkt-muted);
+}
+
+.amkt-card-sub .amkt-chain-logo {
+  width: auto;
+  height: 12px;
+  max-width: 48px;
+}
+
+.amkt-card-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.amkt-card-metric {
+  min-width: 0;
+}
+
+.amkt-card-metric strong {
+  display: block;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--amkt-ink);
+}
+
+.amkt-card-delta {
+  display: block;
+  margin-top: 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--amkt-accent-ink);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.amkt-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.amkt-card-rails,
+.amkt-card-price {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--amkt-muted);
+  letter-spacing: -0.01em;
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.amkt-card-id span {
-  display: block;
-  margin-top: 3px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--amkt-faint);
-  letter-spacing: -0.01em;
+.amkt-card-rails {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
-.amkt-card-metric strong {
-  display: block;
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: -0.055em;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.amkt-card-delta {
-  display: block;
-  margin-top: 8px;
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--amkt-accent-ink);
-  letter-spacing: -0.01em;
-}
-
-.amkt-card-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--amkt-muted);
+.amkt-card-price {
+  flex: 0 0 auto;
+  text-align: right;
+  color: var(--amkt-ink-soft);
 }
 
 .amkt-card-chart {
-  margin: 0 -18px;
-  padding: 10px 14px 0;
-  min-height: 78px;
-  background: linear-gradient(180deg, rgba(13, 115, 119, 0.06), rgba(13, 115, 119, 0.012));
+  margin: auto calc(var(--amkt-card-pad) * -1) 0;
+  padding: 8px var(--amkt-card-pad) 0;
+  min-height: 68px;
+  background: linear-gradient(180deg, rgba(13, 115, 119, 0.055), rgba(13, 115, 119, 0.01));
   display: flex;
   align-items: flex-end;
 }
 
 .amkt-card-chart .amkt-spark {
+  display: block;
   width: 100%;
-  height: 64px;
+  height: 56px;
+}
+
+.amkt-card-top .agent-robot-avatar,
+.amkt-card-top .amkt-service-mark {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+}
+
+.amkt-card-top .agent-robot-avatar.is-md,
+.amkt-card-top .agent-robot-avatar.is-sm {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
 }
 
 .amkt-mark {
@@ -734,9 +784,77 @@
 }
 
 .amkt-chip.is-chain {
-  background: var(--amkt-accent-soft);
-  color: var(--amkt-accent-ink);
+  background: transparent;
+  color: var(--amkt-ink-soft);
   text-transform: none;
+}
+
+.amkt-chain-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--amkt-ink-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.amkt-chain-logo {
+  width: auto;
+  height: 14px;
+  max-width: 52px;
+  object-fit: contain;
+  flex: 0 0 auto;
+  border-radius: 0;
+  background: transparent;
+}
+
+.amkt-service-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #2a3f55 0%, #1a2838 100%);
+  color: #d7e6f4;
+  flex: 0 0 auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.amkt-service-mark.is-sm {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.amkt-service-mark.is-md {
+  width: 40px;
+  height: 40px;
+}
+
+.amkt-service-mark.is-lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+
+.amkt-identity .agent-robot-avatar,
+.amkt-detail-identity .agent-robot-avatar {
+  flex: 0 0 auto;
+}
+
+.amkt-hire-facts .amkt-chain-chip {
+  background: transparent;
+  padding: 0;
+  min-height: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--amkt-ink);
 }
 
 .amkt-chip.is-id {
@@ -1169,8 +1287,150 @@
   background: var(--amkt-well);
 }
 
-.amkt-hire-panel-head h2 {
+.amkt-hire-panel-head h2,
+.amkt-hire-live h2 {
   margin-top: 6px;
+}
+
+.amkt-hire-live {
+  display: grid;
+  gap: 12px;
+}
+
+.amkt-hire-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  width: fit-content;
+}
+
+.amkt-hire-tabs button {
+  border: 0;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--amkt-muted);
+  cursor: pointer;
+}
+
+.amkt-hire-tabs button.is-active {
+  background: var(--amkt-surface);
+  color: var(--amkt-ink);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+}
+
+.amkt-hire-body,
+.amkt-hire-form {
+  display: grid;
+  gap: 12px;
+}
+
+.amkt-hire-field {
+  display: grid;
+  gap: 6px;
+}
+
+.amkt-hire-field span {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--amkt-muted);
+}
+
+.amkt-hire-field select,
+.amkt-hire-field input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--amkt-line);
+  border-radius: 12px;
+  background: var(--amkt-surface);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--amkt-ink);
+}
+
+.amkt-hire-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--amkt-ink-soft);
+}
+
+.amkt-hire-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.amkt-hire-hint {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--amkt-faint);
+}
+
+.amkt-hire-hint a,
+.amkt-hire-ok a {
+  color: var(--amkt-accent-ink);
+  font-weight: 700;
+}
+
+.amkt-hire-ok {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--amkt-accent-ink);
+  line-height: 1.45;
+}
+
+.amkt-hire-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--amkt-line-strong);
+  background: var(--amkt-surface);
+  color: var(--amkt-ink);
+  font-size: 13.5px;
+  font-weight: 650;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.amkt-hire-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--amkt-ink);
+  color: #fff !important;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.amkt-hire-cta:hover {
+  background: #152033;
+}
+
+.amkt-hire-cta:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .amkt-hire-facts {
@@ -1200,23 +1460,6 @@
   letter-spacing: -0.02em;
 }
 
-.amkt-hire-cta {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 48px;
-  border-radius: 14px;
-  background: var(--amkt-ink);
-  color: #fff !important;
-  font-size: 14.5px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.amkt-hire-cta:hover {
-  background: #152033;
-}
-
 .amkt-hire-note {
   margin: 12px 0 0;
   font-size: 12px;
@@ -1236,26 +1479,37 @@
     grid-template-columns: 1fr;
   }
 
-  .amkt-nav-search,
-  .amkt-nav-links {
-    display: none;
+  .amkt-nav-inner {
+    min-height: 64px;
   }
 
-  .amkt-nav-inner {
-    display: flex;
-    justify-content: space-between;
+  .amkt-brand {
+    width: 108px;
+    height: 30px;
+  }
+
+  .amkt-brand-wordmark {
+    width: 104px;
   }
 
   .amkt-hero {
-    min-height: 0;
+    min-height: clamp(420px, 70vh, 560px);
   }
 
   .amkt-hero-inner {
-    padding: 36px 0 40px;
+    padding: 88px 0 40px;
   }
 
   .amkt-hero h1 {
     max-width: 18ch;
+  }
+
+  .amkt-shell {
+    padding-top: 80px;
+  }
+
+  .amkt-hero ~ .amkt-shell {
+    padding-top: 8px;
   }
 
   .amkt-detail-hero {

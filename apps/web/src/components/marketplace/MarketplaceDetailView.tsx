@@ -1,12 +1,25 @@
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import type { MarketplaceListingActivity, PublicMarketplaceListing } from '@/lib/server/marketplace-public-client';
+import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
 import { MarketplaceActivityChart } from './MarketplaceActivityChart';
+import { MarketplaceChainChip, MarketplaceListingMark } from './MarketplaceMarks';
+import { MarketplaceHirePanel } from './MarketplaceHirePanel';
+
+type HireClient = { readonly id: string; readonly name: string };
 
 type MarketplaceDetailViewProps = {
   readonly listing: PublicMarketplaceListing;
   readonly activity: MarketplaceListingActivity;
-  readonly hireHref: string;
   readonly signedIn: boolean;
+  readonly signInHref: string;
+  readonly hireListing?: MarketplaceListingRecord | null | undefined;
+  readonly orgSlug?: string | null | undefined;
+  readonly buyerOrgId?: string | null | undefined;
+  readonly clients?: readonly HireClient[] | undefined;
+  readonly authorizeAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly hireX402Action?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly hireEscrowAction?: ((formData: FormData) => Promise<{ readonly jobId: string }>) | undefined;
 };
 
 function hostOf(url: string): string {
@@ -27,9 +40,74 @@ function formatUsdc(value: string): string {
 export function MarketplaceDetailView({
   listing,
   activity,
-  hireHref,
   signedIn,
+  signInHref,
+  hireListing = null,
+  orgSlug = null,
+  buyerOrgId = null,
+  clients = [],
+  authorizeAction,
+  hireX402Action,
+  hireEscrowAction,
 }: MarketplaceDetailViewProps) {
+  let hirePanel: ReactNode;
+  if (!signedIn || orgSlug === null || buyerOrgId === null) {
+    hirePanel = (
+      <aside className="amkt-hire-panel" aria-label="Hire">
+        <div className="amkt-hire-panel-head">
+          <p className="amkt-eyebrow">Hire</p>
+          <h2>{listing.name}</h2>
+        </div>
+        <p className="amkt-hire-copy">
+          Sign in to hire and pay on this page under your org policy.
+        </p>
+        <ul className="amkt-hire-facts">
+          <li><span>Rails</span><strong>{listing.rails.join(' · ')}</strong></li>
+          <li>
+            <span>Chain</span>
+            <strong><MarketplaceChainChip chain={listing.chain} /></strong>
+          </li>
+          <li><span>Reputation</span><strong>{activity.reputationScore}</strong></li>
+          <li><span>Settled</span><strong>{formatUsdc(activity.settledUsdc)}</strong></li>
+        </ul>
+        <Link className="amkt-hire-cta" href={signInHref}>
+          Sign in to hire
+        </Link>
+        <p className="amkt-hire-note">
+          After sign-in you stay on marketplace to complete payment. Purchases show in your console.
+        </p>
+      </aside>
+    );
+  } else if (
+    hireListing !== null
+    && authorizeAction !== undefined
+    && hireX402Action !== undefined
+    && hireEscrowAction !== undefined
+  ) {
+    hirePanel = (
+      <aside className="amkt-hire-panel" aria-label="Hire">
+        <MarketplaceHirePanel
+          authorizeAction={authorizeAction}
+          buyerOrgId={buyerOrgId}
+          clients={clients}
+          hireEscrowAction={hireEscrowAction}
+          hireX402Action={hireX402Action}
+          listing={hireListing}
+          orgSlug={orgSlug}
+          purchasesHref={`/app/${orgSlug}/marketplace`}
+        />
+      </aside>
+    );
+  } else {
+    hirePanel = (
+      <aside className="amkt-hire-panel" aria-label="Hire">
+        <p className="amkt-eyebrow">Hire</p>
+        <h2>{listing.name}</h2>
+        <p className="amkt-hire-copy">Unable to load hire context for your org. Refresh and try again.</p>
+      </aside>
+    );
+  }
+
   return (
     <div className="amkt-detail">
       <nav className="amkt-detail-crumb" aria-label="Breadcrumb">
@@ -40,9 +118,13 @@ export function MarketplaceDetailView({
 
       <header className="amkt-detail-hero">
         <div className="amkt-detail-identity">
-          <span className={`amkt-mark is-lg is-${listing.kind}`} aria-hidden="true">
-            {listing.kind === 'agent' ? listing.name.slice(0, 1).toUpperCase() : '◇'}
-          </span>
+          <MarketplaceListingMark
+            agentId={listing.agentId}
+            kind={listing.kind}
+            listingId={listing.id}
+            name={listing.name}
+            size="lg"
+          />
           <div>
             <div className="amkt-detail-title-row">
               <h1>{listing.name}</h1>
@@ -53,7 +135,7 @@ export function MarketplaceDetailView({
             </div>
             <p className="amkt-detail-desc">{listing.description}</p>
             <div className="amkt-detail-badges">
-              <span className="amkt-chip is-chain">{listing.chain}</span>
+              <MarketplaceChainChip chain={listing.chain} />
               {listing.rails.map((rail) => (
                 <span className="amkt-chip" key={rail}>{rail}</span>
               ))}
@@ -114,7 +196,7 @@ export function MarketplaceDetailView({
               </div>
               <div>
                 <dt>Chain</dt>
-                <dd><span className="amkt-chip is-chain">{listing.chain}</span></dd>
+                <dd><MarketplaceChainChip chain={listing.chain} /></dd>
               </div>
             </dl>
           </section>
@@ -141,27 +223,7 @@ export function MarketplaceDetailView({
           </section>
         </div>
 
-        <aside className="amkt-hire-panel" aria-label="Hire">
-          <div className="amkt-hire-panel-head">
-            <p className="amkt-eyebrow">Hire</p>
-            <h2>{listing.name}</h2>
-          </div>
-          <p className="amkt-hire-copy">
-            Same-org fleet uses Permit2. Cross-org uses x402 or escrow after payTo authorize.
-          </p>
-          <ul className="amkt-hire-facts">
-            <li><span>Rails</span><strong>{listing.rails.join(' · ')}</strong></li>
-            <li><span>Chain</span><strong>{listing.chain}</strong></li>
-            <li><span>Reputation</span><strong>{activity.reputationScore}</strong></li>
-            <li><span>Settled</span><strong>{formatUsdc(activity.settledUsdc)}</strong></li>
-          </ul>
-          <Link className="amkt-hire-cta" href={hireHref}>
-            {signedIn ? 'Hire now' : 'Sign in to hire'}
-          </Link>
-          <p className="amkt-hire-note">
-            Payment runs under your org policy, budget, and kill switch. Purchases show in your console.
-          </p>
-        </aside>
+        {hirePanel}
       </div>
     </div>
   );

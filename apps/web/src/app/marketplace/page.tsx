@@ -98,7 +98,7 @@ export default async function MarketplacePage() {
         <footer className="amkt-foot">
           Ready to spend?{' '}
           <Link href="/auth">Sign in</Link>
-          {' '}— hire under your org policy; purchases appear in your console.
+          {' '}— hire and pay on marketplace; purchases appear in your console.
         </footer>
       </main>
     </>

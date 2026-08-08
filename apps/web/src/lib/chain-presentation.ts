@@ -9,7 +9,7 @@ export const CHAIN_PRESENTATION: Readonly<Record<PaymentChain, {
   polygon: { logo: '/landing/chains/polygon.svg', name: 'Polygon' },
   optimism: { logo: '/landing/chains/optimism.svg', name: 'Optimism' },
   avalanche: { logo: '/landing/chains/avalanche.svg', name: 'Avalanche' },
-  arc: { logo: '/landing/chains/arc.svg', name: 'Arc' },
+  arc: { logo: '/landing/chains/arc.png', name: '' },
 };
 
 const chainEntries = Object.entries(CHAIN_PRESENTATION) as readonly [

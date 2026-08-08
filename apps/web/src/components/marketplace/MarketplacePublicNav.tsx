@@ -1,13 +1,18 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
-export function MarketplacePublicNav() {
+type MarketplacePublicNavProps = {
+  readonly dashboardHref: string | null;
+};
+
+export function MarketplacePublicNav({ dashboardHref }: MarketplacePublicNavProps) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    const sync = () => setScrolled(window.scrollY > 8);
+    const sync = () => setScrolled(window.scrollY > 12);
     sync();
     window.addEventListener('scroll', sync, { passive: true });
     return () => window.removeEventListener('scroll', sync);
@@ -16,28 +21,28 @@ export function MarketplacePublicNav() {
   return (
     <header className="amkt-nav" data-scrolled={scrolled}>
       <div className="amkt-nav-inner">
-        <div className="amkt-nav-left">
-          <Link className="amkt-brand" href="/">
-            <span className="amkt-brand-mark" aria-hidden="true" />
-            <span>agentOps</span>
-          </Link>
-          <nav className="amkt-nav-links" aria-label="Primary">
-            <Link href="/marketplace" aria-current="page">Marketplace</Link>
-            <Link href="/changelog">Changelog</Link>
-            <Link href="/#product">Product</Link>
-          </nav>
-        </div>
-        <label className="amkt-nav-search">
-          <span className="sr-only">Search marketplace</span>
-          <svg aria-hidden="true" height="16" viewBox="0 0 24 24" width="16">
-            <circle cx="11" cy="11" fill="none" r="7" stroke="currentColor" strokeWidth="1.75" />
-            <path d="M20 20l-3.5-3.5" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.75" />
-          </svg>
-          <input placeholder="Search agents" type="search" />
-        </label>
+        <Link aria-label="AOPS home" className="amkt-brand" href="/">
+          <Image
+            alt="AOPS"
+            className="amkt-brand-wordmark"
+            height={157}
+            priority
+            src="/landing/aops-wordmark-nav.png"
+            unoptimized
+            width={580}
+          />
+        </Link>
+
         <div className="amkt-nav-actions">
-          <Link className="amkt-btn-ghost" href="/auth">Sign in</Link>
-          <Link className="amkt-btn-solid" href="/auth">Hire</Link>
+          {dashboardHref !== null ? (
+            <Link className="amkt-nav-cta" href={dashboardHref}>
+              Dashboard
+            </Link>
+          ) : (
+            <Link className="amkt-nav-cta" href="/auth">
+              Sign in
+            </Link>
+          )}
         </div>
       </div>
     </header>

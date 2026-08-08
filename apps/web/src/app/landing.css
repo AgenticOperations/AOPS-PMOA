@@ -714,6 +714,14 @@
 }
 .aops-chain-marquee li { border-left: 1px solid var(--aops-line); }
 .aops-chain-marquee img { width: 18px; height: 18px; object-fit: contain; opacity: 0.62; }
+/* Official Arc mark is a black wordmark — invert on the dark landing rail. */
+.aops-chain-marquee img[src*="/landing/chains/arc.png"] {
+  width: auto;
+  max-width: 52px;
+  height: 14px;
+  filter: invert(1);
+  opacity: 0.78;
+}
 @keyframes aops-chain-marquee { to { transform: translate3d(-50%, 0, 0); } }
 
 @media (prefers-reduced-motion: reduce) {

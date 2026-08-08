@@ -63,7 +63,7 @@ describe('AOPS public landing page', () => {
       '/landing/chains/avalanche.svg',
       // Arc is the product's home chain -- it belongs in the compatibility
       // proof alongside the Gateway chains.
-      '/landing/chains/arc.svg',
+      '/landing/chains/arc.png',
     ];
     const chainSources = Array.from(
       container.querySelectorAll<HTMLImageElement>('[data-chain-logo]'),

@@ -3,9 +3,10 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import { formatUtcDateTime } from '@/lib/date-format';
-import { CHAIN_LABELS, formatMoney, titleCase } from '@/lib/payments-format';
+import { formatMoney, titleCase } from '@/lib/payments-format';
 import type { EscrowJobActivityRecord } from '@/lib/payments-types';
 import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
+import { MarketplaceChainChip, MarketplaceListingMark } from './MarketplaceMarks';
 
 type PurchasedMarketplaceViewProps = {
   readonly jobs: readonly EscrowJobActivityRecord[];
@@ -90,13 +91,24 @@ export function PurchasedMarketplaceView({
                 return (
                   <TableRow key={job.id}>
                     <TableCell>
-                      <div className="treasury-index-primary">
-                        <strong>{title}</strong>
-                        <small>{subtitle}</small>
+                      <div className="treasury-index-primary treasury-primary-cell">
+                        {listing !== null ? (
+                          <MarketplaceListingMark
+                            agentId={listing.agentId}
+                            kind={listing.kind}
+                            listingId={listing.id}
+                            name={listing.name}
+                            size="sm"
+                          />
+                        ) : null}
+                        <div>
+                          <strong>{title}</strong>
+                          <small>{subtitle}</small>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell>{job.clientAgentName ?? shortAddress(job.clientAgentId)}</TableCell>
-                    <TableCell>{CHAIN_LABELS[job.chain] ?? job.chain}</TableCell>
+                    <TableCell><MarketplaceChainChip chain={job.chain} /></TableCell>
                     <TableCell>{formatMoney(job.budgetUsdc)}</TableCell>
                     <TableCell>
                       <StatusBadge label={titleCase(job.state)} status={outcomeTone(job.state)} />

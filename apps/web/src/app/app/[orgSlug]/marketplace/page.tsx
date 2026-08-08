@@ -1,12 +1,6 @@
 import { redirect } from 'next/navigation';
-import {
-  authorizeMarketplaceDestinationAction,
-  hireMarketplaceEscrowAction,
-  hireMarketplaceX402Action,
-} from '@/app/actions/payments';
-import { MarketplaceBrowse } from '@/components/marketplace/MarketplaceBrowse';
 import { PurchasedMarketplaceView } from '@/components/marketplace/PurchasedMarketplaceView';
-import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
+import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { listEscrowJobs, listMarketplaceListings } from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
@@ -27,38 +21,15 @@ export default async function MarketplacePurchasesPage({ params, searchParams }:
     redirect('/auth');
   }
 
-  const listings = await listMarketplaceListings(org.id).catch(() => []);
-  const hireListingId = query.listing !== undefined && listings.some((item) => item.id === query.listing)
-    ? query.listing
-    : null;
-
-  // Hire deep-link from public marketplace — keep the payment form under org policy.
-  if (hireListingId !== null) {
-    const agents = await listAgents(org.id).catch(() => []);
-    const authorizedAddresses = new Set(
-      listings
-        .filter((listing) => listing.destinationAuthorized === true && listing.providerAddress !== null)
-        .map((listing) => `${listing.chain}:${listing.providerAddress!.toLowerCase()}`),
-    );
-
-    return (
-      <MarketplaceBrowse
-        authorizeAction={authorizeMarketplaceDestinationAction.bind(null, org.id, org.slug)}
-        authorizedAddresses={authorizedAddresses}
-        buyerOrgId={org.id}
-        clients={agents
-          .filter((agent) => agent.status !== 'deactivated')
-          .map((agent) => ({ id: agent.id, name: agent.name }))}
-        hireEscrowAction={hireMarketplaceEscrowAction.bind(null, org.id, org.slug)}
-        hireX402Action={hireMarketplaceX402Action.bind(null, org.id, org.slug)}
-        initialListingId={hireListingId}
-        listings={listings}
-        orgSlug={org.slug}
-      />
-    );
+  // Old hire desk deep-links now complete on the public marketplace.
+  if (query.listing !== undefined && query.listing.length > 0) {
+    redirect(`/marketplace/${encodeURIComponent(query.listing)}`);
   }
 
-  const jobs = await listEscrowJobs(org.id).catch(() => []);
+  const [jobs, listings] = await Promise.all([
+    listEscrowJobs(org.id).catch(() => []),
+    listMarketplaceListings(org.id).catch(() => []),
+  ]);
 
   return (
     <PurchasedMarketplaceView
