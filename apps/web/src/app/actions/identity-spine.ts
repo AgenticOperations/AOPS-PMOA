@@ -342,8 +342,8 @@ export async function savePublishListingAction(
 }
 
 export type PublishIdentityActionState = {
-  readonly error?: string;
-  readonly ok?: string;
+  readonly error?: string | undefined;
+  readonly ok?: string | undefined;
 };
 
 function friendlyIdentityRegisterError(error: unknown): string {

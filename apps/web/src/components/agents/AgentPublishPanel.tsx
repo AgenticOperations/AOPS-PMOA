@@ -14,8 +14,8 @@ export type AgentOnchainIdentityView = {
 } | null;
 
 export type PublishIdentityFormState = {
-  readonly error?: string;
-  readonly ok?: string;
+  readonly error?: string | undefined;
+  readonly ok?: string | undefined;
 };
 
 type AgentPublishPanelProps = {
