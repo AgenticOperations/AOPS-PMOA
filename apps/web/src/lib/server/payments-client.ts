@@ -710,3 +710,70 @@ export async function registerAgentOnchainIdentity(
   );
   return body.identity;
 }
+
+export type PublishedAgentListingRecord = {
+  readonly agentId: string;
+  readonly name: string;
+  readonly status: string;
+  readonly publicEndpointUrl: string;
+  readonly setupMode: string | null;
+  readonly chain: PaymentChain;
+  readonly providerAddress: string | null;
+  readonly identityStatus: 'pending' | 'registered' | 'failed' | null;
+  readonly identityTokenId: string | null;
+};
+
+export async function listPublishedAgentListings(
+  orgId: string,
+  chain: PaymentChain = 'arc',
+): Promise<readonly PublishedAgentListingRecord[]> {
+  const body = await apiFetch<{ readonly listings: readonly PublishedAgentListingRecord[] }>(
+    `/v1/orgs/${orgId}/agents/listings?chain=${encodeURIComponent(chain)}`,
+  );
+  return body.listings;
+}
+
+export type CreateEscrowJobInput = {
+  readonly client_agent_id: string;
+  readonly provider_agent_id?: string | undefined;
+  readonly provider_address?: string | undefined;
+  readonly chain?: PaymentChain | undefined;
+  readonly budget_usdc: string;
+  readonly expires_in_hours?: number | undefined;
+  readonly description?: string | undefined;
+};
+
+export type EscrowJobCreateRecord = {
+  readonly id: string;
+  readonly orgId: string;
+  readonly clientAgentId: string;
+  readonly providerAddress: string;
+  readonly chain: PaymentChain;
+  readonly budgetUsdc: string;
+  readonly state: string;
+  readonly onchainJobId: string | null;
+  readonly createTxHash: string | null;
+  readonly expiresAt: string;
+};
+
+export async function createEscrowJob(
+  orgId: string,
+  input: CreateEscrowJobInput,
+): Promise<EscrowJobCreateRecord> {
+  const body = await apiFetch<{ readonly job: EscrowJobCreateRecord }>(
+    `/v1/orgs/${orgId}/payments/escrow/jobs`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        client_agent_id: input.client_agent_id,
+        provider_agent_id: input.provider_agent_id,
+        provider_address: input.provider_address,
+        chain: input.chain ?? 'arc',
+        budget_usdc: input.budget_usdc,
+        expires_in_hours: input.expires_in_hours ?? 72,
+        description: input.description,
+      }),
+    },
+  );
+  return body.job;
+}
