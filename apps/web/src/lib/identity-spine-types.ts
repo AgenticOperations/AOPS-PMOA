@@ -60,6 +60,9 @@ export type AgentRosterItem = {
   readonly wallet_refs_count: number;
   readonly policy_coverage: number;
   readonly last_activity_at: string | null;
+  readonly identity_token_id?: string | null;
+  readonly reputation_score?: number;
+  readonly reputation_events?: number;
 };
 
 export type AgentRosterPage = {

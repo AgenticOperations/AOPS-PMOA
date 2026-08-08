@@ -12,22 +12,29 @@ import {
   fundHref,
   type ActionNavLink,
 } from '@/components/ui/LinkedActionMessage';
+import type { MarketplaceHireActionState } from '@/app/actions/payments';
 import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
 
 type ClientOption = { readonly id: string; readonly name: string };
+
+export type MarketplaceHireFormState = {
+  readonly error?: string | undefined;
+  readonly ok?: string | undefined;
+  readonly jobId?: string | undefined;
+};
 
 type MarketplaceHirePanelProps = {
   readonly orgSlug: string;
   readonly buyerOrgId: string;
   readonly listing: MarketplaceListingRecord;
   readonly clients: readonly ClientOption[];
-  readonly authorizeAction: (formData: FormData) => Promise<void>;
-  readonly hireX402Action: (formData: FormData) => Promise<void>;
-  readonly hireEscrowAction: (formData: FormData) => Promise<{ readonly jobId: string }>;
+  readonly authorizeAction: (formData: FormData) => Promise<MarketplaceHireActionState>;
+  readonly hireX402Action: (formData: FormData) => Promise<MarketplaceHireActionState>;
+  readonly hireEscrowAction: (formData: FormData) => Promise<MarketplaceHireActionState>;
   readonly purchasesHref: string;
 };
 
-type FormState = { readonly error?: string; readonly ok?: string };
+type FormState = MarketplaceHireFormState;
 
 function guideLinksForMessage(orgSlug: string, clientAgentId: string | undefined, message: string): readonly ActionNavLink[] {
   const links: ActionNavLink[] = [];
@@ -98,9 +105,10 @@ export function MarketplaceHirePanel({
   const [authState, authFormAction, authPending] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       try {
-        await authorizeAction(formData);
+        const result = await authorizeAction(formData);
+        if (result.error !== undefined) return result;
         router.refresh();
-        return { ok: 'Destination authorized.' };
+        return result.ok !== undefined ? result : { ok: 'Destination authorized.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Authorization failed.' };
       }
@@ -111,9 +119,12 @@ export function MarketplaceHirePanel({
   const [x402State, x402FormAction, x402Pending] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       try {
-        await hireX402Action(formData);
+        const result = await hireX402Action(formData);
+        if (result.error !== undefined) return result;
         router.refresh();
-        return { ok: 'Payment submitted. It will show under Purchases in your console.' };
+        return result.ok !== undefined
+          ? result
+          : { ok: 'Payment submitted. It will show under Purchases in your console.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Payment failed.' };
       }
@@ -125,10 +136,13 @@ export function MarketplaceHirePanel({
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       try {
         const result = await hireEscrowAction(formData);
+        if (result.error !== undefined) return result;
         router.refresh();
-        return {
-          ok: `Escrow job ${result.jobId} created — track it in Purchases / Activity.`,
-        };
+        if (result.ok !== undefined) return result;
+        if (result.jobId !== undefined) {
+          return { ok: `Escrow job ${result.jobId} created — track it in Purchases / Activity.`, jobId: result.jobId };
+        }
+        return { error: 'Escrow hire failed.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Hire failed.' };
       }

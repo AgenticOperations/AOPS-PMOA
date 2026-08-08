@@ -10,6 +10,7 @@ import {
   createTreasury,
   hireMarketplaceX402,
   initiateGatewayDeposit,
+  PaymentsApiError,
   reconcileCircleProviderJobs,
   requestTestnetFunds,
   retryLiquidityJob,
@@ -22,6 +23,76 @@ import {
 } from '@/lib/server/payments-client';
 import { randomUUID } from 'node:crypto';
 import type { PaymentChain, PaymentMode, PaymentRail } from '@/lib/payments-types';
+
+export type MarketplaceHireActionState = {
+  readonly error?: string | undefined;
+  readonly ok?: string | undefined;
+  readonly jobId?: string | undefined;
+};
+
+/**
+ * Server Actions that throw surface as an opaque Next.js digest in production
+ * ("An error occurred in the Server Components render…"). Catch + return a
+ * plain string state instead — same pattern as registerOnchainIdentityAction.
+ */
+function friendlyMarketplaceHireError(error: unknown, fallback: string): string {
+  const code = error instanceof PaymentsApiError ? error.code : null;
+  const message = error instanceof Error ? error.message : '';
+
+  if (
+    code === 'escrow_client_wallet_not_found'
+    || code === 'provider_wallet_missing'
+    || message.includes('escrow_client_wallet_not_found')
+    || message.includes('provider_wallet_missing')
+  ) {
+    return 'Paying agent has no active wallet on this chain. Enable payment access in Empower, wait until the wallet is active, then retry.';
+  }
+  if (
+    code === 'escrow_client_wallet_unfunded'
+    || message.includes('escrow_client_wallet_unfunded')
+    || message.includes('has 0 Arc USDC')
+    || message.includes('has 0 USDC')
+  ) {
+    return message.trim().length > 0 && !message.startsWith('escrow_') && !message.startsWith('circle_')
+      ? message
+      : 'Paying agent wallet has no USDC. Fund that exact wallet on Fund, then retry.';
+  }
+  if (
+    code === 'escrow_client_cannot_be_provider'
+    || code === 'marketplace_hire_self'
+    || message.includes('escrow_client_cannot_be_provider')
+    || message.includes('marketplace_hire_self')
+    || message.toLowerCase().includes('cannot hire itself')
+  ) {
+    return 'Paying agent cannot hire itself — choose a different paying agent than the listing.';
+  }
+  if (code === 'destination_not_authorized' || message.includes('destination_not_authorized')) {
+    return 'Authorize this marketplace payTo destination before micropay hire.';
+  }
+  if (
+    code === 'circle_permit2_transaction_failed'
+    || code === 'circle_permit2_transaction_denied'
+    || code === 'circle_worker_operation_failed'
+    || message.includes('circle_permit2_transaction_')
+    || message.includes('circle_worker_operation_failed')
+  ) {
+    return message.trim().length > 0 && !message.startsWith('circle_')
+      ? message
+      : 'On-chain hire failed from the paying agent wallet. Common causes: 0 USDC on that wallet, or hiring the same agent as payer. Fund on Fund or pick a different payer, then retry.';
+  }
+  if (code !== null && code.startsWith('intra_fleet_')) {
+    return message.trim().length > 0 && !message.startsWith('intra_fleet_')
+      ? message
+      : 'Permit2 fleet hire failed. Ensure the paying agent is funded on Fund and the seller endpoint is reachable, then retry.';
+  }
+  if (code === 'circle_worker_unavailable' || message.includes('worker is unavailable')) {
+    return 'Circle wallet worker is unavailable. Try again in a moment.';
+  }
+  if (message.trim().length > 0 && !message.startsWith('circle_') && !message.startsWith('intra_fleet_')) {
+    return message;
+  }
+  return fallback;
+}
 
 function paymentsPath(orgSlug: string): string {
   return `/app/${orgSlug}/payments`;
@@ -256,60 +327,77 @@ export async function authorizeMarketplaceDestinationAction(
   orgId: string,
   orgSlug: string,
   formData: FormData,
-): Promise<void> {
-  const confirmed = formData.get('confirmed')?.toString() === 'true';
-  if (!confirmed) {
-    throw new Error('Confirm authorization before allowing this marketplace payTo.');
+): Promise<MarketplaceHireActionState> {
+  try {
+    const confirmed = formData.get('confirmed')?.toString() === 'true';
+    if (!confirmed) {
+      return { error: 'Confirm authorization before allowing this marketplace payTo.' };
+    }
+    await authorizeMarketplaceDestination(orgId, {
+      chain: requiredStringField(formData, 'chain') as PaymentChain,
+      address: requiredStringField(formData, 'address'),
+      label: formData.get('label')?.toString().trim() || 'Marketplace seller',
+    });
+    revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+    revalidatePath('/marketplace', 'layout');
+    revalidatePayments(orgSlug);
+    return { ok: 'Destination authorized.' };
+  } catch (error) {
+    return { error: friendlyMarketplaceHireError(error, 'Authorization failed.') };
   }
-  await authorizeMarketplaceDestination(orgId, {
-    chain: requiredStringField(formData, 'chain') as PaymentChain,
-    address: requiredStringField(formData, 'address'),
-    label: formData.get('label')?.toString().trim() || 'Marketplace seller',
-  });
-  revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
-  revalidatePath('/marketplace', 'layout');
-  revalidatePayments(orgSlug);
 }
 
 export async function hireMarketplaceX402Action(
   orgId: string,
   orgSlug: string,
   formData: FormData,
-): Promise<void> {
-  const listingId = requiredStringField(formData, 'listingId');
-  await hireMarketplaceX402(orgId, {
-    client_agent_id: requiredStringField(formData, 'clientAgentId'),
-    listing_id: listingId,
-    idempotency_key: formData.get('idempotencyKey')?.toString().trim() || `mkt-x402-${randomUUID()}`,
-  });
-  revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
-  revalidatePath(`/marketplace/${encodeURIComponent(listingId)}`, 'page');
-  revalidatePayments(orgSlug);
+): Promise<MarketplaceHireActionState> {
+  try {
+    const listingId = requiredStringField(formData, 'listingId');
+    await hireMarketplaceX402(orgId, {
+      client_agent_id: requiredStringField(formData, 'clientAgentId'),
+      listing_id: listingId,
+      idempotency_key: formData.get('idempotencyKey')?.toString().trim() || `mkt-x402-${randomUUID()}`,
+    });
+    revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+    revalidatePath(`/marketplace/${encodeURIComponent(listingId)}`, 'page');
+    revalidatePayments(orgSlug);
+    return { ok: 'Payment submitted. It will show under Purchases in your console.' };
+  } catch (error) {
+    return { error: friendlyMarketplaceHireError(error, 'Payment failed.') };
+  }
 }
 
 export async function hireMarketplaceEscrowAction(
   orgId: string,
   orgSlug: string,
   formData: FormData,
-): Promise<{ readonly jobId: string }> {
-  const providerAddress = formData.get('providerAddress')?.toString().trim();
-  const providerAgentId = formData.get('providerAgentId')?.toString().trim();
-  const job = await createEscrowJob(orgId, {
-    client_agent_id: requiredStringField(formData, 'clientAgentId'),
-    ...(providerAgentId !== undefined && providerAgentId.length > 0
-      ? { provider_agent_id: providerAgentId }
-      : {}),
-    ...(providerAddress !== undefined && providerAddress.length > 0
-      ? { provider_address: providerAddress }
-      : {}),
-    chain: (formData.get('chain')?.toString().trim() || 'arc') as PaymentChain,
-    budget_usdc: moneyField(formData, 'budgetUsdc'),
-    expires_in_hours: Number.parseInt(formData.get('expiresInHours')?.toString() ?? '72', 10) || 72,
-    description: formData.get('description')?.toString().trim() || undefined,
-  });
-  revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
-  revalidatePath(`/app/${orgSlug}/payments/activity`, 'page');
-  revalidatePath('/marketplace', 'layout');
-  revalidatePayments(orgSlug);
-  return { jobId: job.id };
+): Promise<MarketplaceHireActionState> {
+  try {
+    const providerAddress = formData.get('providerAddress')?.toString().trim();
+    const providerAgentId = formData.get('providerAgentId')?.toString().trim();
+    const job = await createEscrowJob(orgId, {
+      client_agent_id: requiredStringField(formData, 'clientAgentId'),
+      ...(providerAgentId !== undefined && providerAgentId.length > 0
+        ? { provider_agent_id: providerAgentId }
+        : {}),
+      ...(providerAddress !== undefined && providerAddress.length > 0
+        ? { provider_address: providerAddress }
+        : {}),
+      chain: (formData.get('chain')?.toString().trim() || 'arc') as PaymentChain,
+      budget_usdc: moneyField(formData, 'budgetUsdc'),
+      expires_in_hours: Number.parseInt(formData.get('expiresInHours')?.toString() ?? '72', 10) || 72,
+      description: formData.get('description')?.toString().trim() || undefined,
+    });
+    revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+    revalidatePath(`/app/${orgSlug}/payments/activity`, 'page');
+    revalidatePath('/marketplace', 'layout');
+    revalidatePayments(orgSlug);
+    return {
+      jobId: job.id,
+      ok: `Escrow job ${job.id} created — track it in Purchases / Activity.`,
+    };
+  } catch (error) {
+    return { error: friendlyMarketplaceHireError(error, 'Escrow hire failed.') };
+  }
 }

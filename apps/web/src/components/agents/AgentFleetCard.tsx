@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import type { AgentRosterItem } from '@/lib/identity-spine-types';
 import { AGENT_ROBOT_SRC, agentTint } from './agent-visual';
-import { formatConnectionHealth, formatStatus } from './format';
 
 type AgentFleetCardProps = {
   readonly agent: AgentRosterItem;
@@ -9,23 +8,31 @@ type AgentFleetCardProps = {
   readonly index?: number;
 };
 
+function shortAgentId(id: string): string {
+  if (id.length <= 14) return id;
+  return `${id.slice(0, 8)}…${id.slice(-4)}`;
+}
+
 /**
- * Casper-style home fleet card: dark robot header with per-agent tint,
- * white body with readiness cues.
+ * Home fleet card: robot + name + published identity + reputation.
  */
 export function AgentFleetCard({ agent, orgSlug, index = 0 }: AgentFleetCardProps) {
   const tint = agentTint(agent.id);
   const ready = agent.status === 'active'
     && (agent.connection_health === 'healthy' || agent.connection_health === 'stale');
-  const displayName = agent.name.length > 20
-    ? `${agent.name.slice(0, 12)}…${agent.name.slice(-5)}`
+  const displayName = agent.name.length > 24
+    ? `${agent.name.slice(0, 16)}…${agent.name.slice(-5)}`
     : agent.name;
+  const tokenId = agent.identity_token_id ?? null;
+  const publishedId = tokenId !== null ? `#${tokenId}` : shortAgentId(agent.id);
+  const reputation = agent.reputation_score ?? 0;
 
   return (
     <Link
       className="agent-fleet-card"
       href={`/app/${orgSlug}/agents/${agent.id}`}
       style={{ ['--agent-tint' as string]: tint.color, ['--agent-glow' as string]: tint.glow }}
+      title={agent.name}
     >
       <div className="agent-fleet-card-hero">
         <div aria-hidden="true" className="agent-fleet-card-grid" />
@@ -36,39 +43,29 @@ export function AgentFleetCard({ agent, orgSlug, index = 0 }: AgentFleetCardProp
             alt=""
             className="agent-fleet-card-robot-img"
             draggable={false}
-            height={130}
-            loading={index < 3 ? 'eager' : 'lazy'}
+            height={148}
+            loading={index < 4 ? 'eager' : 'lazy'}
             src={AGENT_ROBOT_SRC}
-            width={130}
+            width={148}
           />
         </div>
-        <div className="agent-fleet-card-badge">
-          <span className={ready ? 'is-ready' : undefined}>
-            <i />
-            {ready ? 'Ready' : formatStatus(agent.status)}
-          </span>
-        </div>
-        <div className="agent-fleet-card-label">
-          <p>Agent</p>
-          <strong title={agent.name}>{displayName}</strong>
-        </div>
-        <div aria-hidden="true" className="agent-fleet-card-accent" />
+        {ready ? (
+          <span aria-hidden="true" className="agent-fleet-card-ready-dot" />
+        ) : null}
       </div>
 
       <div className="agent-fleet-card-body">
-        <code>{agent.id}</code>
+        <strong title={agent.name}>{displayName}</strong>
         <dl>
           <div>
-            <dt>Credential</dt>
-            <dd>{formatConnectionHealth(agent.connection_health)}</dd>
+            <dt>ID</dt>
+            <dd title={tokenId !== null ? `Token ${tokenId} · ${agent.id}` : agent.id}>
+              {publishedId}
+            </dd>
           </div>
           <div>
-            <dt>Policies</dt>
-            <dd>{agent.policy_coverage === 0 ? 'None' : `${agent.policy_coverage}`}</dd>
-          </div>
-          <div>
-            <dt>Team</dt>
-            <dd title={agent.team.name}>{agent.team.name}</dd>
+            <dt>Rep</dt>
+            <dd>{reputation}</dd>
           </div>
         </dl>
       </div>
@@ -81,10 +78,10 @@ type AgentFleetStripProps = {
   readonly orgSlug: string;
 };
 
-/** Horizontal fleet of robot cards for the home overview. */
+/** Horizontal fleet of robot cards for the home overview — max 4. */
 export function AgentFleetStrip({ agents, orgSlug }: AgentFleetStripProps) {
   const active = agents.filter((agent) => agent.status !== 'deactivated' && agent.status !== 'retired');
-  const shown = (active.length > 0 ? active : agents).slice(0, 8);
+  const shown = (active.length > 0 ? active : agents).slice(0, 4);
 
   if (shown.length === 0) {
     return (
@@ -93,7 +90,7 @@ export function AgentFleetStrip({ agents, orgSlug }: AgentFleetStripProps) {
           <img alt="" height={88} src={AGENT_ROBOT_SRC} width={88} />
         </div>
         <strong>No agents yet</strong>
-        <p>Create an agent identity, then connect it over MCP.</p>
+        <p>Create an agent to get started.</p>
         <Link className="canonical-overview-primary" href={`/app/${orgSlug}/agents`}>
           + New agent
         </Link>

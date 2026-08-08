@@ -13,6 +13,7 @@ import {
   fundHref,
   type ActionNavLink,
 } from '@/components/ui/LinkedActionMessage';
+import type { MarketplaceHireActionState } from '@/app/actions/payments';
 import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
 
 type ClientOption = { readonly id: string; readonly name: string };
@@ -22,14 +23,18 @@ type MarketplaceBrowseProps = {
   readonly buyerOrgId: string;
   readonly listings: readonly MarketplaceListingRecord[];
   readonly clients: readonly ClientOption[];
-  readonly authorizeAction: (formData: FormData) => Promise<void>;
-  readonly hireX402Action: (formData: FormData) => Promise<void>;
-  readonly hireEscrowAction: (formData: FormData) => Promise<{ readonly jobId: string }>;
+  readonly authorizeAction: (formData: FormData) => Promise<MarketplaceHireActionState>;
+  readonly hireX402Action: (formData: FormData) => Promise<MarketplaceHireActionState>;
+  readonly hireEscrowAction: (formData: FormData) => Promise<MarketplaceHireActionState>;
   readonly authorizedAddresses: ReadonlySet<string>;
   readonly initialListingId?: string | null | undefined;
 };
 
-type FormState = { readonly error?: string; readonly ok?: string };
+type FormState = {
+  readonly error?: string | undefined;
+  readonly ok?: string | undefined;
+  readonly jobId?: string | undefined;
+};
 type KindFilter = 'all' | 'service' | 'agent';
 
 function addressKey(chain: string, address: string): string {
@@ -147,8 +152,9 @@ export function MarketplaceBrowse({
   const [authState, authFormAction, authPending] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       try {
-        await authorizeAction(formData);
-        return { ok: 'Destination authorized.' };
+        const result = await authorizeAction(formData);
+        if (result.error !== undefined) return result;
+        return result.ok !== undefined ? result : { ok: 'Destination authorized.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Authorization failed.' };
       }
@@ -159,8 +165,9 @@ export function MarketplaceBrowse({
   const [x402State, x402FormAction, x402Pending] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       try {
-        await hireX402Action(formData);
-        return { ok: 'Payment submitted.' };
+        const result = await hireX402Action(formData);
+        if (result.error !== undefined) return result;
+        return result.ok !== undefined ? result : { ok: 'Payment submitted.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Payment failed.' };
       }
@@ -172,9 +179,15 @@ export function MarketplaceBrowse({
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       try {
         const result = await hireEscrowAction(formData);
-        return {
-          ok: `Escrow job ${result.jobId} created — open Activity to track fund/submit/complete.`,
-        };
+        if (result.error !== undefined) return result;
+        if (result.ok !== undefined) return result;
+        if (result.jobId !== undefined) {
+          return {
+            ok: `Escrow job ${result.jobId} created — open Activity to track fund/submit/complete.`,
+            jobId: result.jobId,
+          };
+        }
+        return { error: 'Escrow hire failed.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Hire failed.' };
       }

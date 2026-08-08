@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import type { MarketplaceHireActionState } from '@/app/actions/payments';
 import type { MarketplaceListingActivity, PublicMarketplaceListing } from '@/lib/server/marketplace-public-client';
 import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
 import { MarketplaceActivityChart } from './MarketplaceActivityChart';
@@ -17,9 +18,9 @@ type MarketplaceDetailViewProps = {
   readonly orgSlug?: string | null | undefined;
   readonly buyerOrgId?: string | null | undefined;
   readonly clients?: readonly HireClient[] | undefined;
-  readonly authorizeAction?: ((formData: FormData) => Promise<void>) | undefined;
-  readonly hireX402Action?: ((formData: FormData) => Promise<void>) | undefined;
-  readonly hireEscrowAction?: ((formData: FormData) => Promise<{ readonly jobId: string }>) | undefined;
+  readonly authorizeAction?: ((formData: FormData) => Promise<MarketplaceHireActionState>) | undefined;
+  readonly hireX402Action?: ((formData: FormData) => Promise<MarketplaceHireActionState>) | undefined;
+  readonly hireEscrowAction?: ((formData: FormData) => Promise<MarketplaceHireActionState>) | undefined;
 };
 
 function hostOf(url: string): string {
