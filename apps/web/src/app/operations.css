@@ -49,7 +49,7 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
   box-shadow: none;
 }
@@ -86,9 +86,9 @@
 .operations-header .operations-eyebrow {
   margin: 0 0 6px;
   color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -96,10 +96,10 @@
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: 1.5rem;
-  font-weight: 500;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
 .operations-header > div > p:last-child {
@@ -117,7 +117,7 @@
   border-radius: 6px;
   background: var(--console-action);
   color: var(--bg-panel);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -179,7 +179,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 400;
 }
 
@@ -229,7 +229,7 @@
   border-radius: 999px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -256,7 +256,7 @@
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -300,7 +300,7 @@
 .operations-table-row strong {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -310,7 +310,7 @@
 .operations-table-row time {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -326,7 +326,7 @@
   border-radius: 999px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -406,14 +406,14 @@
 
 .operations-limit-row > div:first-child span:first-child {
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
 }
 
 .operations-limit-row > div:first-child span:last-child,
 .operations-limit-meta > span:not(.ops-state-pill) {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .operations-meter {
@@ -444,7 +444,7 @@
   border-radius: 6px;
   background: var(--bg-panel);
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -468,7 +468,7 @@
   max-width: 50ch;
   margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 /* Operations drawers */
@@ -508,7 +508,7 @@
 .operations-drawer .sheet-description {
   margin: 7px 0 0;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -547,7 +547,7 @@
 
 .operations-form label > span {
   color: var(--text-primary);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -563,7 +563,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 400;
 }
 
@@ -589,7 +589,7 @@
   background: var(--console-action);
   color: var(--bg-panel);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -610,14 +610,14 @@
 
 .operations-detail-grid dt {
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 .operations-detail-grid dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 400;
   overflow-wrap: anywhere;
 }
@@ -630,18 +630,18 @@
   border-radius: 6px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .operations-lifecycle-trigger { justify-self: start; }
-.operations-lifecycle-note { margin: 0; padding: 12px 0; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 9px; line-height: 1.5; }
+.operations-lifecycle-note { margin: 0; padding: 12px 0; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .operations-lifecycle-confirm { display: grid; gap: 12px; padding: 12px; border: 1px solid color-mix(in oklch, var(--state-danger) 30%, var(--border-subtle)); border-radius: 6px; background: var(--state-danger-tint); }
 .operations-lifecycle-confirm > div:first-child { display: grid; gap: 5px; }
-.operations-lifecycle-confirm strong { color: var(--state-danger); font-size: 10px; font-weight: 600; }
-.operations-lifecycle-confirm p { margin: 0; color: var(--text-muted); font-size: 9px; line-height: 1.5; }
+.operations-lifecycle-confirm strong { color: var(--state-danger); font-size: 13px; font-weight: 600; }
+.operations-lifecycle-confirm p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .operations-lifecycle-confirm > div:last-child { display: flex; gap: 7px; }
 
 @media (max-width: 900px) {
@@ -670,7 +670,7 @@
   .operations-header .console-primary-button { align-self: flex-start; }
 
   .operations-header h1 {
-    font-size: 28px;
+    font-size: var(--type-title);
   }
 
   .operations-filter-bar,

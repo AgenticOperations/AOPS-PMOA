@@ -256,37 +256,30 @@ describe('TreasuryAgentAccess', () => {
     expect(screen.getByRole('checkbox', { name: /Gateway · Arc/ })).toBeDisabled();
   });
 
-  it('shows the trust panel for an external escrow agent', () => {
-    // External agents are counterparties by address (design doc D-4), not
-    // entries in the org's own agent roster -- so this is an additive
-    // section, not a row in the existing access table.
+  it('points operators to Marketplace and Activity instead of hiring on Empower', () => {
     render(
       <TreasuryAgentAccess
         accessAction={async () => {}}
         accounts={[]}
         agents={[]}
         capabilities={[capability]}
-        externalAgents={[
-          {
-            chain: 'arc',
-            address: '0x5555555555555555555555555555555555555555',
-            label: 'Marketplace agent A',
-            trusted: false,
-            evidence: { completedCount: 2, rejectedCount: 0, expiredCount: 0, settledUsdc: '12.00' },
-            jobs: [],
-            trustAction: async () => {},
-            revokeAction: async () => {},
-          },
-        ]}
+        embedded
         orgSlug="sample-qa-workspace"
       />,
     );
 
-    expect(screen.getByText('Marketplace agent A')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /trust this agent/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /marketplace/i })).toHaveAttribute(
+      'href',
+      '/app/sample-qa-workspace/marketplace',
+    );
+    expect(screen.getByRole('link', { name: /activity/i })).toHaveAttribute(
+      'href',
+      '/app/sample-qa-workspace/payments/activity?tab=escrow',
+    );
+    expect(screen.queryByText(/external escrow agents/i)).not.toBeInTheDocument();
   });
 
-  it('warns when an external agent has a job approaching evaluator expiry', () => {
+  it('warns when a submitted escrow job approaches evaluator expiry', () => {
     render(
       <TreasuryAgentAccess
         accessAction={async () => {}}
@@ -300,7 +293,6 @@ describe('TreasuryAgentAccess', () => {
           },
         ]}
         capabilities={[capability]}
-        externalAgents={[]}
         orgSlug="sample-qa-workspace"
       />,
     );

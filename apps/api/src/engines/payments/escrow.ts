@@ -281,10 +281,24 @@ export async function createEscrowJob(
 
   return withTransaction(pool, async (client) => {
     const clientAddress = await clientWalletAddress(client, input.clientAgentId, input.mode, input.chain);
+    // ERC-8183: client == provider reverts ClientCannotBeProvider. Catch it
+    // before Circle burns a failed tx and returns an opaque FAILED state.
+    if (clientAddress.toLowerCase() === input.providerAddress.toLowerCase()) {
+      throw conflict(
+        'escrow_client_cannot_be_provider',
+        'Paying agent cannot hire itself — choose a different paying agent than the marketplace listing.',
+      );
+    }
     // No evaluator named means the client evaluates its own work. That is
     // escrow mode 2 and it is NOT neutral arbitration -- recorded on the row
     // so nothing downstream has to remember which kind this was.
     const evaluatorAddress = input.evaluatorAddress ?? clientAddress;
+    if (evaluatorAddress.toLowerCase() === input.providerAddress.toLowerCase()) {
+      throw conflict(
+        'escrow_provider_cannot_be_evaluator',
+        'Provider cannot also be the evaluator. Omit evaluator (client evaluates) or pick a third address.',
+      );
+    }
     const escrowMode = evaluatorAddress.toLowerCase() === clientAddress.toLowerCase() ? 2 : 3;
     const expiredAtSeconds = Math.floor(input.expiresAt.getTime() / 1000);
 
@@ -836,6 +850,49 @@ export async function listEscrowCounterparties(
     [input.orgId, input.mode],
   );
   return result.rows.map((row) => ({ chain: row.chain, providerAddress: row.provider_address }));
+}
+
+export type ListEscrowJobsInput = {
+  readonly orgId: string;
+  readonly mode: PaymentMode;
+  readonly limit?: number | undefined;
+};
+
+/** Org-wide escrow jobs for Activity / marketplace follow-up visibility. */
+export type EscrowJobListItem = EscrowJob & {
+  readonly clientAgentName: string | null;
+  readonly createdAt: Date;
+};
+
+type EscrowJobListRow = EscrowJobRow & {
+  readonly client_agent_name: string | null;
+  readonly created_at: Date;
+};
+
+/**
+ * Every escrow job this org opened (marketplace hire, Empower hire, etc.),
+ * newest first. Counterparties alone are not enough — operators need a flat
+ * job list after createJob succeeds.
+ */
+export async function listEscrowJobs(
+  pool: pg.Pool,
+  input: ListEscrowJobsInput,
+): Promise<readonly EscrowJobListItem[]> {
+  const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
+  const result = await pool.query<EscrowJobListRow>(
+    `SELECT j.*, a.name AS client_agent_name
+       FROM escrow_jobs j
+       LEFT JOIN agents a ON a.id = j.client_agent_id
+      WHERE j.org_id = $1 AND j.mode = $2
+      ORDER BY j.created_at DESC
+      LIMIT $3`,
+    [input.orgId, input.mode, limit],
+  );
+  return result.rows.map((row) => ({
+    ...escrowJobFromRow(row),
+    clientAgentName: row.client_agent_name,
+    createdAt: row.created_at,
+  }));
 }
 
 // ---------------------------------------------------------------------------

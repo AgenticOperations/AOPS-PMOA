@@ -131,6 +131,26 @@ export type CircleProviderJobRecord = {
   readonly updated_at: string;
 };
 
+export type EscrowJobActivityRecord = {
+  readonly id: string;
+  readonly orgId: string;
+  readonly clientAgentId: string;
+  readonly clientAgentName: string | null;
+  readonly providerAddress: string;
+  readonly evaluatorAddress: string;
+  readonly chain: PaymentChain;
+  readonly budgetUsdc: string;
+  readonly state: 'open' | 'funded' | 'submitted' | 'completed' | 'rejected' | 'expired';
+  readonly escrowMode: number;
+  readonly onchainJobId: string | null;
+  readonly createTxHash: string | null;
+  readonly fundTxHash: string | null;
+  readonly submitTxHash: string | null;
+  readonly terminalTxHash: string | null;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+};
+
 export type TreasuryOverviewRecord = {
   readonly mode: PaymentMode;
   readonly totals: {

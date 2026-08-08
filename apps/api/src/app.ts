@@ -11,6 +11,8 @@ import type { RegisterIdentityRoutesDeps } from './engines/identity/routes.js';
 import { registerIdentityRoutes } from './engines/identity/routes.js';
 import type { RegisterOperationRoutesDeps } from './engines/operations/routes.js';
 import { registerOperationRoutes } from './engines/operations/routes.js';
+import type { RegisterMarketplacePublicRoutesDeps } from './engines/marketplace/routes.js';
+import { registerMarketplacePublicRoutes } from './engines/marketplace/routes.js';
 import type { RegisterPaymentRoutesDeps } from './engines/payments/routes.js';
 import { registerPaymentRoutes } from './engines/payments/routes.js';
 import { registerTestnetX402VerifierRoutes } from './engines/payments/testnet-x402-verifier.js';
@@ -23,6 +25,7 @@ export type BuildAppOptions = {
   readonly changelog?: RegisterChangelogRoutesDeps;
   readonly evidence?: RegisterEvidenceRoutesDeps;
   readonly identity?: RegisterIdentityRoutesDeps;
+  readonly marketplace?: RegisterMarketplacePublicRoutesDeps;
   readonly operations?: RegisterOperationRoutesDeps;
   readonly payments?: RegisterPaymentRoutesDeps;
   readonly policy?: RegisterPolicyRoutesDeps;
@@ -135,6 +138,24 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.payments === undefined &&
         options.runtime === undefined &&
         options.operations === undefined,
+    });
+  }
+
+  // Public catalog: prefer explicit marketplace deps; otherwise reuse payments pool
+  // so production server.ts does not need a second wiring block.
+  const marketplaceDeps = options.marketplace
+    ?? (options.payments === undefined ? undefined : { pool: options.payments.pool });
+  if (marketplaceDeps !== undefined) {
+    registerMarketplacePublicRoutes(app, {
+      ...marketplaceDeps,
+      installErrorHandler:
+        options.identity === undefined &&
+        options.policy === undefined &&
+        options.approvals === undefined &&
+        options.payments === undefined &&
+        options.runtime === undefined &&
+        options.operations === undefined &&
+        options.changelog === undefined,
     });
   }
   return app;

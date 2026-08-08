@@ -12,13 +12,21 @@ import { TreasuryPageHeader, TreasurySectionNav } from './TreasuryChrome';
 import { CHAIN_LABELS, formatMoney, formatOptionalRail, formatRail, titleCase } from '@/lib/payments-format';
 import { formatUtcDateTime } from '@/lib/date-format';
 import type { AuditEventRecord } from '@/lib/audit-types';
-import type { CircleProviderJobRecord, PaymentChain, PaymentEventRecord, PaymentReservationRecord, PaymentRouteObservationRecord } from '@/lib/payments-types';
+import type { EscrowJobActivityRecord } from '@/lib/payments-types';
+import type {
+  CircleProviderJobRecord,
+  PaymentChain,
+  PaymentEventRecord,
+  PaymentReservationRecord,
+  PaymentRouteObservationRecord,
+} from '@/lib/payments-types';
 
-export type TreasuryActivityTab = 'payments' | 'routing' | 'reservations' | 'jobs' | 'audit';
+export type TreasuryActivityTab = 'payments' | 'routing' | 'reservations' | 'jobs' | 'escrow' | 'audit';
 
 type TreasuryActivityProps = {
   readonly activeTab: TreasuryActivityTab;
   readonly auditEvents: readonly AuditEventRecord[];
+  readonly escrowJobs?: readonly EscrowJobActivityRecord[];
   readonly orgSlug: string;
   readonly paymentEvents: readonly PaymentEventRecord[];
   readonly providerJobs: readonly CircleProviderJobRecord[];
@@ -41,6 +49,16 @@ type EvidenceRow = {
 type DateFilter = 'all' | '24h' | '7d' | '30d';
 const pageSize = 10;
 
+const EXPLORER_TX_BASE: Record<'arc' | 'base', string> = {
+  arc: 'https://testnet.arcscan.app/tx/',
+  base: 'https://sepolia.basescan.org/tx/',
+};
+
+function shortAddress(address: string): string {
+  if (address.length < 12) return address;
+  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
 function paymentStatus(event: PaymentEventRecord): { readonly label: string; readonly status: string } {
   const fulfillment = event.result.fulfillment;
   if (fulfillment !== null && typeof fulfillment === 'object') {
@@ -54,10 +72,14 @@ function paymentStatus(event: PaymentEventRecord): { readonly label: string; rea
 
 function outcomeTone(outcome: string): string {
   const normalized = outcome.toLowerCase();
-  if (['accepted', 'active', 'approved', 'complete', 'completed', 'delivered', 'settled', 'success'].includes(normalized)) return 'active';
-  if (['blocked', 'denied', 'error', 'failed', 'rejected', 'revoked'].includes(normalized)) return 'failed';
-  if (['pending', 'queued', 'reserved', 'submitted', 'warning'].includes(normalized)) return 'pending';
+  if (['accepted', 'active', 'approved', 'complete', 'completed', 'delivered', 'funded', 'settled', 'success'].includes(normalized)) return 'active';
+  if (['blocked', 'denied', 'error', 'expired', 'failed', 'rejected', 'revoked'].includes(normalized)) return 'failed';
+  if (['open', 'pending', 'queued', 'reserved', 'submitted', 'warning'].includes(normalized)) return 'pending';
   return 'inactive';
+}
+
+function escrowTxHash(job: EscrowJobActivityRecord): string | null {
+  return job.terminalTxHash ?? job.submitTxHash ?? job.fundTxHash ?? job.createTxHash;
 }
 
 function rowsForTab(props: TreasuryActivityProps): EvidenceRow[] {
@@ -68,6 +90,34 @@ function rowsForTab(props: TreasuryActivityProps): EvidenceRow[] {
   if (props.activeTab === 'routing') return props.routeObservations.map((observation) => ({ amount: formatMoney(observation.amount_usdc), chain: observation.supported_rail === null ? null : observation.supported_rail.replace(/^gateway_|^exact_/, '') as PaymentChain, id: observation.id, outcome: titleCase(observation.outcome), primary: observation.resource_category ?? observation.requested_asset ?? 'x402 request', secondary: observation.agent_id, target: formatOptionalRail(observation.supported_rail), time: observation.observed_at, details: [{ label: 'Reason', value: observation.reason_code }, { label: 'Requested network', value: observation.requested_network ?? 'Not recorded' }, { label: 'Requested rail', value: observation.requested_rail ?? 'Not recorded' }, { label: 'Resource URL', value: observation.resource_url ?? 'Not recorded' }] }));
   if (props.activeTab === 'reservations') return props.reservations.map((reservation) => ({ amount: formatMoney(reservation.amount_usdc), chain: reservation.rail.replace(/^gateway_|^exact_/, '') as PaymentChain, id: reservation.id, outcome: titleCase(reservation.status), primary: reservation.reason_code, secondary: reservation.agent_id, target: formatRail(reservation.rail), time: reservation.updated_at, details: [{ label: 'Quote hash', value: reservation.quote_hash }, { label: 'Source', value: reservation.source_id }, { label: 'Expires', value: formatUtcDateTime(reservation.expires_at) }, { label: 'Connection', value: reservation.connection_id ?? 'None' }] }));
   if (props.activeTab === 'jobs') return props.providerJobs.map((job) => ({ amount: formatMoney(job.amount_usdc), chain: job.chain, id: job.id, outcome: titleCase(job.status), primary: titleCase(job.job_type.replaceAll('.', '_')), secondary: job.chain === null ? 'Workspace' : CHAIN_LABELS[job.chain], target: job.provider_ref ?? 'Provider job', time: job.updated_at, details: [{ label: 'Provider reference', value: job.provider_ref ?? 'Not assigned' }, { label: 'Error', value: job.error_code ?? 'None' }, { label: 'Created', value: formatUtcDateTime(job.created_at) }, { label: 'Mode', value: titleCase(job.mode) }] }));
+  if (props.activeTab === 'escrow') {
+    return (props.escrowJobs ?? []).map((job) => {
+      const txHash = escrowTxHash(job);
+      const explorer = job.chain === 'arc' || job.chain === 'base'
+        ? (txHash === null ? null : `${EXPLORER_TX_BASE[job.chain]}${txHash}`)
+        : null;
+      return {
+        amount: formatMoney(job.budgetUsdc),
+        chain: job.chain,
+        id: job.id,
+        outcome: titleCase(job.state),
+        primary: job.clientAgentName ?? job.clientAgentId,
+        secondary: `On-chain #${job.onchainJobId ?? '—'} · payer ${job.clientAgentId}`,
+        target: `Provider ${shortAddress(job.providerAddress)}`,
+        time: job.createdAt,
+        details: [
+          { label: 'Provider', value: job.providerAddress },
+          { label: 'Evaluator', value: job.evaluatorAddress },
+          { label: 'Escrow mode', value: job.escrowMode === 2 ? 'Client evaluates (mode 2)' : 'Neutral evaluator (mode 3)' },
+          { label: 'On-chain job id', value: job.onchainJobId ?? 'Not recorded' },
+          { label: 'Expires', value: formatUtcDateTime(job.expiresAt) },
+          { label: 'Create tx', value: job.createTxHash ?? 'Not recorded' },
+          { label: 'Fund tx', value: job.fundTxHash ?? 'Not funded yet' },
+          { label: 'Explorer', value: explorer ?? 'Not available' },
+        ],
+      };
+    });
+  }
   return props.auditEvents.map((event) => ({ amount: event.eventCategory, chain: null, id: event.id, outcome: titleCase(event.outcome), primary: titleCase(event.eventType.replaceAll('.', '_')), secondary: `${event.actorType}:${event.actorId ?? 'system'}`, target: event.resourceType === null ? event.eventDomain : `${event.resourceType}:${event.resourceId ?? 'unknown'}`, time: event.occurredAt, details: [{ label: 'Event hash', value: event.eventHash }, { label: 'Previous hash', value: event.previousHash ?? 'Genesis' }, { label: 'Canonical body hash', value: event.canonicalBodyHash }, { label: 'Source', value: event.sourceSystem ?? 'Not recorded' }, { label: 'Severity', value: titleCase(event.severity) }] }));
 }
 
@@ -76,6 +126,7 @@ const tabs: readonly { readonly key: TreasuryActivityTab; readonly label: string
   { key: 'routing', label: 'Routing' },
   { key: 'reservations', label: 'Reservations' },
   { key: 'jobs', label: 'Provider jobs' },
+  { key: 'escrow', label: 'Escrow' },
   { key: 'audit', label: 'Audit' },
 ];
 
@@ -108,7 +159,7 @@ export function TreasuryActivity(props: TreasuryActivityProps) {
   return (
     <div className="treasury-workbench treasury-activity-workbench">
       <TreasurySectionNav active="activity" orgSlug={props.orgSlug} />
-      <TreasuryPageHeader description="Payments, routing, reservations, jobs, and audit." eyebrow="Treasury / activity" title="Activity" />
+      <TreasuryPageHeader description="Payments, routing, reservations, escrow jobs, and audit." eyebrow="Treasury / activity" title="Activity" />
 
       <nav aria-label="Evidence type" className="treasury-evidence-tabs">{tabs.map((tab) => <Link aria-current={props.activeTab === tab.key ? 'page' : undefined} className={props.activeTab === tab.key ? 'is-active' : undefined} href={`/app/${props.orgSlug}/payments/activity${tab.key === 'payments' ? '' : `?tab=${tab.key}`}`} key={tab.key}>{tab.label}</Link>)}</nav>
 
@@ -121,12 +172,73 @@ export function TreasuryActivity(props: TreasuryActivityProps) {
 
       <section aria-labelledby="treasury-evidence-title" className="treasury-table-section">
         <div className="treasury-section-heading"><div><h2 id="treasury-evidence-title">{tabs.find((tab) => tab.key === props.activeTab)?.label}</h2></div><span>{filteredRows.length}</span></div>
-        {rows.length === 0 ? <div className="treasury-empty-state"><strong>No {props.activeTab} yet</strong><p>Records appear when agents spend or route.</p></div> : <><TableShell className="treasury-table-shell"><Table aria-label={`${props.activeTab} evidence`} className="treasury-table"><TableHeader><TableRow><TableHead>Reference</TableHead><TableHead>Agent / operation</TableHead><TableHead>Rail / target</TableHead><TableHead>Amount</TableHead><TableHead>Outcome</TableHead><TableHead>Time</TableHead><TableHead><span className="sr-only">Open</span></TableHead></TableRow></TableHeader><TableBody>{pageRows.map((row) => <TableRow key={row.id}><TableCell><code>{row.id}</code></TableCell><TableCell><div className="treasury-index-primary"><strong>{row.primary}</strong><small>{row.secondary}</small></div></TableCell><TableCell>{row.target}</TableCell><TableCell>{row.amount}</TableCell><TableCell><StatusBadge label={row.outcome} status={outcomeTone(row.outcome)} /></TableCell><TableCell><time dateTime={row.time}>{formatUtcDateTime(row.time)}</time></TableCell><TableCell><button aria-label={`Open evidence ${row.id}`} className="table-row-action" onClick={() => setSelectedId(row.id)} type="button"><IconArrowRight aria-hidden="true" size={13} stroke={1.8} /></button></TableCell></TableRow>)}</TableBody></Table></TableShell><DataTablePager itemLabel="records" onPageChange={setPage} page={safePage} pageSize={pageSize} total={filteredRows.length} /></>}
+        {rows.length === 0 ? (
+          <div className="treasury-empty-state">
+            <strong>No {props.activeTab} yet</strong>
+            <p>
+              {props.activeTab === 'escrow'
+                ? 'Escrow jobs appear here after marketplace or Empower ERC-8183 hire.'
+                : 'Records appear when agents spend or route.'}
+            </p>
+          </div>
+        ) : (
+          <>
+            <TableShell className="treasury-table-shell">
+              <Table aria-label={`${props.activeTab} evidence`} className="treasury-table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Reference</TableHead>
+                    <TableHead>{props.activeTab === 'escrow' ? 'Paying agent' : 'Agent / operation'}</TableHead>
+                    <TableHead>{props.activeTab === 'escrow' ? 'Provider' : 'Rail / target'}</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Outcome</TableHead>
+                    <TableHead>Time</TableHead>
+                    <TableHead><span className="sr-only">Open</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pageRows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell><code>{row.id}</code></TableCell>
+                      <TableCell><div className="treasury-index-primary"><strong>{row.primary}</strong><small>{row.secondary}</small></div></TableCell>
+                      <TableCell>{row.target}</TableCell>
+                      <TableCell>{row.amount}</TableCell>
+                      <TableCell><StatusBadge label={row.outcome} status={outcomeTone(row.outcome)} /></TableCell>
+                      <TableCell><time dateTime={row.time}>{formatUtcDateTime(row.time)}</time></TableCell>
+                      <TableCell><button aria-label={`Open evidence ${row.id}`} className="table-row-action" onClick={() => setSelectedId(row.id)} type="button"><IconArrowRight aria-hidden="true" size={13} stroke={1.8} /></button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableShell>
+            <DataTablePager itemLabel="records" onPageChange={setPage} page={safePage} pageSize={pageSize} total={filteredRows.length} />
+          </>
+        )}
       </section>
 
       <Sheet labelledBy="treasury-evidence-drawer-title" onOpenChange={(open) => !open && setSelectedId(null)} open={selected !== undefined} panelClassName="treasury-drawer">
         <SheetHeader><div><SheetTitle id="treasury-evidence-drawer-title">Record</SheetTitle><SheetDescription>{selected?.primary ?? 'Evidence detail'}</SheetDescription></div><SheetCloseButton onClick={() => setSelectedId(null)} /></SheetHeader>
-        <SheetBody className="treasury-evidence-drawer">{selected === undefined ? null : <><div className="treasury-drawer-status"><StatusBadge label={selected.outcome} status={outcomeTone(selected.outcome)} /><code>{selected.id}</code></div><dl className="treasury-evidence-grid"><div><dt>Agent / operation</dt><dd>{selected.secondary}</dd></div><div><dt>Rail / target</dt><dd>{selected.target}</dd></div><div><dt>Amount</dt><dd>{selected.amount}</dd></div><div><dt>Recorded</dt><dd>{formatUtcDateTime(selected.time)}</dd></div>{selected.details.map((detail) => <div key={detail.label}><dt>{detail.label}</dt><dd>{detail.value}</dd></div>)}</dl></>}
+        <SheetBody className="treasury-evidence-drawer">{selected === undefined ? null : (
+          <>
+            <div className="treasury-drawer-status"><StatusBadge label={selected.outcome} status={outcomeTone(selected.outcome)} /><code>{selected.id}</code></div>
+            <dl className="treasury-evidence-grid">
+              <div><dt>Agent / operation</dt><dd>{selected.secondary}</dd></div>
+              <div><dt>Rail / target</dt><dd>{selected.target}</dd></div>
+              <div><dt>Amount</dt><dd>{selected.amount}</dd></div>
+              <div><dt>Recorded</dt><dd>{formatUtcDateTime(selected.time)}</dd></div>
+              {selected.details.map((detail) => (
+                <div key={detail.label}>
+                  <dt>{detail.label}</dt>
+                  <dd>
+                    {detail.label === 'Explorer' && detail.value.startsWith('http')
+                      ? <a href={detail.value} rel="noreferrer" target="_blank">{detail.value}</a>
+                      : detail.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        )}
         </SheetBody>
       </Sheet>
     </div>

@@ -393,6 +393,8 @@ export function AgentDetailShell({
         <AgentPublishPanel
           endpointUrl={typeof agent.metadata.public_endpoint_url === 'string' ? agent.metadata.public_endpoint_url : ''}
           identity={onchainIdentity}
+          marketplaceHref={`/app/${orgSlug}/marketplace`}
+          credentialsHref={`/app/${orgSlug}/agents/${agent.id}?tab=credentials`}
           registerIdentityAction={
             actions?.registerOnchainIdentity
             ?? (async () => {

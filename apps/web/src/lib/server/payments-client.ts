@@ -12,6 +12,7 @@ import type {
   CircleProviderJobRecord,
   CircleProviderHealth,
   CircleWalletSetRecord,
+  EscrowJobActivityRecord,
   OrgPaymentModeRecord,
   PaymentChain,
   PaymentEventRecord,
@@ -647,6 +648,13 @@ export async function listEscrowLivenessRisks(orgId: string): Promise<readonly E
   return body.risks;
 }
 
+export async function listEscrowJobs(orgId: string): Promise<readonly EscrowJobActivityRecord[]> {
+  const body = await apiFetch<{ readonly jobs: readonly EscrowJobActivityRecord[] }>(
+    `/v1/orgs/${orgId}/payments/escrow/jobs`,
+  );
+  return body.jobs;
+}
+
 // --- Funding hierarchy: org treasury -> agent wallet -> the agent ---------
 
 export type AgentWalletFundingRecord = {
@@ -776,4 +784,75 @@ export async function createEscrowJob(
     },
   );
   return body.job;
+}
+
+export type MarketplaceListingRecord = {
+  readonly id: string;
+  readonly kind: 'agent' | 'service';
+  readonly name: string;
+  readonly category: string;
+  readonly description: string;
+  readonly endpointUrl: string;
+  readonly chain: PaymentChain;
+  readonly priceHint: string | null;
+  readonly providerAddress: string | null;
+  readonly rails: readonly ('x402' | 'escrow')[];
+  readonly orgId: string | null;
+  readonly agentId: string | null;
+  readonly identityStatus: 'pending' | 'registered' | 'failed' | null;
+  readonly identityTokenId: string | null;
+  readonly destinationAuthorized?: boolean | undefined;
+};
+
+export async function listMarketplaceListings(
+  orgId: string,
+  chain?: PaymentChain,
+): Promise<readonly MarketplaceListingRecord[]> {
+  const query = chain === undefined ? '' : `?chain=${encodeURIComponent(chain)}`;
+  const body = await apiFetch<{ readonly listings: readonly MarketplaceListingRecord[] }>(
+    `/v1/orgs/${orgId}/marketplace/listings${query}`,
+  );
+  return body.listings;
+}
+
+export async function getMarketplaceListing(
+  orgId: string,
+  listingId: string,
+): Promise<{ readonly listing: MarketplaceListingRecord; readonly destination_authorized: boolean }> {
+  return apiFetch(`/v1/orgs/${orgId}/marketplace/listings/${encodeURIComponent(listingId)}`);
+}
+
+export async function authorizeMarketplaceDestination(
+  orgId: string,
+  input: { readonly chain: PaymentChain; readonly address: string; readonly label: string },
+): Promise<{ readonly allowlistId: string; readonly alreadyAuthorized: boolean }> {
+  return apiFetch(`/v1/orgs/${orgId}/marketplace/authorize-destination`, {
+    method: 'POST',
+    body: JSON.stringify({
+      chain: input.chain,
+      address: input.address,
+      label: input.label,
+      confirmed: true,
+    }),
+  });
+}
+
+export async function hireMarketplaceX402(
+  orgId: string,
+  input: {
+    readonly client_agent_id: string;
+    readonly listing_id: string;
+    readonly idempotency_key: string;
+    readonly method?: 'GET' | 'POST' | undefined;
+  },
+): Promise<unknown> {
+  return apiFetch(`/v1/orgs/${orgId}/marketplace/hire/x402`, {
+    method: 'POST',
+    body: JSON.stringify({
+      client_agent_id: input.client_agent_id,
+      listing_id: input.listing_id,
+      idempotency_key: input.idempotency_key,
+      method: input.method ?? 'GET',
+    }),
+  });
 }

@@ -35,7 +35,7 @@
   min-width: max-content;
   align-items: center;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -63,9 +63,9 @@
 .approval-eyebrow {
   margin: 0 0 6px;
   color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -73,9 +73,10 @@
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: 1.5rem;
-  font-weight: 500;
-  line-height: 1.2;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
   letter-spacing: -0.02em;
 }
 
@@ -121,7 +122,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 400;
 }
 
@@ -156,7 +157,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -193,7 +194,7 @@
   border-radius: 999px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -220,7 +221,7 @@
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -242,7 +243,7 @@
   padding: 13px 12px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 400;
   vertical-align: middle;
@@ -257,7 +258,7 @@
 .approval-index-primary strong {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -268,7 +269,7 @@
 .approval-table time {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .approval-table .table-row-action {
@@ -308,7 +309,7 @@
   max-width: 52ch;
   margin-top: 6px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .approval-expired-note {
@@ -318,7 +319,7 @@
   border-radius: 6px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -328,7 +329,7 @@
   align-items: center;
   min-height: 48px;
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -350,7 +351,7 @@
   place-items: center;
   border-radius: 6px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .approval-pager a:hover {
@@ -404,7 +405,7 @@
 .approval-drawer .sheet-description {
   margin: 7px 0 0;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .approval-drawer .sheet-close {
@@ -445,7 +446,7 @@
   overflow: hidden;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
 }
 
@@ -469,7 +470,7 @@
 .approval-detail-grid dt,
 .approval-proof-section dt {
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -477,7 +478,7 @@
 .approval-proof-section dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 400;
   overflow-wrap: anywhere;
 }
@@ -496,7 +497,7 @@
 .approval-proof-section code {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 11px;
   word-break: break-all;
 }
 
@@ -521,7 +522,7 @@
 .approval-drawer-timeline strong,
 .approval-drawer-timeline time,
 .approval-drawer-timeline p {
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 400;
 }
 
@@ -561,7 +562,7 @@
 
 .approval-drawer-actions label > span {
   color: var(--text-primary);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -575,7 +576,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 400;
 }
 
@@ -586,7 +587,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -621,7 +622,7 @@
 
 @media (max-width: 680px) {
   .approval-page-header h1 {
-    font-size: 28px;
+    font-size: var(--type-title);
   }
 
   .approval-filter-bar {

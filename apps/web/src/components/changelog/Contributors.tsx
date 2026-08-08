@@ -8,7 +8,7 @@ export function Contributors({ contributors }: ContributorsProps) {
   if (contributors.length === 0) return null;
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-px bg-[var(--aops-line-strong)] border border-[var(--aops-line-strong)]">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-px bg-[var(--aops-line-strong)] border border-[var(--aops-line-strong)]">
       {contributors.map((contributor) => (
         <div
           className="flex items-center gap-3 p-4 bg-[var(--aops-panel)] hover:bg-[rgba(255,255,255,0.03)] transition-colors"

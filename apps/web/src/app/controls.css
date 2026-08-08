@@ -52,7 +52,7 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
   transition: color 140ms ease;
 }
@@ -95,9 +95,9 @@
 .controls-page-header .controls-eyebrow {
   margin: 0 0 6px;
   color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -105,9 +105,10 @@
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: 1.5rem;
-  font-weight: 500;
-  line-height: 1.2;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
   letter-spacing: -0.02em;
 }
 
@@ -127,7 +128,7 @@
   background: var(--console-action);
   color: var(--bg-panel);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
   transition: transform 140ms ease, filter 140ms ease;
 }
@@ -190,7 +191,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 400;
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
@@ -235,7 +236,7 @@
   border-radius: 999px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -273,7 +274,7 @@
   border-bottom: 1px solid var(--border-strong);
   background: var(--bg-panel);
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -326,7 +327,7 @@
 .controls-policy-title {
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -336,7 +337,7 @@
 .controls-policy-name-button > span:last-child {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -349,7 +350,7 @@
   width: max-content;
   max-width: 100%;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 400;
 }
 
@@ -418,7 +419,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -448,7 +449,7 @@
   max-width: 52ch;
   margin: 6px 0 12px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .data-table-pager {
@@ -457,7 +458,7 @@
   align-items: center;
   min-height: 48px;
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -481,7 +482,7 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .data-table-page-controls button:hover:not(:disabled) {
@@ -532,7 +533,7 @@
   display: block;
   margin-bottom: 6px;
   color: var(--accent-ink);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -552,7 +553,7 @@
   max-width: 62ch;
   margin: 7px 0 0;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -620,7 +621,7 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
   text-align: left;
 }
@@ -632,7 +633,7 @@
   place-items: center;
   border-radius: 999px;
   background: var(--bg-soft);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .policy-builder-progress button.is-active,
@@ -703,7 +704,7 @@
 .policy-builder-review p {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -726,7 +727,7 @@
 .controls-form-surface label > span,
 .controls-bind-form label > span {
   color: var(--text-primary);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -745,7 +746,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 400;
 }
 
@@ -779,7 +780,7 @@
 }
 
 .policy-builder-note strong {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -787,7 +788,7 @@
 .policy-builder-note em,
 .policy-builder-empty-condition {
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-style: normal;
   line-height: 1.45;
 }
@@ -812,7 +813,7 @@
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -839,7 +840,7 @@
   display: block;
   margin-bottom: 5px;
   color: var(--accent-ink);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -868,7 +869,7 @@
 .controls-definition-grid dt,
 .controls-condition-list dt {
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 500;
 }
 
@@ -877,7 +878,7 @@
 .controls-condition-list dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 400;
   overflow-wrap: anywhere;
 }
@@ -911,7 +912,7 @@
   background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
@@ -944,14 +945,14 @@
   border-radius: 6px;
   background: var(--bg-soft);
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .controls-detail-note {
   margin: 12px 0;
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.5;
 }
 
@@ -988,14 +989,14 @@
 .controls-bound-row strong,
 .controls-danger-zone strong {
   color: var(--text-primary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .controls-bound-row span,
 .controls-danger-zone span {
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 400;
 }
 
@@ -1029,7 +1030,7 @@
 .controls-confirm-row > span {
   width: 100%;
   color: var(--state-danger);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 @media (max-width: 900px) {
@@ -1052,7 +1053,7 @@
   .controls-primary-action { align-self: flex-start; }
 
   .controls-page-header h1 {
-    font-size: 28px;
+    font-size: var(--type-title);
   }
 
   .controls-toolbar {

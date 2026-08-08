@@ -10,25 +10,28 @@ const jobExpiringIn2h = {
 
 describe('EscrowLivenessBanner', () => {
   it('warns when submitted jobs are approaching expiry', () => {
-    render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} />);
+    render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} orgSlug="demo" />);
     expect(screen.getByRole('alert')).toBeTruthy();
   });
 
   it('explains who actually loses if the evaluator stays silent', () => {
-    render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} />);
+    render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} orgSlug="demo" />);
     // The provider delivered and gets refunded against. Naming that plainly
     // is the entire point of the banner.
     expect(screen.getByText(/provider/i)).toBeTruthy();
     expect(screen.getByText(/refund/i)).toBeTruthy();
   });
 
-  it('links each at-risk row to its job', () => {
-    render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} />);
-    expect(screen.getByRole('link', { name: /escrow_5/i })).toHaveAttribute('href', '#escrow_5');
+  it('links each at-risk row to Activity escrow', () => {
+    render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} orgSlug="demo" />);
+    expect(screen.getByRole('link', { name: /escrow_5/i })).toHaveAttribute(
+      'href',
+      '/app/demo/payments/activity?tab=escrow',
+    );
   });
 
   it('renders nothing when no job is at risk', () => {
-    const { container } = render(<EscrowLivenessBanner atRisk={[]} />);
+    const { container } = render(<EscrowLivenessBanner atRisk={[]} orgSlug="demo" />);
     expect(container.firstChild).toBeNull();
   });
 });

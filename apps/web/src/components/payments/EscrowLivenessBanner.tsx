@@ -6,6 +6,7 @@ export type EscrowLivenessRiskSummary = {
 
 type Props = {
   readonly atRisk: readonly EscrowLivenessRiskSummary[];
+  readonly orgSlug: string;
 };
 
 function timeRemaining(expiresAt: string): string {
@@ -24,7 +25,7 @@ function timeRemaining(expiresAt: string): string {
  * model the operator is the evaluator, so this is a required feature, not
  * a nicety -- their own risk to manage.
  */
-export function EscrowLivenessBanner({ atRisk }: Props) {
+export function EscrowLivenessBanner({ atRisk, orgSlug }: Props) {
   if (atRisk.length === 0) return null;
 
   return (
@@ -33,12 +34,13 @@ export function EscrowLivenessBanner({ atRisk }: Props) {
         {atRisk.length} submitted {atRisk.length === 1 ? 'job is' : 'jobs are'} approaching expiry.
         If the evaluator window closes without a decision, the provider that delivered the work is
         the one who loses — <code>claimRefund</code> pays the budget back to the client, not the
-        provider.
+        provider. Review on{' '}
+        <a href={`/app/${orgSlug}/payments/activity?tab=escrow`}>Activity → Escrow</a>.
       </p>
       <ul>
         {atRisk.map((risk) => (
           <li key={risk.escrowJobId}>
-            <a href={`#${risk.escrowJobId}`}>{risk.escrowJobId}</a>
+            <a href={`/app/${orgSlug}/payments/activity?tab=escrow`}>{risk.escrowJobId}</a>
             {' — '}
             {timeRemaining(risk.expiresAt)}
           </li>

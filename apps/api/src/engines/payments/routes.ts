@@ -61,8 +61,15 @@ import {
   revokeDelegation,
 } from './permit2.js';
 import { getTrustEvidence, revokeTrust, trustExternalAgent } from './trust.js';
-import { createEscrowJob, listEscrowCounterparties, listEscrowLivenessRisks } from './escrow.js';
+import { createEscrowJob, listEscrowCounterparties, listEscrowJobs, listEscrowLivenessRisks } from './escrow.js';
 import { listPublishedAgentListings } from './listings.js';
+import {
+  authorizeMarketplaceDestination,
+  getMarketplaceListing,
+  isDestinationAuthorized,
+  listMarketplaceListings,
+  resolveClientAgentAuth,
+} from '../marketplace/store.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
 import type { PaymentChain } from './types.js';
@@ -210,6 +217,35 @@ const escrowLivenessQuerySchema = z.object({
 
 const publishedListingsQuerySchema = z.object({
   chain: chainSchema.default('arc'),
+});
+
+const marketplaceListingsQuerySchema = z.object({
+  chain: chainSchema.optional(),
+});
+
+const authorizeMarketplaceDestinationSchema = z.object({
+  chain: chainSchema,
+  address: addressSchema,
+  label: z.string().trim().min(1).max(120).default('Marketplace seller'),
+  confirmed: z.literal(true),
+});
+
+const marketplaceHireX402Schema = z.object({
+  client_agent_id: z.string().trim().min(1),
+  listing_id: z.string().trim().min(1).optional(),
+  url: z.string().trim().url().max(4096).optional(),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).default('GET'),
+  idempotency_key: z.string().trim().min(1).max(200),
+  authorize_pay_to: addressSchema.optional(),
+  authorize_chain: chainSchema.optional(),
+}).superRefine((value, ctx) => {
+  if (value.listing_id === undefined && value.url === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'listing_id or url is required',
+      path: ['listing_id'],
+    });
+  }
 });
 
 // Hire-from-listing: ERC-8183 createJob. Prefer provider_agent_id (org
@@ -1134,6 +1170,20 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
     return { risks };
   });
 
+  app.get('/v1/orgs/:orgId/payments/escrow/jobs', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const jobs = await listEscrowJobs(deps.pool, { orgId: params.orgId, mode });
+    return {
+      jobs: jobs.map((job) => ({
+        ...job,
+        expiresAt: job.expiresAt.toISOString(),
+        createdAt: job.createdAt.toISOString(),
+      })),
+    };
+  });
+
   // --- Publish listings + ERC-8183 hire ------------------------------------
   //
   // Org directory of agents with a public_endpoint_url. Hire creates an
@@ -1166,7 +1216,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
         throw new IdentityError(
           'provider_wallet_missing',
           400,
-          'Published provider agent has no active wallet on this chain. Provision payment access first.',
+          'Published provider agent has no active wallet on this chain. Provision payment access in Empower first.',
         );
       }
       providerAddress = wallet.address;
@@ -1175,22 +1225,240 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       throw new IdentityError('provider_required', 400, 'provider_agent_id or provider_address is required.');
     }
 
+    const clientWallet = await findAgentWallet(deps.pool, body.client_agent_id, mode, body.chain);
+    if (clientWallet === null) {
+      throw new IdentityError(
+        'escrow_client_wallet_not_found',
+        400,
+        'Paying agent has no active wallet on this chain. Provision payment access in Empower first.',
+      );
+    }
+    if (clientWallet.address.toLowerCase() === providerAddress.toLowerCase()) {
+      throw new IdentityError(
+        'escrow_client_cannot_be_provider',
+        409,
+        'Paying agent cannot hire itself — choose a different paying agent than the marketplace listing.',
+      );
+    }
+    // Soft gas check: only reject when we can prove the payer wallet is empty.
+    try {
+      const balanceMicros = await nativeBalanceMicros(clientWallet.address, body.chain, mode);
+      if (balanceMicros <= 0n) {
+        throw new IdentityError(
+          'escrow_client_wallet_unfunded',
+          409,
+          body.chain === 'arc'
+            ? `Paying agent wallet ${clientWallet.address} has 0 Arc USDC. Fund that exact wallet on Fund (not a different agent), then retry.`
+            : `Paying agent wallet ${clientWallet.address} has 0 USDC on ${body.chain}. Fund that wallet on Fund, then retry.`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof IdentityError) throw error;
+      // RPC unread: continue; Circle remains authoritative.
+    }
+
     const expiresAt = body.expires_at
       ?? new Date(Date.now() + body.expires_in_hours * 60 * 60 * 1000);
 
-    const job = await createEscrowJob(deps.pool, providerForOrg(params.orgId), {
-      orgId: params.orgId,
-      clientAgentId: body.client_agent_id,
-      providerAddress,
-      ...(body.evaluator_address === undefined ? {} : { evaluatorAddress: body.evaluator_address }),
-      mode,
-      chain: body.chain,
-      budgetUsdc: body.budget_usdc,
-      expiresAt,
-      createdBy: operator.actorId,
-      ...(body.description === undefined ? {} : { description: body.description }),
-    });
+    let job;
+    try {
+      job = await createEscrowJob(deps.pool, providerForOrg(params.orgId), {
+        orgId: params.orgId,
+        clientAgentId: body.client_agent_id,
+        providerAddress,
+        ...(body.evaluator_address === undefined ? {} : { evaluatorAddress: body.evaluator_address }),
+        mode,
+        chain: body.chain,
+        budgetUsdc: body.budget_usdc,
+        expiresAt,
+        createdBy: operator.actorId,
+        ...(body.description === undefined ? {} : { description: body.description }),
+      });
+    } catch (error) {
+      if (error instanceof IdentityError) throw error;
+      // Circle marks createJob FAILED for gas, self-hire, or other reverts.
+      const code = error instanceof Error ? error.message : '';
+      if (code === 'circle_permit2_transaction_failed' || code.startsWith('circle_permit2_transaction_')) {
+        throw new IdentityError(
+          'circle_permit2_transaction_failed',
+          409,
+          body.chain === 'arc'
+            ? 'Escrow createJob failed on-chain from the paying agent wallet. Common causes: that payer has 0 Arc USDC, or you are hiring the same agent you selected as payer (not allowed). Fund the paying agent on Fund, or pick a different payer, then retry.'
+            : 'Escrow createJob failed on-chain from the paying agent wallet. Fund the payer (gas + USDC) on Fund, or pick a different payer than the listing, then retry.',
+        );
+      }
+      throw error;
+    }
     return reply.code(201).send({ job });
+  });
+
+  // --- Cross-org marketplace (seed services + published agents) ------------
+  // Browse is org-authenticated; listing rows themselves are cross-org + seed.
+
+  app.get('/v1/orgs/:orgId/marketplace/listings', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const query = marketplaceListingsQuerySchema.parse(request.query ?? {});
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const listings = await listMarketplaceListings(deps.pool, {
+      mode,
+      buyerOrgId: params.orgId,
+      ...(query.chain === undefined ? {} : { chain: query.chain }),
+    });
+    return { listings };
+  });
+
+  app.get('/v1/orgs/:orgId/marketplace/listings/:listingId', async (request) => {
+    const params = request.params as { readonly orgId: string; readonly listingId: string };
+    await requireOrgOperator(request, deps, params.orgId, 'viewer');
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+    const listing = await getMarketplaceListing(deps.pool, params.listingId, {
+      mode,
+      buyerOrgId: params.orgId,
+    });
+    const authorized = listing.orgId === params.orgId && listing.agentId !== null
+      ? true
+      : listing.providerAddress === null
+        ? false
+        : await isDestinationAuthorized(deps.pool, {
+            orgId: params.orgId,
+            chain: listing.chain,
+            address: listing.providerAddress,
+          });
+    return { listing, destination_authorized: authorized };
+  });
+
+  app.post('/v1/orgs/:orgId/marketplace/authorize-destination', async (request, reply) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
+    const body = parseBody(authorizeMarketplaceDestinationSchema, request);
+    const result = await authorizeMarketplaceDestination(deps.pool, {
+      orgId: params.orgId,
+      chain: body.chain,
+      address: body.address,
+      label: body.label,
+      approvedBy: operator.actorId,
+    });
+    return reply.code(result.alreadyAuthorized ? 200 : 201).send(result);
+  });
+
+  app.post('/v1/orgs/:orgId/marketplace/hire/x402', async (request) => {
+    const params = request.params as { readonly orgId: string };
+    const operator = await requireOrgOperator(request, deps, params.orgId, 'operator');
+    const body = parseBody(marketplaceHireX402Schema, request);
+    const mode = (await getOrgPaymentMode(deps.pool, params.orgId)).mode;
+
+    let url = body.url;
+    let authorizeAddress = body.authorize_pay_to;
+    let authorizeChain = body.authorize_chain;
+    let listing: Awaited<ReturnType<typeof getMarketplaceListing>> | null = null;
+    if (body.listing_id !== undefined) {
+      listing = await getMarketplaceListing(deps.pool, body.listing_id, {
+        mode,
+        buyerOrgId: params.orgId,
+      });
+      url = listing.endpointUrl;
+      if (listing.providerAddress !== null) {
+        authorizeAddress = authorizeAddress ?? listing.providerAddress;
+        authorizeChain = authorizeChain ?? listing.chain;
+      }
+    }
+    if (url === undefined) {
+      throw new IdentityError('url_required', 400, 'listing_id or url is required.');
+    }
+
+    // Lane 2 (change-manifest): same-org agent → Permit2 intra-fleet drawdown.
+    // Lane 1: external / other-org → x402 exact with explicit payTo allowlist.
+    if (
+      listing !== null
+      && listing.agentId !== null
+      && listing.orgId === params.orgId
+    ) {
+      if (listing.agentId === body.client_agent_id) {
+        throw new IdentityError(
+          'marketplace_hire_self',
+          409,
+          'Paying agent cannot hire itself — choose a different paying agent.',
+        );
+      }
+      await resolveClientAgentAuth(deps.pool, params.orgId, body.client_agent_id);
+      try {
+        const payment = await payIntraFleet(deps.pool, providerForOrg(params.orgId), {
+          orgId: params.orgId,
+          payerAgentId: body.client_agent_id,
+          payeeAgentId: listing.agentId,
+          mode,
+          chain: listing.chain,
+          url,
+          approvedBy: operator.actorId,
+        });
+        return {
+          lane: 'permit2_intra_fleet',
+          listing_id: listing.id,
+          payment,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'marketplace_intra_fleet_failed';
+        if (message.startsWith('intra_fleet_')) {
+          throw new IdentityError(
+            message,
+            409,
+            message === 'intra_fleet_payment_not_required'
+              ? `Seller at ${url} did not return HTTP 402. Start the fleet agent endpoint (demo/run or local ports 4001–4004), then retry.`
+              : `Intra-fleet hire failed (${message}). Ensure the paying agent is funded on Fund and the seller endpoint is reachable.`,
+          );
+        }
+        throw error;
+      }
+    }
+
+    if (authorizeAddress !== undefined && authorizeChain !== undefined) {
+      const authorized = await isDestinationAuthorized(deps.pool, {
+        orgId: params.orgId,
+        chain: authorizeChain,
+        address: authorizeAddress,
+      });
+      if (!authorized) {
+        throw new IdentityError(
+          'destination_not_authorized',
+          403,
+          'Authorize this marketplace payTo destination before x402 hire.',
+        );
+      }
+    }
+
+    const auth = await resolveClientAgentAuth(deps.pool, params.orgId, body.client_agent_id);
+    try {
+      const payment = await payRuntimeX402(
+        deps.pool,
+        auth,
+        {
+          idempotency_key: body.idempotency_key,
+          request: {
+            url,
+            method: body.method,
+            headers: [['accept', 'application/json']],
+          },
+        },
+        providerForOrg(params.orgId),
+        {
+          ...(deps.orchestrationHooks === undefined ? {} : { orchestrationHooks: deps.orchestrationHooks }),
+          ...(deps.paidHttpExecution === undefined ? {} : { paidHttpExecution: deps.paidHttpExecution }),
+          ...(deps.paidHttpExecutor === undefined ? {} : { paidHttpExecutor: deps.paidHttpExecutor }),
+          ...(deps.paidHttpUrlPolicy === undefined ? {} : { paidHttpUrlPolicy: deps.paidHttpUrlPolicy }),
+          resultCrypto: runtimeX402ResultCrypto(deps),
+        },
+      );
+      return {
+        lane: 'x402_exact',
+        listing_id: listing?.id ?? null,
+        payment,
+      };
+    } catch (error) {
+      const publicError = paidHttpPublicError(error);
+      if (publicError !== null) throw publicError;
+      throw error;
+    }
   });
 
   // --- Trust graduation ----------------------------------------------------

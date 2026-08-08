@@ -29,6 +29,7 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
     () => [
       { group: 'Workspace', href: `${base}/overview`, label: 'Home' },
       { group: 'Identity', href: `${base}/agents`, label: 'Agents' },
+      { group: 'Identity', href: `${base}/marketplace`, label: 'Purchases' },
       { group: 'Identity', href: `${base}/controls`, label: 'Controls' },
       { group: 'Runtime', href: `${base}/operations`, label: 'Operations' },
       { group: 'Runtime', href: `${base}/approvals`, label: 'Approvals' },
@@ -36,6 +37,7 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
       { group: 'Treasury', href: `${base}/payments/empower`, label: 'Empower' },
       { group: 'Treasury', href: `${base}/payments/activity`, label: 'Activity' },
       { group: 'Org', href: `${base}/settings`, label: 'Settings' },
+      { group: 'Marketplace', href: '/marketplace', label: 'Hire from marketplace' },
     ],
     [base],
   );
@@ -151,7 +153,7 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
           <CommandInput autoFocus placeholder="Jump to a console page..." />
           <CommandList>
             <CommandEmpty>No page found.</CommandEmpty>
-            {['Workspace', 'Identity', 'Runtime', 'Treasury', 'Org'].map((group) => (
+            {['Workspace', 'Identity', 'Runtime', 'Treasury', 'Org', 'Marketplace'].map((group) => (
               <CommandGroup heading={group} key={group}>
                 {pages
                   .filter((page) => page.group === group)

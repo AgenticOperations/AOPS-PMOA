@@ -8,27 +8,16 @@ import { TreasuryWorkbench } from '@/components/payments/TreasuryChrome';
 import { DelegateToAgent } from '@/components/wallet/DelegateToAgent';
 import { DelegationList } from '@/components/wallet/DelegationList';
 import { WalletProvider } from '@/components/wallet/WalletProvider';
-import {
-  hirePublishedAgentAction,
-  revokeTrustAction,
-  setAgentPaymentAccessAction,
-  trustExternalAgentAction,
-} from '@/app/actions/payments';
+import { setAgentPaymentAccessAction } from '@/app/actions/payments';
 import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
 import {
-  getTrustEvidence,
   listAgentPaymentAccounts,
   listAgentWalletFunding,
   listDelegations,
-  listEscrowCounterparties,
   listEscrowLivenessRisks,
   listOrgCeilings,
   listPaymentCapabilities,
-  listPublishedAgentListings,
 } from '@/lib/server/payments-client';
-import { HireFromListingPanel } from '@/components/payments/HireFromListingPanel';
-import type { PaymentChain } from '@/lib/payments-types';
-import type { SupportedChainKey } from '@/lib/wallet-chains';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,10 +29,6 @@ type EmpowerPageProps = {
     readonly from?: string;
   }>;
 };
-
-function isSupportedEscrowChain(chain: PaymentChain): chain is SupportedChainKey {
-  return chain === 'arc' || chain === 'base';
-}
 
 export default async function PaymentsEmpowerPage({ params, searchParams }: EmpowerPageProps) {
   const { orgSlug } = await params;
@@ -64,47 +49,19 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
     agents,
     agentAccounts,
     capabilities,
-    counterparties,
     atRiskEscrowJobs,
     delegations,
     ceilings,
     agentWallets,
-    publishedListings,
   ] = await Promise.all([
     listAgents(org.id),
     listAgentPaymentAccounts(org.id),
     listPaymentCapabilities(org.id),
-    listEscrowCounterparties(org.id).catch(() => []),
     listEscrowLivenessRisks(org.id).catch(() => []),
     listDelegations(org.id).catch(() => []),
     listOrgCeilings(org.id).catch(() => []),
     listAgentWalletFunding(org.id).catch(() => []),
-    listPublishedAgentListings(org.id, 'arc').catch(() => []),
   ]);
-
-  const externalAgents = await Promise.all(
-    counterparties
-      .filter((counterparty) => isSupportedEscrowChain(counterparty.chain))
-      .map(async (counterparty) => {
-        const chain = counterparty.chain as SupportedChainKey;
-        const evidence = await getTrustEvidence(org.id, counterparty.chain, counterparty.providerAddress);
-        return {
-          chain,
-          address: counterparty.providerAddress,
-          label: counterparty.providerAddress,
-          trusted: evidence.trusted,
-          evidence: {
-            completedCount: evidence.completedCount,
-            rejectedCount: evidence.rejectedCount,
-            expiredCount: evidence.expiredCount,
-            settledUsdc: evidence.settledUsdc,
-          },
-          jobs: evidence.jobs,
-          trustAction: trustExternalAgentAction.bind(null, org.id, org.slug, counterparty.chain, counterparty.providerAddress),
-          revokeAction: revokeTrustAction.bind(null, org.id, org.slug, counterparty.chain, counterparty.providerAddress),
-        };
-      }),
-  );
 
   const agentOptions = agents.map((agent) => ({ id: agent.id, name: agent.name }));
 
@@ -126,36 +83,19 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
       >
         <EmpowerWorkbench
           initialTab={initialTab}
-          access={
-            <>
-              <HireFromListingPanel
-                clients={agents
-                  .filter((agent) => agent.status !== 'deactivated')
-                  .map((agent) => ({ id: agent.id, name: agent.name }))}
-                hireAction={hirePublishedAgentAction.bind(null, org.id, org.slug)}
-                listings={publishedListings.map((listing) => ({
-                  agentId: listing.agentId,
-                  name: listing.name,
-                  publicEndpointUrl: listing.publicEndpointUrl,
-                  providerAddress: listing.providerAddress,
-                  identityStatus: listing.identityStatus,
-                  chain: listing.chain,
-                }))}
-              />
-              <TreasuryAgentAccess
-                accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
-                accounts={agentAccounts.accounts}
-                agents={agents}
-                atRiskEscrowJobs={atRiskEscrowJobs}
-                capabilities={capabilities}
-                embedded
-                externalAgents={externalAgents}
-                orgSlug={org.slug}
-              />
-            </>
-          }
+          access={(
+            <TreasuryAgentAccess
+              accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
+              accounts={agentAccounts.accounts}
+              agents={agents}
+              atRiskEscrowJobs={atRiskEscrowJobs}
+              capabilities={capabilities}
+              embedded
+              orgSlug={org.slug}
+            />
+          )}
           caps={<OrgCeilingForm ceilings={ceilings} orgSlug={org.slug} />}
-          delegations={
+          delegations={(
             <DelegationsPanel
               activeList={<DelegationList delegations={delegations} orgSlug={org.slug} />}
               initialSource={initialSource}
@@ -185,7 +125,7 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
                 </WalletProvider>
               )}
             />
-          }
+          )}
         />
       </TreasuryWorkbench>
   );

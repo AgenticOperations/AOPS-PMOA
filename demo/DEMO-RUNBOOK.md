@@ -2,6 +2,8 @@
 
 Live 5-agent fleet on Arc + Base. Real USDC. Real txs.
 
+AgentOps positioning (control plane + MCP on Arc, not another SDK): see [`docs/arc-agentops-addon.md`](../docs/arc-agentops-addon.md). Mode A = hosted MCP for one agent; this runbook is the multi-agent fleet. Mode B nanopayments overlay: [`templates/arc-nanopayments-agentops`](../templates/arc-nanopayments-agentops). Cross-org hire UI: public **Marketplace** at `/marketplace` (browse + detail). Org console **Hire desk** at `/app/{org}/marketplace` completes Permit2 / x402 / escrow after sign-in.
+
 ## Before the show (once)
 
 ```bash
@@ -24,7 +26,8 @@ npm run dev:circle-worker   # separate terminal, same DB
 
 Open tabs:
 
-- Console → demo org
+- Public Marketplace → http://localhost:3005/marketplace
+- Console → demo org → **Hire desk**
 - https://testnet.arcscan.app
 - https://sepolia.basescan.org
 
@@ -36,7 +39,25 @@ export DEMO_ORG_ID=<funded-org-id>
 
 First-time funding (only if no funded org yet): run without `DEMO_ORG_ID`, fund the printed treasury addresses (Arc USDC ≥ ~8, Base USDC ≥ ~4), wait for Gateway credit, then set `DEMO_ORG_ID` from the run output. Base agents also need a little native ETH for gas (manual).
 
+Also in `apps/api/.env` for Marketplace Lane 1 weather hire:
+
+- `ENABLE_TESTNET_X402_FIXTURES=true`
+
 Dry-run once. Save the printed tx hashes. Record a backup video.
+
+---
+
+## Console path (Marketplace) — same rails as the fleet
+
+After a funded org exists and fleet agents are created (Act 1 or prior `demo/reset.mjs`):
+
+1. **Marketplace** lists DataFetcher / Analyst / Writer / SeniorReviewer seeds + any **published** agents.
+2. Same-org fleet hire uses **Permit2** (Lane 2) — no separate authorize step.
+3. Weather fixture / other-org hire uses **x402** (Lane 1) — authorize payTo once, then pay.
+4. Escrow hire (published agent with wallet) → Activity → Escrow for fund/submit/complete.
+5. Publish tab → endpoint URL + ERC-8004 register → agent appears under Marketplace **Agents**.
+
+Seller HTTP must be up for Permit2/x402 hire (`demo/run.mjs` starts them; seed URLs default to ports 4001–4004).
 
 ---
 
@@ -100,6 +121,7 @@ Say: no OTP, no email — works at 3am.
 - Arc ecommerce storefront
 - Gateway pays any chain at payment time (balances are per-chain)
 - ValidationRegistry (not built)
+- That AgentOps replaces Circle Agent Stack / Arc tutorials (we add org governance on top)
 
 ## If live fails
 

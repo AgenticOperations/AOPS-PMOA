@@ -217,6 +217,17 @@ describe('escrow lifecycle engine', () => {
     ).rejects.toThrow(/escrow_uneconomic_for_amount/);
   });
 
+  it('refuses createJob when paying agent is also the provider', async () => {
+    const fixture = await seedEscrowOrg('selfhire');
+    const executePermit2Transaction = recordingExecutor();
+    await expect(
+      createEscrowJob(store.pool, fakeProvider({ executePermit2Transaction }), createInput(fixture, {
+        providerAddress: fixture.clientAddress,
+      })),
+    ).rejects.toMatchObject({ code: 'escrow_client_cannot_be_provider' });
+    expect(executePermit2Transaction).not.toHaveBeenCalled();
+  });
+
   it('sends nothing on-chain when the budget is refused', async () => {
     const fixture = await seedEscrowOrg('subcentdry');
     const executePermit2Transaction = recordingExecutor();

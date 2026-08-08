@@ -8,6 +8,7 @@ const navigation = [
   { href: '#product', label: 'Product' },
   { href: '#security', label: 'Security' },
   { href: '#developers', label: 'Developers' },
+  { href: '/marketplace', label: 'Marketplace' },
   { href: '/changelog', label: 'Changelog' },
 ] as const;
 

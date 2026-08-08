@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Montserrat } from 'next/font/google';
+import { Montserrat, Plus_Jakarta_Sans } from 'next/font/google';
 import { NavigationProgress } from '@/components/NavigationProgress';
 import './globals.css';
 import './agents.css';
@@ -9,6 +9,13 @@ import './operations.css';
 import './approvals.css';
 import './payments.css';
 import './settings.css';
+
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-jakarta',
+  display: 'swap',
+});
 
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -44,7 +51,7 @@ const themeInitScript = `
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={montserrat.variable}>
+    <html lang="en" suppressHydrationWarning className={`${jakarta.variable} ${montserrat.variable} ${jakarta.className}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

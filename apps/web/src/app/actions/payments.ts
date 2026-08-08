@@ -2,11 +2,13 @@
 
 import { revalidatePath } from 'next/cache';
 import {
+  authorizeMarketplaceDestination,
   bridgeExactWalletTopUp,
   cancelLiquidityJob,
   createCircleTreasury,
   createEscrowJob,
   createTreasury,
+  hireMarketplaceX402,
   initiateGatewayDeposit,
   reconcileCircleProviderJobs,
   requestTestnetFunds,
@@ -18,6 +20,7 @@ import {
   verifyPaymentRails,
   verifyPaymentRail,
 } from '@/lib/server/payments-client';
+import { randomUUID } from 'node:crypto';
 import type { PaymentChain, PaymentMode, PaymentRail } from '@/lib/payments-types';
 
 function paymentsPath(orgSlug: string): string {
@@ -249,14 +252,60 @@ export async function setAgentPaymentAccessAction(orgId: string, orgSlug: string
   revalidatePayments(orgSlug);
 }
 
-export async function hirePublishedAgentAction(orgId: string, orgSlug: string, formData: FormData): Promise<void> {
-  await createEscrowJob(orgId, {
+export async function authorizeMarketplaceDestinationAction(
+  orgId: string,
+  orgSlug: string,
+  formData: FormData,
+): Promise<void> {
+  const confirmed = formData.get('confirmed')?.toString() === 'true';
+  if (!confirmed) {
+    throw new Error('Confirm authorization before allowing this marketplace payTo.');
+  }
+  await authorizeMarketplaceDestination(orgId, {
+    chain: requiredStringField(formData, 'chain') as PaymentChain,
+    address: requiredStringField(formData, 'address'),
+    label: formData.get('label')?.toString().trim() || 'Marketplace seller',
+  });
+  revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+  revalidatePayments(orgSlug);
+}
+
+export async function hireMarketplaceX402Action(
+  orgId: string,
+  orgSlug: string,
+  formData: FormData,
+): Promise<void> {
+  await hireMarketplaceX402(orgId, {
     client_agent_id: requiredStringField(formData, 'clientAgentId'),
-    provider_agent_id: requiredStringField(formData, 'providerAgentId'),
+    listing_id: requiredStringField(formData, 'listingId'),
+    idempotency_key: formData.get('idempotencyKey')?.toString().trim() || `mkt-x402-${randomUUID()}`,
+  });
+  revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+  revalidatePayments(orgSlug);
+}
+
+export async function hireMarketplaceEscrowAction(
+  orgId: string,
+  orgSlug: string,
+  formData: FormData,
+): Promise<{ readonly jobId: string }> {
+  const providerAddress = formData.get('providerAddress')?.toString().trim();
+  const providerAgentId = formData.get('providerAgentId')?.toString().trim();
+  const job = await createEscrowJob(orgId, {
+    client_agent_id: requiredStringField(formData, 'clientAgentId'),
+    ...(providerAgentId !== undefined && providerAgentId.length > 0
+      ? { provider_agent_id: providerAgentId }
+      : {}),
+    ...(providerAddress !== undefined && providerAddress.length > 0
+      ? { provider_address: providerAddress }
+      : {}),
     chain: (formData.get('chain')?.toString().trim() || 'arc') as PaymentChain,
     budget_usdc: moneyField(formData, 'budgetUsdc'),
     expires_in_hours: Number.parseInt(formData.get('expiresInHours')?.toString() ?? '72', 10) || 72,
     description: formData.get('description')?.toString().trim() || undefined,
   });
+  revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
+  revalidatePath(`/app/${orgSlug}/payments/activity`, 'page');
   revalidatePayments(orgSlug);
+  return { jobId: job.id };
 }

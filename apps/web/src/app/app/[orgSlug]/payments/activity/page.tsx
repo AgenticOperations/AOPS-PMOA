@@ -4,6 +4,7 @@ import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { listAuditEvents } from '@/lib/server/audit-client';
 import {
   listCircleProviderJobs,
+  listEscrowJobs,
   listPaymentEvents,
   listPaymentReservations,
   listPaymentRouteObservations,
@@ -16,7 +17,7 @@ type ActivityPageProps = {
   readonly searchParams?: Promise<Record<string, string | readonly string[] | undefined>>;
 };
 
-const activityTabs: readonly TreasuryActivityTab[] = ['payments', 'routing', 'reservations', 'jobs', 'audit'];
+const activityTabs: readonly TreasuryActivityTab[] = ['payments', 'routing', 'reservations', 'jobs', 'escrow', 'audit'];
 
 export default async function PaymentsActivityPage({ params, searchParams }: ActivityPageProps) {
   const { orgSlug } = await params;
@@ -30,11 +31,12 @@ export default async function PaymentsActivityPage({ params, searchParams }: Act
     redirect('/auth');
   }
 
-  const [paymentEvents, routeObservations, reservations, providerJobs, auditEvents] = await Promise.all([
+  const [paymentEvents, routeObservations, reservations, providerJobs, escrowJobs, auditEvents] = await Promise.all([
     listPaymentEvents(org.id, 50),
     listPaymentRouteObservations(org.id, 50),
     listPaymentReservations(org.id, 50),
     listCircleProviderJobs(org.id),
+    listEscrowJobs(org.id).catch(() => []),
     listAuditEvents(org.id, 40),
   ]);
 
@@ -42,6 +44,7 @@ export default async function PaymentsActivityPage({ params, searchParams }: Act
       <TreasuryActivity
         activeTab={activeTab}
         auditEvents={auditEvents.events}
+        escrowJobs={escrowJobs}
         orgSlug={org.slug}
         paymentEvents={paymentEvents}
         providerJobs={providerJobs}

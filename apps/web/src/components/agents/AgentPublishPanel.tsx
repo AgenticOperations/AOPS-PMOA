@@ -1,7 +1,8 @@
 'use client';
 
 import { useActionState } from 'react';
-import { IconExternalLink, IconCheck } from '@tabler/icons-react';
+import Link from 'next/link';
+import { IconCheck, IconExternalLink } from '@tabler/icons-react';
 
 export type AgentOnchainIdentityView = {
   readonly token_id: string | null;
@@ -14,6 +15,8 @@ export type AgentOnchainIdentityView = {
 
 type AgentPublishPanelProps = {
   readonly templateRepoUrl: string;
+  readonly marketplaceHref: string;
+  readonly credentialsHref: string;
   readonly endpointUrl: string;
   readonly identity: AgentOnchainIdentityView;
   readonly saveListingAction: (formData: FormData) => Promise<void>;
@@ -23,9 +26,17 @@ type AgentPublishPanelProps = {
 type FormState = { readonly error?: string; readonly ok?: string };
 
 const explorerBase = 'https://testnet.arcscan.app';
+const arcNanopaymentsUrl = 'https://github.com/circlefin/arc-nanopayments';
+
+function shortHash(value: string): string {
+  if (value.length < 14) return value;
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
 
 export function AgentPublishPanel({
   templateRepoUrl,
+  marketplaceHref,
+  credentialsHref,
   endpointUrl,
   identity,
   saveListingAction,
@@ -35,7 +46,7 @@ export function AgentPublishPanel({
     async (_state: FormState, formData: FormData): Promise<FormState> => {
       try {
         await saveListingAction(formData);
-        return { ok: 'Endpoint saved.' };
+        return { ok: 'Saved.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Could not save endpoint.' };
       }
@@ -47,7 +58,7 @@ export function AgentPublishPanel({
     async (_state: FormState, formData: FormData): Promise<FormState> => {
       try {
         await registerIdentityAction(formData);
-        return { ok: 'Identity registered on Arc.' };
+        return { ok: 'Registered.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Identity registration failed.' };
       }
@@ -56,109 +67,89 @@ export function AgentPublishPanel({
   );
 
   const registered = identity?.status === 'registered';
+  const hasEndpoint = endpointUrl.trim().length > 0;
 
   return (
     <div className="agent-detail-canvas agent-publish-canvas">
-      <section className="agent-detail-section" aria-labelledby="publish-template-title">
+      <section className="agent-detail-section agent-publish-block" aria-labelledby="publish-host-title">
         <div className="agent-section-heading">
           <div>
-            <h2 id="publish-template-title">1. Host from Arc template</h2>
-            <p>
-              AgentOps is the control plane on Arc — not another Circle SDK. Keep the official
-              nanopayments seller (x402 + Gateway); use AgentOps for credential, policy, and identity.
-            </p>
+            <h2 id="publish-host-title">Host</h2>
           </div>
         </div>
-        <ol className="agent-publish-steps">
-          <li>
-            Clone{' '}
-            <a href="https://github.com/circlefin/arc-nanopayments" rel="noreferrer" target="_blank">
-              circlefin/arc-nanopayments
-            </a>{' '}
-            and follow its README (seller stays on Circle rails).
-          </li>
-          <li>
-            For the buyer, use the AgentOps overlay (
-            <code>templates/arc-nanopayments-agentops</code>
-            ) — credential + thin runtime client, not a local spend key.
-          </li>
-          <li>Issue an AgentOps credential on the Credentials tab if this agent will spend.</li>
-          <li>Deploy or tunnel a public HTTPS URL for the seller app.</li>
-          <li>Paste that URL below and register ERC-8004 identity.</li>
-        </ol>
-        <a className="agent-primary-button agent-publish-repo-link" href={templateRepoUrl} rel="noreferrer" target="_blank">
-          Open template repo
-          <IconExternalLink aria-hidden="true" size={16} stroke={1.8} />
-        </a>
+
+        <div className="agent-publish-options">
+          <article className="agent-publish-option">
+            <h3>Arc template</h3>
+            <p>Clone nanopayments, add the AgentOps overlay, deploy HTTPS.</p>
+            <div className="agent-publish-option-actions">
+              <a className="agent-secondary-button agent-publish-repo-link" href={arcNanopaymentsUrl} rel="noreferrer" target="_blank">
+                Get template
+                <IconExternalLink aria-hidden="true" size={14} stroke={1.8} />
+              </a>
+              <a className="agent-publish-text-link" href={templateRepoUrl} rel="noreferrer" target="_blank">
+                Overlay
+              </a>
+              <Link className="agent-publish-text-link" href={credentialsHref}>Credentials</Link>
+            </div>
+          </article>
+
+          <article className="agent-publish-option">
+            <h3>Your own agent</h3>
+            <p>Any public HTTPS seller. Paste its URL below.</p>
+          </article>
+        </div>
       </section>
 
-      <section className="agent-detail-section" aria-labelledby="publish-endpoint-title">
+      <section className="agent-detail-section agent-publish-block" aria-labelledby="publish-endpoint-title">
         <div className="agent-section-heading">
           <div>
-            <h2 id="publish-endpoint-title">2. Public endpoint</h2>
-            <p>The hireable base URL other agents will call (e.g. your hosted nanopayments origin).</p>
+            <h2 id="publish-endpoint-title">Endpoint</h2>
           </div>
         </div>
         <form action={listingAction} className="agent-publish-form">
           <label className="focus-field">
-            <span>Hosted URL</span>
+            <span className="sr-only">Hosted URL</span>
             <input
               defaultValue={endpointUrl}
               name="endpoint_url"
-              placeholder="https://your-nanopayments.example.com"
+              placeholder="https://…"
               required
               type="url"
             />
-            <small>Must be publicly reachable. Reputation is earned later from settled escrow — not at publish.</small>
           </label>
           {listingState.error !== undefined ? <p className="form-error" role="alert">{listingState.error}</p> : null}
           {listingState.ok !== undefined ? <p className="agent-publish-ok" role="status">{listingState.ok}</p> : null}
           <button className="agent-secondary-button" disabled={listingPending} type="submit">
-            {listingPending ? 'Saving…' : 'Save endpoint'}
+            {listingPending ? 'Saving…' : 'Save'}
           </button>
         </form>
       </section>
 
-      <section className="agent-detail-section" aria-labelledby="publish-identity-title">
+      <section className="agent-detail-section agent-publish-block" aria-labelledby="publish-identity-title">
         <div className="agent-section-heading">
           <div>
-            <h2 id="publish-identity-title">3. Register ERC-8004 identity</h2>
-            <p>
-              Mints the agent&apos;s identity NFT on Arc from its developer-controlled wallet.
-              Requires the agent wallet to be provisioned and funded for gas.
-            </p>
+            <h2 id="publish-identity-title">Identity</h2>
           </div>
         </div>
 
-        {registered ? (
+        {registered && identity !== null ? (
           <div className="agent-publish-identity-card is-registered">
             <p className="agent-publish-identity-status">
-              <IconCheck aria-hidden="true" size={18} stroke={2} />
-              Registered on Arc
+              <IconCheck aria-hidden="true" size={16} stroke={2} />
+              Registered
             </p>
-            <dl className="agent-definition-list">
+            <dl className="agent-publish-meta">
               <div>
-                <dt>Token ID</dt>
+                <dt>Token</dt>
                 <dd><code>{identity.token_id ?? '—'}</code></dd>
-              </div>
-              <div>
-                <dt>Agent URI</dt>
-                <dd><code>{identity.agent_uri}</code></dd>
-              </div>
-              <div>
-                <dt>Registry</dt>
-                <dd>
-                  <a href={`${explorerBase}/address/${identity.registry_address}`} rel="noreferrer" target="_blank">
-                    <code>{identity.registry_address}</code>
-                  </a>
-                </dd>
               </div>
               {identity.register_tx_hash !== null ? (
                 <div>
-                  <dt>Register tx</dt>
+                  <dt>Tx</dt>
                   <dd>
                     <a href={`${explorerBase}/tx/${identity.register_tx_hash}`} rel="noreferrer" target="_blank">
-                      <code>{identity.register_tx_hash}</code>
+                      <code>{shortHash(identity.register_tx_hash)}</code>
                     </a>
                   </dd>
                 </div>
@@ -166,34 +157,32 @@ export function AgentPublishPanel({
             </dl>
           </div>
         ) : (
-          <form action={registerAction} className="agent-publish-form">
+          <form action={registerAction} className="agent-publish-form agent-publish-form-inline">
             <input name="endpoint_url" type="hidden" value={endpointUrl} />
-            {endpointUrl.length === 0 ? (
-              <p className="agent-publish-hint">Save a public endpoint above before registering.</p>
-            ) : null}
+            {!hasEndpoint ? <p className="agent-publish-hint">Save endpoint first.</p> : null}
             {registerState.error !== undefined ? <p className="form-error" role="alert">{registerState.error}</p> : null}
             {registerState.ok !== undefined ? <p className="agent-publish-ok" role="status">{registerState.ok}</p> : null}
             <button
               className="agent-primary-button"
-              disabled={registerPending || endpointUrl.length === 0}
+              disabled={registerPending || !hasEndpoint}
               type="submit"
             >
-              {registerPending ? 'Registering on Arc…' : 'Register identity on Arc'}
+              {registerPending ? 'Registering…' : 'Register on Arc'}
             </button>
           </form>
         )}
       </section>
 
-      <section className="agent-detail-section" aria-labelledby="publish-hire-title">
+      <section className="agent-detail-section agent-publish-block agent-publish-hire" aria-labelledby="publish-hire-title">
         <div className="agent-section-heading">
           <div>
-            <h2 id="publish-hire-title">4. Get hired</h2>
-            <p>
-              After publish, operators hire this listing from Empower → Hire published agent (ERC-8183).
-              Buyers can also pay the endpoint via MCP / thin client <code>paymentX402</code>.
-            </p>
+            <h2 id="publish-hire-title">Hire</h2>
           </div>
         </div>
+        <Link className="agent-secondary-button agent-publish-repo-link" href={marketplaceHref}>
+          Marketplace
+          <IconExternalLink aria-hidden="true" size={14} stroke={1.8} />
+        </Link>
       </section>
     </div>
   );

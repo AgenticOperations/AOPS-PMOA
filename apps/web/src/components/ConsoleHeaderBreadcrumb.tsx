@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 const LABELS = {
   overview: 'Home',
   agents: 'Agents',
+  marketplace: 'Purchases',
   controls: 'Controls',
   operations: 'Operations',
   payments: 'Treasury',
@@ -15,6 +16,7 @@ const LABELS = {
 export type ConsoleSection = keyof typeof LABELS;
 
 export function resolveConsoleSection(pathname: string): ConsoleSection {
+  if (pathname.includes('/marketplace')) return 'marketplace';
   if (pathname.includes('/agents')) return 'agents';
   if (pathname.includes('/controls')) return 'controls';
   if (pathname.includes('/operations')) return 'operations';

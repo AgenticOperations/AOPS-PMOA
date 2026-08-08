@@ -48,9 +48,17 @@
   --state-danger-tint: #fef2f2;
   --radius: 8px;
   --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.04);
-  --font-ui: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: var(--font-montserrat), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", "SF Mono", Consolas, monospace;
+  /* Console type scale — aligned with marketplace readability */
+  --type-micro: 11px;
+  --type-caption: 12px;
+  --type-body-sm: 13px;
+  --type-body: 14px;
+  --type-ui: 13.5px;
+  --type-title: 1.5rem;
+  --type-display: 1.75rem;
   --entry-bg: #f7f7f6;
   --entry-panel-text: var(--text-primary);
   --entry-panel-muted: var(--text-muted);
@@ -118,8 +126,10 @@ body {
   background: var(--bg-app);
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--type-body);
+  font-feature-settings: 'ss01' on, 'cv11' on;
   line-height: 1.5;
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -158,21 +168,24 @@ p {
 
 h1 {
   font-family: var(--font-display);
-  font-size: 2.2rem;
-  line-height: 1.08;
-  letter-spacing: 0;
-  font-weight: 600;
+  font-size: var(--type-display);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 700;
 }
 
 h2 {
   font-family: var(--font-display);
-  font-size: 1.35rem;
-  line-height: 1.2;
-  font-weight: 600;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  font-weight: 650;
 }
 
 h3 {
   font-size: 1rem;
+  letter-spacing: -0.02em;
+  font-weight: 650;
 }
 
 .sr-only {
@@ -189,9 +202,9 @@ h3 {
 
 .eyebrow {
   color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -788,6 +801,9 @@ input::placeholder {
   grid-template-columns: auto minmax(0, 1fr);
   background: var(--bg-app);
   font-family: var(--font-ui);
+  font-size: var(--type-body);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
 }
 
 .app-sidebar-body {
@@ -836,8 +852,9 @@ input::placeholder {
   border-radius: 8px;
   background: var(--bg-panel);
   color: var(--text-primary);
-  font-size: 0.78rem;
+  font-size: var(--type-caption);
   font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .sidebar-link-label {
@@ -860,16 +877,17 @@ input::placeholder {
 .sidebar-link-label strong {
   display: block;
   color: var(--text-primary);
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: var(--type-ui);
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
 .sidebar-link-label span {
   display: block;
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: var(--type-micro);
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -902,9 +920,9 @@ input::placeholder {
   overflow: hidden;
   opacity: 0;
   color: var(--text-muted);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   transition: opacity 160ms ease;
 }
@@ -934,8 +952,9 @@ input::placeholder {
   border-radius: 8px;
   border: 0;
   background: transparent;
-  font-size: 0.88rem;
+  font-size: var(--type-ui);
   font-weight: 600;
+  letter-spacing: -0.015em;
   color: var(--text-muted);
   text-decoration: none;
   cursor: pointer;
@@ -1021,7 +1040,9 @@ input::placeholder {
   padding: 0 10px 0 12px;
   border-radius: 8px;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--type-caption);
+  font-weight: 500;
+  letter-spacing: -0.01em;
   font-weight: 600;
   transition:
     background 150ms ease,
@@ -1104,6 +1125,29 @@ input::placeholder {
   gap: 10px;
 }
 
+.console-hire-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--console-action);
+  color: var(--text-on-accent);
+  font-size: var(--type-caption);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 150ms ease;
+}
+
+.console-hire-cta:hover {
+  background: var(--console-action-hover);
+  color: var(--text-on-accent);
+}
+
 .command-launcher {
   display: inline-flex;
   align-items: center;
@@ -1136,7 +1180,7 @@ input::placeholder {
   border-radius: 5px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-family: var(--font-mono);
   font-weight: 600;
 }
@@ -1586,10 +1630,10 @@ input::placeholder {
 .ops-page-header h1 {
   color: var(--text-primary);
   font-family: var(--font-display);
-  font-size: 2.2rem;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1;
+  font-size: var(--type-title);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
 }
 
 .ops-page-header p {
@@ -1729,7 +1773,7 @@ input::placeholder {
   min-height: 34px;
   padding: 0 14px;
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -1926,7 +1970,7 @@ html[data-theme="dark"] .ops-row-title {
 .approval-decision-panel label span,
 .approvals-filter-bar label span {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -2006,8 +2050,8 @@ html[data-theme="dark"] .ops-row-title {
 
 .approval-eyebrow {
   color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--type-micro);
+  font-weight: 650;
 }
 
 .approval-meta-grid,
@@ -2065,7 +2109,7 @@ html[data-theme="dark"] .ops-row-title {
 
 .approval-context-grid dt {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -2258,9 +2302,9 @@ html[data-theme="dark"] .ops-row-title {
 }
 
 .operations-header h1 {
-  font-size: 1.72rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: var(--type-title);
+  font-weight: 700;
+  letter-spacing: -0.03em;
 }
 
 .operations-header p {
@@ -2312,7 +2356,7 @@ html[data-theme="dark"] .ops-row-title {
 .operations-filter-bar span,
 .operations-detail-grid dt {
   color: color-mix(in oklch, var(--text-muted) 82%, var(--text-primary));
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2365,7 +2409,7 @@ html[data-theme="dark"] .ops-row-title {
   border-bottom: 1px solid color-mix(in oklch, var(--border-subtle) 78%, transparent);
   background: color-mix(in oklch, var(--bg-soft) 52%, var(--bg-panel));
   color: color-mix(in oklch, var(--text-muted) 84%, var(--text-primary));
-  font-size: 0.66rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2825,7 +2869,7 @@ html[data-theme="dark"] .ops-row-title {
 
 .payments-chain-balances dt {
   color: var(--text-muted);
-  font-size: 0.66rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2901,7 +2945,7 @@ html[data-theme="dark"] .ops-row-title {
   min-height: 34px;
   padding: 0 12px;
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -3228,10 +3272,10 @@ html[data-theme="dark"] .agents-fleet-page {
 .agents-console-header h1 {
   color: var(--text-primary);
   font-family: var(--font-display);
-  font-size: 2.2rem;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1;
+  font-size: var(--type-title);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
 }
 
 .agents-roster-shell {
@@ -3263,7 +3307,7 @@ html[data-theme="dark"] .agents-roster-shell {
   border-radius: 999px;
   background: color-mix(in oklch, var(--bg-app) 66%, transparent);
   color: var(--text-muted);
-  font-size: 0.66rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -3272,7 +3316,7 @@ html[data-theme="dark"] .agents-roster-shell {
 
 .agents-roster-heading > span {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -3438,7 +3482,7 @@ html[data-theme="dark"] .agents-inline-create-form input {
   min-height: 34px;
   padding: 0 14px;
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -3522,7 +3566,7 @@ html[data-theme="dark"] .agents-roster-row:hover {
   overflow: hidden;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3563,7 +3607,7 @@ html[data-theme="dark"] .agents-roster-row:hover {
 
 .agents-last-activity-cell {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
 }
 
 .agents-health-dot {
@@ -3790,7 +3834,7 @@ html[data-theme="dark"] .agents-roster-row:hover {
 .agent-detail-tabs small {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4082,7 +4126,7 @@ html[data-theme="dark"] .controls-console {
 
 .controls-page-kicker {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -4091,9 +4135,9 @@ html[data-theme="dark"] .controls-console {
 .controls-drawer-header h1 {
   color: var(--text-primary);
   font-family: var(--font-display);
-  font-size: 1.9rem;
-  font-weight: 600;
-  letter-spacing: 0;
+  font-size: var(--type-title);
+  font-weight: 700;
+  letter-spacing: -0.03em;
   line-height: 1.06;
 }
 
@@ -4288,7 +4332,7 @@ html[data-theme="dark"] .controls-console {
   overflow: hidden;
   padding: 4px 8px;
   border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   line-height: 1;
   text-overflow: ellipsis;
@@ -4429,7 +4473,7 @@ html[data-theme="dark"] .controls-console {
   border-bottom: 1px solid var(--controls-line);
   background: var(--controls-muted-surface);
   color: var(--text-muted);
-  font-size: 0.73rem;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
@@ -4697,7 +4741,7 @@ html[data-theme="dark"] .controls-console {
 .policy-builder-review-kicker,
 .policy-builder-section-heading > span {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
@@ -5281,7 +5325,7 @@ html[data-theme="dark"] .controls-console {
   color: var(--accent-blue);
   cursor: pointer;
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   font-weight: 760;
   padding: 0 8px;
   transition: color 160ms ease, transform 160ms ease;
@@ -5314,7 +5358,7 @@ html[data-theme="dark"] .controls-console {
   background: var(--bg-soft);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   line-height: 1.55;
   white-space: pre;
 }
@@ -5331,7 +5375,7 @@ html[data-theme="dark"] .controls-console {
   min-height: 18px;
   margin: 8px 0 0;
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 700;
 }
 
@@ -5371,7 +5415,7 @@ html[data-theme="dark"] .controls-console {
 
 .mcp-verification-result > div:first-child span {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
 }
 
 .mcp-verification-result dl {
@@ -5389,7 +5433,7 @@ html[data-theme="dark"] .controls-console {
 
 .mcp-verification-result dt {
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   font-weight: 750;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -5992,7 +6036,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 }
 
 .console-shell .sidebar-link-label span {
-  font-size: 0.61rem;
+  font-size: 0.6875rem;
   font-weight: 500;
   letter-spacing: 0.04em;
 }
@@ -6014,9 +6058,9 @@ html[data-theme="dark"] .sidebar-brand-logo {
   padding: 0 10px;
   opacity: 1;
   color: color-mix(in oklch, var(--text-muted) 72%, var(--text-primary));
-  font-size: 0.61rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.05em;
 }
 
 .console-shell .sidebar-nav {
@@ -6030,8 +6074,9 @@ html[data-theme="dark"] .sidebar-brand-logo {
   padding: 0 10px;
   border-radius: 7px;
   color: var(--text-muted);
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: var(--type-ui);
+  font-weight: 550;
+  letter-spacing: -0.015em;
 }
 
 .console-shell .sidebar-nav-link:hover,
@@ -6063,8 +6108,9 @@ html[data-theme="dark"] .sidebar-brand-logo {
   min-height: 31px;
   padding-left: 38px;
   border-radius: 6px;
-  font-size: 0.73rem;
+  font-size: var(--type-caption);
   font-weight: 500;
+  letter-spacing: -0.01em;
 }
 
 .console-shell .sidebar-subnav-link .nav-sub-icon {
@@ -6092,6 +6138,22 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .console-shell .app-header-actions {
   gap: 8px;
+}
+
+.console-shell .console-hire-cta {
+  min-height: 32px;
+  border-radius: 7px;
+  font-size: 12.5px;
+}
+
+@media (max-width: 720px) {
+  .console-hire-cta span {
+    display: none;
+  }
+
+  .console-hire-cta {
+    padding: 0 10px;
+  }
 }
 
 .console-shell .command-launcher {
@@ -6136,10 +6198,10 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .console-page-header h1,
 .console-shell .agents-console-header h1 {
   color: var(--text-primary);
-  font-size: 1.68rem;
-  font-weight: 600;
-  line-height: 1.18;
-  letter-spacing: 0;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
 .console-page-header p {
@@ -6284,7 +6346,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .overview-status-lead > span,
 .overview-fact > span {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -6352,7 +6414,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 8px;
   background: var(--bg-soft);
   color: var(--text-primary);
-  font-size: 0.66rem;
+  font-size: 0.6875rem;
   font-weight: 600;
 }
 
@@ -6376,7 +6438,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .overview-evidence-list small,
 .overview-evidence-list time {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .overview-evidence-list > li {
@@ -6429,7 +6491,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   background: transparent;
   box-shadow: none;
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.04em;
 }
@@ -6473,7 +6535,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
@@ -6528,7 +6590,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   background: var(--bg-soft);
   color: var(--text-primary);
   box-shadow: none;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
@@ -6547,7 +6609,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  font-size: 0.73rem;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -6604,7 +6666,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .focus-field small {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
 
@@ -6657,7 +6719,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 7px;
   background: var(--bg-soft);
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
 }
 
 .live-monitor-status time {
@@ -6804,19 +6866,19 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .registry-eyebrow {
   margin: 0 0 6px;
   color: var(--accent-ink);
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: 0.13em;
+  font-size: var(--type-micro);
+  font-weight: 650;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .registry-page-header h1 {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 2.125rem;
-  font-weight: 500;
-  line-height: 1.04;
-  letter-spacing: 0;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
 .registry-page-copy {
@@ -6835,7 +6897,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   background: var(--accent-blue);
   color: var(--text-on-accent);
   box-shadow: none;
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
@@ -6870,7 +6932,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   background: var(--bg-panel);
   color: var(--text-primary);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
@@ -6905,7 +6967,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   align-items: center;
   padding: 0 7px;
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -6954,7 +7016,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .registry-table [data-slot="table-cell"] {
   padding: 12px;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
@@ -6980,7 +7042,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 7px;
   background: var(--bg-soft-strong);
   color: var(--accent-ink);
-  font-size: 0.61rem;
+  font-size: 0.6875rem;
   font-weight: 700;
 }
 
@@ -7119,7 +7181,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 8px;
   background: var(--accent-tint);
   color: var(--accent-ink);
-  font-size: 0.66rem;
+  font-size: 0.6875rem;
   font-weight: 500;
 }
 
@@ -7133,7 +7195,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   max-width: 48ch;
   margin: 0 0 8px;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
 }
 
 @media (max-width: 900px) {
@@ -7164,7 +7226,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   }
 
   .registry-page-header h1 {
-    font-size: 1.9rem;
+    font-size: var(--type-title);
   }
 
   .registry-page-header .console-primary-button {
@@ -7313,9 +7375,10 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .console-shell .workspace > .grid > header h1,
 .console-shell .ops-page-header h1,
 .console-shell .settings-console > header h1 {
-  font-size: 1.68rem;
-  font-weight: 600;
-  line-height: 1.18;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
 .console-shell .button-primary {
@@ -7432,7 +7495,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .approval-summary-band span,
 .record-count {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -7475,7 +7538,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   background: var(--bg-panel);
   color: var(--text-primary);
   padding: 0 10px;
-  font-size: 0.73rem;
+  font-size: 0.8125rem;
 }
 
 .approval-index-body [data-slot="table-shell"] {
@@ -7497,7 +7560,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .approval-index-primary span {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.6875rem;
 }
 
 .table-row-action {
@@ -7507,7 +7570,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   border-radius: 6px;
   background: var(--bg-panel);
   color: var(--text-primary);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 500;
   cursor: pointer;
 }
@@ -7525,7 +7588,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   padding: 10px 16px;
   border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
 }
 
 .console-pagination a {
@@ -7558,7 +7621,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .approval-drawer-status code {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .approval-detail-grid {
@@ -7589,7 +7652,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
-  font-size: 0.72rem;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -7631,7 +7694,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
   gap: 10px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .approval-drawer-timeline li p {
@@ -7844,7 +7907,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .console-shell .section-heading p {
   max-width: 52ch;
-  font-size: 0.73rem;
+  font-size: 0.8125rem;
 }
 
 .console-shell .identity-grid {
@@ -7863,7 +7926,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .console-shell .identity-grid > div > span {
   color: var(--text-muted);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   font-weight: 500;
 }
 
@@ -7917,7 +7980,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 }
 
 .console-shell .live-summary-grid strong {
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -7949,7 +8012,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .console-shell .activity-event-main span,
 .console-shell .activity-event-meta {
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .console-shell .activity-event-meta span,
@@ -8015,7 +8078,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 }
 
 .console-shell .settings-primary-cell span {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 920px) {
@@ -8139,9 +8202,10 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .controls-page-header h1 {
   font-family: var(--font-ui);
-  font-size: 1.68rem;
-  font-weight: 600;
-  line-height: 1.18;
+  font-size: var(--type-title);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
 .controls-page-header p {
@@ -8270,7 +8334,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .policy-builder-field span,
 .controls-bind-form label span,
 .controls-form-surface label span {
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -8316,7 +8380,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 
 .controls-policy-name span,
 .controls-bound-row span {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
 }
 
 .controls-row-open {
@@ -8407,7 +8471,7 @@ html[data-theme="dark"] .sidebar-brand-logo {
 .policy-builder-review p,
 .policy-builder-note span,
 .policy-builder-note em {
-  font-size: 0.7rem;
+  font-size: 0.8125rem;
 }
 
 .policy-builder-review {
