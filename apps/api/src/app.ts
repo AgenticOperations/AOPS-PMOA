@@ -20,6 +20,8 @@ import type { RegisterPolicyRoutesDeps } from './engines/policy/routes.js';
 import { registerPolicyRoutes } from './engines/policy/routes.js';
 import type { RegisterRuntimeRoutesDeps } from './engines/runtime/routes.js';
 import { registerRuntimeRoutes } from './engines/runtime/routes.js';
+import type { RegisterFleetRunRoutesDeps } from './engines/fleet-run/routes.js';
+import { registerFleetRunRoutes } from './engines/fleet-run/routes.js';
 
 export type BuildAppOptions = {
   readonly changelog?: RegisterChangelogRoutesDeps;
@@ -31,6 +33,7 @@ export type BuildAppOptions = {
   readonly policy?: RegisterPolicyRoutesDeps;
   readonly approvals?: RegisterApprovalRoutesDeps;
   readonly runtime?: RegisterRuntimeRoutesDeps;
+  readonly fleetRun?: RegisterFleetRunRoutesDeps;
   readonly enableTestnetX402Fixtures?: boolean;
   readonly readiness?: () => Promise<boolean>;
 };
@@ -156,6 +159,22 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.runtime === undefined &&
         options.operations === undefined &&
         options.changelog === undefined,
+    });
+  }
+
+  const fleetRunDeps = options.fleetRun
+    ?? (options.payments === undefined
+      ? undefined
+      : {
+          pool: options.payments.pool,
+          sessionCookieName: options.payments.sessionCookieName,
+          circleProvider: options.payments.circleProvider,
+          circleProviderFactory: options.payments.circleProviderFactory,
+        });
+  if (fleetRunDeps !== undefined) {
+    registerFleetRunRoutes(app, {
+      ...fleetRunDeps,
+      installErrorHandler: false,
     });
   }
   return app;
