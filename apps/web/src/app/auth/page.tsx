@@ -1,8 +1,11 @@
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { AuthEntryShell } from '@/components/AuthEntryShell';
 import { getCurrentSession } from '@/lib/server/identity-spine-client';
 
 export const dynamic = 'force-dynamic';
+
+const GOOGLE_START_HREF = '/api/auth/google/start';
 
 type AuthPageProps = {
   readonly searchParams: Promise<{ readonly error?: string | string[] | undefined }>;
@@ -40,6 +43,21 @@ function GoogleLogo() {
   );
 }
 
+/** Full document navigation — Next.js <Link> soft-nav fetches RSC and breaks OAuth CORS. */
+function GoogleStartLink({
+  children,
+  className,
+}: {
+  readonly children: ReactNode;
+  readonly className?: string | undefined;
+}) {
+  return (
+    <a className={className} href={GOOGLE_START_HREF} rel="nofollow">
+      {children}
+    </a>
+  );
+}
+
 export default async function AuthPage({ searchParams }: AuthPageProps) {
   const session = await getCurrentSession();
   const params = await searchParams;
@@ -55,13 +73,13 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
         {oauthError !== null ? (
           <div className="entry-alert" role="alert">
             <strong>{oauthError}</strong>
-            <Link href="/api/auth/google/start">Try Google again</Link>
+            <GoogleStartLink>Try Google again</GoogleStartLink>
           </div>
         ) : null}
-        <Link className="google-button" href="/api/auth/google/start">
+        <GoogleStartLink className="google-button">
           <GoogleLogo />
           Continue with Google
-        </Link>
+        </GoogleStartLink>
       </AuthEntryShell>
     );
   }
@@ -77,10 +95,10 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
         <Link className="button-primary" href="/onboarding">
           Continue as {session.user.email}
         </Link>
-        <Link className="button-secondary" href="/api/auth/google/start">
+        <GoogleStartLink className="button-secondary">
           <GoogleLogo />
           Continue with Google
-        </Link>
+        </GoogleStartLink>
       </AuthEntryShell>
     );
   }
@@ -105,10 +123,10 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
           </Link>
         ))}
       </div>
-      <Link className="button-secondary" href="/api/auth/google/start">
+      <GoogleStartLink className="button-secondary">
         <GoogleLogo />
         Continue with Google
-      </Link>
+      </GoogleStartLink>
     </AuthEntryShell>
   );
 }
