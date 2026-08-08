@@ -98,9 +98,7 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
           bindPolicy: bindAgentPolicyAction.bind(null, org.id, org.slug, agentId),
           removePolicyBinding: removeAgentPolicyBindingAction.bind(null, org.id, org.slug, agentId),
           savePublishListing: savePublishListingAction.bind(null, org.id, org.slug, agentId),
-          registerOnchainIdentity: async (formData: FormData) => (
-            registerOnchainIdentityAction(org.id, org.slug, agentId, formData)
-          ),
+          registerOnchainIdentity: registerOnchainIdentityAction.bind(null, org.id, org.slug, agentId),
         }}
       />
   );
