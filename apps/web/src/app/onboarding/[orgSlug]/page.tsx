@@ -31,9 +31,9 @@ export default async function TreasuryOnboardingPage({ params }: TreasuryOnboard
   return (
     <AuthEntryShell
       activeStep={3}
-      description="Prepare your workspace, then connect the wallet your agents will spend from. Your funds stay in your wallet."
+      description="Prepare the workspace first, then connect the wallet your agents will spend from. Your funds stay in your wallet."
       eyebrow="Workspace setup"
-      title="Connect your wallet"
+      title="Finish workspace setup"
     >
       <WalletProvider>
         <WalletOnboarding

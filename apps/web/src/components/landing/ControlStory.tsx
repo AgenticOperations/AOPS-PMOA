@@ -1,6 +1,7 @@
 'use client';
 
 import type { CSSProperties, ReactNode } from 'react';
+import { AgentAvatar } from '@/components/agents/AgentAvatar';
 import { useScrollSequence } from './scroll-sequence';
 
 interface StageDefinition {
@@ -19,7 +20,12 @@ function IdentityStage() {
     <div className="aops-identity-stage">
       <div className="aops-identity-primary">
         <div className="aops-entity-head">
-          <i>RO</i>
+          <AgentAvatar
+            agentId="landing-research-operator"
+            className="aops-entity-robot"
+            name="Research operator"
+            size="md"
+          />
           <div><span className="aops-stage-kicker">Agent</span><h3>Research operator</h3></div>
           <Status>Active</Status>
         </div>
@@ -33,7 +39,16 @@ function IdentityStage() {
         <header><span>Connections</span><small>3 healthy</small></header>
         <div className="aops-connection"><b>01</b><div><strong>Primary runtime</strong><small>Credential healthy</small></div><span>Live</span></div>
         <div className="aops-connection"><b>02</b><div><strong>Wallet reference</strong><small>Base Sepolia · 0x6bd1…92F4</small></div><span>Linked</span></div>
-        <div className="aops-connection"><b>03</b><div><strong>Monitoring worker</strong><small>Child agent · inherited scope</small></div><span>Active</span></div>
+        <div className="aops-connection aops-connection-agent">
+          <AgentAvatar
+            agentId="landing-monitoring-worker"
+            className="aops-connection-robot"
+            name="Monitoring worker"
+            size="sm"
+          />
+          <div><strong>Monitoring worker</strong><small>Child agent · inherited scope</small></div>
+          <span>Active</span>
+        </div>
       </div>
     </div>
   );
@@ -90,10 +105,10 @@ function GovernStage() {
 
 function EvidenceStage() {
   const events = [
-    ['Identity resolved', 'Research operator · scoped credential', 'evt_28c…a17'],
-    ['Policy evaluated', 'Payment authorization · review required', 'evt_28d…c42'],
-    ['Approval recorded', 'Operations lead · threshold exception', 'evt_28f…b09'],
-    ['Outcome settled', 'Exact x402 · 240 USDC', 'evt_291…d64'],
+    ['Identity resolved', 'Research operator · scoped credential', 'evt_28c…a17', 'agent'],
+    ['Policy evaluated', 'Payment authorization · review required', 'evt_28d…c42', 'step'],
+    ['Approval recorded', 'Operations lead · threshold exception', 'evt_28f…b09', 'step'],
+    ['Outcome settled', 'Exact x402 · 240 USDC', 'evt_291…d64', 'step'],
   ] as const;
   return (
     <div className="aops-evidence-stage">
@@ -104,7 +119,16 @@ function EvidenceStage() {
       <div className="aops-evidence-events">
         {events.map((event, index) => (
           <div className="aops-evidence-event" key={event[0]}>
-            <b>{String(index + 1).padStart(2, '0')}</b>
+            {event[3] === 'agent' ? (
+              <AgentAvatar
+                agentId="landing-research-operator"
+                className="aops-evidence-robot"
+                name="Research operator"
+                size="sm"
+              />
+            ) : (
+              <b>{String(index + 1).padStart(2, '0')}</b>
+            )}
             <div><strong>{event[0]}</strong><span>{event[1]}</span></div>
             <div><code>{event[2]}</code><em>Verified</em></div>
           </div>

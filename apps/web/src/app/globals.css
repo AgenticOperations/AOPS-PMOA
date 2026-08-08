@@ -4066,10 +4066,60 @@ html[data-theme="dark"] .agents-roster-row:hover {
   background: var(--bg-app);
 }
 
-.soft-row div,
-.connection-row div {
+.soft-row.is-blocked {
+  opacity: 0.72;
+}
+
+.soft-row.is-complete {
+  border-color: color-mix(in oklch, var(--status-active, #1f8a4c) 35%, var(--border-subtle));
+  background: color-mix(in oklch, var(--bg-app) 88%, var(--status-active, #1f8a4c) 12%);
+}
+
+.soft-row > div,
+.connection-row > div {
   display: grid;
   gap: 4px;
+  min-width: 0;
+}
+
+.soft-row strong,
+.connection-row strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.soft-row span,
+.connection-row span {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.onboarding-step-status {
+  flex: 0 0 auto;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.onboarding-step-status[data-status='ready'] {
+  border-color: color-mix(in oklch, var(--status-active, #1f8a4c) 40%, var(--border-subtle));
+  background: color-mix(in oklch, var(--bg-panel) 80%, var(--status-active, #1f8a4c) 20%);
+  color: color-mix(in oklch, var(--text-primary) 30%, var(--status-active, #1f8a4c) 70%);
+}
+
+.onboarding-step-status[data-status='waiting'] {
+  opacity: 0.9;
 }
 
 .button-row {
@@ -4078,6 +4128,10 @@ html[data-theme="dark"] .agents-roster-row:hover {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.button-row.is-start {
+  justify-content: flex-start;
 }
 
 .controls-console {

@@ -32,75 +32,90 @@ export function WalletOnboarding({ orgSlug, provisionAction, treasuryReady }: Pr
   );
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
+  const shortAddress = address === undefined
+    ? null
+    : `${address.slice(0, 6)}…${address.slice(-4)}`;
 
   return (
     <div className="onboarding-form">
-      <ol className="grid gap-4">
-        <li className="rounded-lg border p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="font-medium">1. Prepare the workspace</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Creates the wallet container your agents are provisioned into. No email, no code —
-                and it holds no money.
-              </p>
-            </div>
-            {treasuryReady ? (
-              <span className="whitespace-nowrap text-sm">Ready</span>
-            ) : (
-              <form action={() => submit()}>
-                <button type="submit" disabled={pending} className="rounded-md border px-3 py-2 text-sm disabled:opacity-60">
-                  {pending ? 'Preparing…' : 'Prepare'}
-                </button>
-              </form>
-            )}
-          </div>
-          {state.error !== undefined ? (
-            <p className="mt-2 text-sm text-red-600">{state.error}</p>
-          ) : null}
-        </li>
-
-        <li className="rounded-lg border p-4">
-          <h3 className="font-medium">2. Connect your wallet</h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Your USDC stays here. Each agent gets a spending cap you set, and can never take more
-            than that — you can cut any of them off at any time.
-          </p>
-          {isConnected ? (
-            <p className="mt-3 text-sm">Connected — {address}</p>
-          ) : (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {connectors.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No browser wallet detected. Install MetaMask (or any EIP-6963 wallet) and reload.
-                </p>
-              ) : (
-                connectors.map((connector) => (
-                  <button
-                    key={connector.uid}
-                    type="button"
-                    onClick={() => connect({ connector })}
-                    className="rounded-md border px-3 py-2 text-sm"
-                  >
-                    {connector.name}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-        </li>
-      </ol>
-
-      <div className="mt-5 flex items-center gap-3">
-        <Link
-          className={treasuryReady ? 'button-primary' : 'button-primary pointer-events-none opacity-50'}
-          href={`/app/${orgSlug}/overview`}
-        >
-          Open agentOps
-        </Link>
-        {treasuryReady ? null : (
-          <span className="text-sm text-muted-foreground">Prepare the workspace to continue.</span>
+      <div className={`soft-row${treasuryReady ? ' is-complete' : ''}`}>
+        <div>
+          <strong>Prepare workspace</strong>
+          <span>
+            {treasuryReady
+              ? 'Agent wallet container is ready. No funds are held here.'
+              : 'One click creates the container agents are provisioned into. It holds no money.'}
+          </span>
+        </div>
+        {treasuryReady ? (
+          <span className="onboarding-step-status" data-status="ready">Ready</span>
+        ) : (
+          <form action={() => submit()}>
+            <button className="button-primary" disabled={pending} type="submit">
+              {pending ? 'Preparing…' : 'Prepare workspace'}
+            </button>
+          </form>
         )}
+      </div>
+      {state.error !== undefined ? (
+        <p className="form-error" role="alert">{state.error}</p>
+      ) : null}
+      {state.message !== undefined && state.error === undefined ? (
+        <p role="status">{state.message}</p>
+      ) : null}
+
+      <div className={`soft-row${!treasuryReady ? ' is-blocked' : ''}${isConnected ? ' is-complete' : ''}`}>
+        <div>
+          <strong>Connect your wallet</strong>
+          <span>
+            {isConnected
+              ? `Connected as ${shortAddress}. Agents spend only within caps you set.`
+              : 'Your USDC stays in this wallet. Agents draw against a capped Permit2 allowance you can revoke.'}
+          </span>
+        </div>
+        {!treasuryReady ? (
+          <span className="onboarding-step-status" data-status="waiting">Waiting</span>
+        ) : isConnected ? (
+          <span className="onboarding-step-status" data-status="ready">Connected</span>
+        ) : null}
+      </div>
+
+      {treasuryReady && !isConnected ? (
+        <div className="button-row is-start">
+          {connectors.length === 0 ? (
+            <p className="entry-panel-copy">
+              No browser wallet detected. Install MetaMask (or any EIP-6963 wallet) and reload.
+            </p>
+          ) : (
+            connectors.map((connector) => (
+              <button
+                className="button-secondary"
+                key={connector.uid}
+                onClick={() => connect({ connector })}
+                type="button"
+              >
+                {connector.name}
+              </button>
+            ))
+          )}
+        </div>
+      ) : null}
+
+      <div className="button-row is-start">
+        {treasuryReady ? (
+          <Link className="button-primary" href={`/app/${orgSlug}/overview`}>
+            Open agentOps
+          </Link>
+        ) : (
+          <button className="button-primary" disabled type="button">
+            Open agentOps
+          </button>
+        )}
+        {!treasuryReady ? (
+          <span className="entry-panel-copy">Prepare the workspace to continue.</span>
+        ) : !isConnected ? (
+          <span className="entry-panel-copy">You can connect a wallet now or from Treasury later.</span>
+        ) : null}
       </div>
     </div>
   );
