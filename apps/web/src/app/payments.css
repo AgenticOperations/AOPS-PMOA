@@ -348,7 +348,7 @@
 
 .fund-roster-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 7rem) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 7rem) minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 44px;
@@ -361,7 +361,7 @@
 }
 
 .fund-roster-row.is-treasury {
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 7rem) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 7rem) auto;
 }
 
 .fund-roster-identity {
@@ -388,6 +388,14 @@
 
 .fund-roster-hint {
   justify-self: end;
+}
+
+.fund-roster-address {
+  min-width: 0;
+}
+
+.fund-roster-address .funding-address {
+  max-width: 100%;
 }
 
 .fund-roster-balance {
@@ -427,7 +435,8 @@
   }
 
   .fund-roster-meta,
-  .fund-roster-chain {
+  .fund-roster-chain,
+  .fund-roster-address {
     grid-column: 1;
   }
 

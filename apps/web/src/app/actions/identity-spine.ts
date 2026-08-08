@@ -353,13 +353,22 @@ function friendlyIdentityRegisterError(error: unknown): string {
     code === 'erc8004_agent_wallet_not_found'
     || message.includes('erc8004_agent_wallet_not_found')
   ) {
-    return 'This agent does not have an Arc wallet yet. Enable payment access for the agent, wait until the wallet is active, then try again.';
+    return 'This agent has no Arc wallet yet. Enable payment access, wait until it is active, then try again.';
   }
   if (code === 'circle_worker_unavailable' || message.includes('worker is unavailable')) {
-    return 'Circle Agent Wallet worker is unavailable. Try again in a moment.';
+    return 'Circle wallet worker is unavailable. Try again in a moment.';
   }
-  if (message.trim().length > 0) return message;
-  return 'Identity registration failed.';
+  if (
+    code === 'circle_worker_operation_failed'
+    || code === 'circle_permit2_transaction_failed'
+    || code === 'circle_permit2_transaction_denied'
+    || message.includes('circle_worker_operation_failed')
+    || message.includes('circle_permit2_transaction_')
+  ) {
+    return 'Registration needs a little Arc USDC on this agent’s wallet for gas. Copy the agent address from Payments → Fund, fund it, then try again.';
+  }
+  if (message.trim().length > 0 && !message.startsWith('circle_')) return message;
+  return 'Identity registration failed. Try again in a moment.';
 }
 
 export async function registerOnchainIdentityAction(

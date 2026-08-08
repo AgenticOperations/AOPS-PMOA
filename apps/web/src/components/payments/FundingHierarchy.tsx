@@ -57,8 +57,8 @@ function groupAgentWallets(agentWallets: readonly AgentWalletFundingRecord[]): A
 }
 
 /**
- * Fund: pick one of two paths. Treasury deposit only for path 1.
- * Agents listed as balances only — inspect, not deposit targets.
+ * Fund: pick one of two paths. Treasury deposit for path 1.
+ * Agent rows show balance + a copyable address (needed for Arc gas / Register).
  */
 export function FundingHierarchy({ treasuryWallets, agentWallets, orgSlug }: Props) {
   const fundedChains = treasuryWallets.filter((wallet) => wallet.status === 'active');
@@ -177,6 +177,9 @@ function AgentBalanceRow({ group }: { readonly group: AgentFundingGroup }) {
       ) : (
         <span className="fund-roster-meta">{CHAIN_LABELS[selected.chain] ?? selected.chain}</span>
       )}
+      <span className="fund-roster-address">
+        <CopyableAddress address={selected.address} />
+      </span>
       <span className="fund-roster-balance">{usdc(selected.usdcMicros)} USDC</span>
     </li>
   );
