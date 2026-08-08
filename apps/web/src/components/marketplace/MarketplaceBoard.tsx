@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { PublicMarketplaceListing } from '@/lib/server/marketplace-public-client';
 import { MarketplaceChainChip, MarketplaceListingMark } from './MarketplaceMarks';
-import { MarketplaceSparkline } from './MarketplaceSparkline';
+import { MarketplaceSparkline, sparkTone } from './MarketplaceSparkline';
 
 type MarketplaceBoardProps = {
   readonly listings: readonly PublicMarketplaceListing[];
@@ -38,6 +38,22 @@ function sparkValues(
   series: readonly { readonly settledUsdc: string; readonly completedJobs: number }[] | undefined,
 ): number[] {
   return (series ?? []).map((point) => Number.parseFloat(point.settledUsdc) || point.completedJobs);
+}
+
+function seriesDelta(values: readonly number[]): { readonly amount: number; readonly pct: number | null } {
+  if (values.length < 2) return { amount: 0, pct: null };
+  const first = values[0] ?? 0;
+  const last = values[values.length - 1] ?? first;
+  const amount = last - first;
+  const pct = first === 0 ? null : (amount / Math.abs(first)) * 100;
+  return { amount, pct };
+}
+
+function formatDelta(values: readonly number[]): string {
+  const { amount, pct } = seriesDelta(values);
+  const signed = `${amount >= 0 ? '+' : '−'}${Math.abs(amount).toFixed(amount !== 0 && Math.abs(amount) < 0.01 ? 4 : 2)}`;
+  if (pct === null) return `${signed} settled`;
+  return `${signed} (${Math.abs(pct).toFixed(1)}%) settled`;
 }
 
 export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardProps) {
@@ -154,6 +170,7 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
           {visible.map((listing) => {
             const activity = activityById[listing.id];
             const spark = sparkValues(activity?.series);
+            const tone = sparkTone(spark);
             return (
               <li key={listing.id}>
                 <Link className="amkt-card" href={`/marketplace/${encodeURIComponent(listing.id)}`}>
@@ -175,25 +192,26 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                     </div>
                   </div>
 
-                  <div className="amkt-card-body">
+                  <div className={`amkt-card-panel is-${tone}`}>
                     <div className="amkt-card-metric">
-                      <strong>{activity?.reputationScore ?? 0}</strong>
-                      <span className="amkt-card-delta">
-                        {formatUsdc(activity?.settledUsdc ?? '0')} settled
+                      <strong>{formatUsdc(activity?.settledUsdc ?? '0')}</strong>
+                      <span className={`amkt-card-delta is-${tone}`}>
+                        <i aria-hidden="true" className="amkt-card-delta-arrow" />
+                        {formatDelta(spark)}
                       </span>
                     </div>
-                    <div className="amkt-card-meta">
-                      <span className="amkt-card-rails">
-                        {listing.rails.slice(0, 2).join(' · ') || 'Open rails'}
-                      </span>
-                      <span className="amkt-card-price">
-                        {listing.priceHint ?? 'Quote on hire'}
-                      </span>
+                    <div className="amkt-card-chart" aria-hidden="true">
+                      <MarketplaceSparkline height={112} tone={tone} values={spark} width={360} />
                     </div>
                   </div>
 
-                  <div className="amkt-card-chart" aria-hidden="true">
-                    <MarketplaceSparkline height={56} values={spark} width={320} />
+                  <div className="amkt-card-meta">
+                    <span className="amkt-card-rails">
+                      {listing.rails.slice(0, 2).join(' · ') || 'Open rails'}
+                    </span>
+                    <span className="amkt-card-price">
+                      {listing.priceHint ?? 'Quote on hire'}
+                    </span>
                   </div>
                 </Link>
               </li>
@@ -218,6 +236,7 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
               {visible.map((listing, index) => {
                 const activity = activityById[listing.id];
                 const spark = sparkValues(activity?.series);
+                const tone = sparkTone(spark);
                 return (
                   <tr key={listing.id}>
                     <td className="amkt-rank">{index + 1}</td>
@@ -249,7 +268,7 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                     <td><MarketplaceChainChip chain={listing.chain} /></td>
                     <td className="amkt-num">{activity?.reputationScore ?? 0}</td>
                     <td className="amkt-num">{formatUsdc(activity?.settledUsdc ?? '0')}</td>
-                    <td><MarketplaceSparkline values={spark} /></td>
+                    <td><MarketplaceSparkline height={28} tone={tone} values={spark} width={88} /></td>
                   </tr>
                 );
               })}

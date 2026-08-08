@@ -59,6 +59,11 @@ export async function getMarketplaceListingActivity(
     providerAddress: listing.providerAddress,
     since,
   });
+  const fleet = await loadFleetHireStats(pool, {
+    agentId: listing.agentId,
+    providerAddress: listing.providerAddress,
+    since,
+  });
 
   const series = await loadActivitySeries(pool, {
     agentId: listing.agentId,
@@ -72,10 +77,62 @@ export async function getMarketplaceListingActivity(
     providerAddress: listing.providerAddress,
     reputationScore: reputation.score,
     reputationEvents: reputation.events,
-    completedJobs: escrow.completed,
+    completedJobs: escrow.completed + fleet.completed,
     rejectedJobs: escrow.rejected,
-    settledUsdc: escrow.settledUsdc,
+    settledUsdc: addUsdc(escrow.settledUsdc, fleet.settledUsdc),
     series,
+  };
+}
+
+function addUsdc(left: string, right: string): string {
+  const sum = (Number.parseFloat(left) || 0) + (Number.parseFloat(right) || 0);
+  return sum.toFixed(6);
+}
+
+async function loadFleetHireStats(
+  pool: pg.Pool,
+  input: {
+    readonly agentId: string | null;
+    readonly providerAddress: string | null;
+    readonly since: Date;
+  },
+): Promise<{ readonly completed: number; readonly settledUsdc: string }> {
+  // Prefer payee_agent_id when present so shared demo wallets do not
+  // attribute one agent's fleet hires to every listing on that address.
+  if (input.agentId !== null) {
+    const byAgent = await pool.query<{ completed: string; settled_usdc: string | null }>(
+      `SELECT COUNT(*)::text AS completed,
+              COALESCE(SUM(amount_usdc), 0)::text AS settled_usdc
+         FROM payment_events
+        WHERE decision = 'settled'
+          AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
+          AND result->>'payee_agent_id' = $1
+          AND created_at >= $2`,
+      [input.agentId, input.since],
+    );
+    const row = byAgent.rows[0];
+    return {
+      completed: Number.parseInt(row?.completed ?? '0', 10) || 0,
+      settledUsdc: row?.settled_usdc ?? '0.000000',
+    };
+  }
+  if (input.providerAddress === null) {
+    return { completed: 0, settledUsdc: '0.000000' };
+  }
+  const result = await pool.query<{ completed: string; settled_usdc: string | null }>(
+    `SELECT COUNT(*)::text AS completed,
+            COALESCE(SUM(amount_usdc), 0)::text AS settled_usdc
+       FROM payment_events
+      WHERE decision = 'settled'
+        AND lower(recipient) = lower($1)
+        AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
+        AND created_at >= $2`,
+    [input.providerAddress, input.since],
+  );
+  const row = result.rows[0];
+  return {
+    completed: Number.parseInt(row?.completed ?? '0', 10) || 0,
+    settledUsdc: row?.settled_usdc ?? '0.000000',
   };
 }
 
@@ -165,6 +222,55 @@ async function loadActivitySeries(
         completedJobs: Number.parseInt(row.completed, 10) || 0,
         reputationEvents: 0,
       });
+    }
+
+    const fleetDays = await pool.query<{
+      day: string;
+      settled_usdc: string;
+      completed: string;
+    }>(
+      input.agentId !== null
+        ? `SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+                  COALESCE(SUM(amount_usdc), 0)::text AS settled_usdc,
+                  COUNT(*)::text AS completed
+             FROM payment_events
+            WHERE decision = 'settled'
+              AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
+              AND result->>'payee_agent_id' = $1
+              AND created_at >= $2
+            GROUP BY 1
+            ORDER BY 1 ASC`
+        : `SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+                  COALESCE(SUM(amount_usdc), 0)::text AS settled_usdc,
+                  COUNT(*)::text AS completed
+             FROM payment_events
+            WHERE decision = 'settled'
+              AND lower(recipient) = lower($1)
+              AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
+              AND created_at >= $2
+            GROUP BY 1
+            ORDER BY 1 ASC`,
+      input.agentId !== null
+        ? [input.agentId, input.since]
+        : [input.providerAddress, input.since],
+    );
+    for (const row of fleetDays.rows) {
+      const existing = byDay.get(row.day);
+      const fleetJobs = Number.parseInt(row.completed, 10) || 0;
+      if (existing === undefined) {
+        byDay.set(row.day, {
+          day: row.day,
+          settledUsdc: row.settled_usdc,
+          completedJobs: fleetJobs,
+          reputationEvents: 0,
+        });
+      } else {
+        byDay.set(row.day, {
+          ...existing,
+          settledUsdc: addUsdc(existing.settledUsdc, row.settled_usdc),
+          completedJobs: existing.completedJobs + fleetJobs,
+        });
+      }
     }
   }
 

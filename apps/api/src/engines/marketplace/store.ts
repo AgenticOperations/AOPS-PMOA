@@ -30,6 +30,7 @@ type PublishedAgentRow = {
   readonly metadata: unknown;
   readonly description: string;
   readonly wallet_address: string | null;
+  readonly wallet_chain: PaymentChain | null;
   readonly identity_status: 'pending' | 'registered' | 'failed' | null;
   readonly identity_token_id: string | null;
 };
@@ -162,22 +163,28 @@ export async function listMarketplaceListings(
     })];
   }
 
-  const listingChain = input.chain ?? 'arc';
   const agentResult = await pool.query<PublishedAgentRow>(
     `SELECT DISTINCT ON (a.id)
             a.id, a.org_id, a.name, a.status, a.metadata, a.description,
             w.address AS wallet_address,
+            w.chain AS wallet_chain,
             i.status AS identity_status,
             i.token_id::text AS identity_token_id
        FROM agents a
-       LEFT JOIN agent_chain_wallets w
-         ON w.agent_id = a.id AND w.mode = $1 AND w.chain = $2 AND w.status = 'active'
+       LEFT JOIN LATERAL (
+         SELECT address, chain
+           FROM agent_chain_wallets
+          WHERE agent_id = a.id AND mode = $1 AND status = 'active'
+            AND ($2::text IS NULL OR chain = $2)
+          ORDER BY CASE chain WHEN 'arc' THEN 0 WHEN 'base' THEN 1 ELSE 2 END, created_at ASC
+          LIMIT 1
+       ) w ON true
        LEFT JOIN agent_onchain_identities i
-         ON i.agent_id = a.id AND i.mode = $1 AND i.chain = $2
+         ON i.agent_id = a.id AND i.mode = $1 AND i.chain = coalesce(w.chain, coalesce($2, 'arc'))
       WHERE a.status <> 'deactivated'
         AND coalesce(a.metadata->>'public_endpoint_url', '') <> ''
       ORDER BY a.id, a.name ASC`,
-    [input.mode, listingChain],
+    [input.mode, input.chain ?? null],
   );
 
   const agents: MarketplaceListing[] = agentResult.rows.flatMap((row) => {
@@ -185,6 +192,8 @@ export async function listMarketplaceListings(
     const endpointUrl = stringMeta(metadata, 'public_endpoint_url');
     if (endpointUrl === null) return [];
     const providerAddress = row.wallet_address;
+    const chain = (row.wallet_chain ?? input.chain ?? 'arc') as PaymentChain;
+    if (input.chain !== undefined && chain !== input.chain) return [];
     const rails: MarketplaceRail[] = providerAddress === null ? ['x402'] : ['x402', 'escrow'];
     return [{
       id: agentListingId(row.id),
@@ -195,7 +204,7 @@ export async function listMarketplaceListings(
         ? row.description
         : 'Published AgentOps agent with a public hireable endpoint.',
       endpointUrl,
-      chain: listingChain,
+      chain,
       priceHint: null,
       providerAddress,
       rails,
@@ -269,13 +278,19 @@ export async function getMarketplaceListing(
   const result = await pool.query<PublishedAgentRow>(
     `SELECT a.id, a.org_id, a.name, a.status, a.metadata, a.description,
             w.address AS wallet_address,
+            w.chain AS wallet_chain,
             i.status AS identity_status,
             i.token_id::text AS identity_token_id
        FROM agents a
-       LEFT JOIN agent_chain_wallets w
-         ON w.agent_id = a.id AND w.mode = $2 AND w.chain = 'arc' AND w.status = 'active'
+       LEFT JOIN LATERAL (
+         SELECT address, chain
+           FROM agent_chain_wallets
+          WHERE agent_id = a.id AND mode = $2 AND status = 'active'
+          ORDER BY CASE chain WHEN 'arc' THEN 0 WHEN 'base' THEN 1 ELSE 2 END, created_at ASC
+          LIMIT 1
+       ) w ON true
        LEFT JOIN agent_onchain_identities i
-         ON i.agent_id = a.id AND i.mode = $2 AND i.chain = 'arc'
+         ON i.agent_id = a.id AND i.mode = $2 AND i.chain = coalesce(w.chain, 'arc')
       WHERE a.id = $1
         AND a.status <> 'deactivated'
         AND coalesce(a.metadata->>'public_endpoint_url', '') <> ''
@@ -292,6 +307,7 @@ export async function getMarketplaceListing(
     throw new IdentityError('listing_not_found', 404, 'Marketplace listing was not found.');
   }
   const providerAddress = row.wallet_address;
+  const chain = (row.wallet_chain ?? 'arc') as PaymentChain;
   return {
     id: agentListingId(row.id),
     kind: 'agent',
@@ -301,7 +317,7 @@ export async function getMarketplaceListing(
       ? row.description
       : 'Published AgentOps agent with a public hireable endpoint.',
     endpointUrl,
-    chain: 'arc',
+    chain,
     priceHint: null,
     providerAddress,
     rails: providerAddress === null ? ['x402'] : ['x402', 'escrow'],

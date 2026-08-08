@@ -85,7 +85,36 @@ function escrowTxHash(job: EscrowJobActivityRecord): string | null {
 function rowsForTab(props: TreasuryActivityProps): EvidenceRow[] {
   if (props.activeTab === 'payments') return props.paymentEvents.map((event) => {
     const status = paymentStatus(event);
-    return { amount: formatMoney(event.amount_usdc), chain: event.chain, id: event.id, outcome: status.label, primary: event.resource_category ?? event.asset, secondary: event.agent_id, target: formatRail(event.rail), time: event.created_at, details: [{ label: 'Recipient', value: event.recipient }, { label: 'Network', value: event.network }, { label: 'Resource URL', value: event.resource_url ?? 'Not recorded' }, { label: 'Provider mode', value: titleCase(event.provider_mode) }, { label: 'Reservation', value: event.reservation_id ?? 'None' }] };
+    const result = event.result as Record<string, unknown>;
+    const txHash = typeof result.tx_hash === 'string' ? result.tx_hash : null;
+    const payeeName = typeof result.payee_name === 'string' ? result.payee_name : null;
+    const payeeAgentId = typeof result.payee_agent_id === 'string' ? result.payee_agent_id : null;
+    const lane = typeof result.lane === 'string' ? result.lane : null;
+    const explorer = (event.chain === 'arc' || event.chain === 'base') && txHash !== null
+      ? `${EXPLORER_TX_BASE[event.chain]}${txHash}`
+      : null;
+    return {
+      amount: formatMoney(event.amount_usdc),
+      chain: event.chain,
+      id: event.id,
+      outcome: status.label,
+      primary: event.resource_category ?? event.asset,
+      secondary: payeeName === null ? event.agent_id : `payer ${event.agent_id.slice(0, 12)}… → ${payeeName}`,
+      target: lane === 'permit2_intra_fleet' ? 'Permit2 · Fleet' : formatRail(event.rail),
+      time: event.created_at,
+      details: [
+        { label: 'Payer agent', value: event.agent_id },
+        ...(payeeName === null ? [] : [{ label: 'Payee agent', value: payeeName }]),
+        ...(payeeAgentId === null ? [] : [{ label: 'Payee agent id', value: payeeAgentId }]),
+        { label: 'Recipient wallet', value: event.recipient },
+        { label: 'Network', value: event.network },
+        { label: 'Resource URL', value: event.resource_url ?? 'Not recorded' },
+        ...(txHash === null ? [] : [{ label: 'Tx hash', value: txHash }]),
+        ...(explorer === null ? [] : [{ label: 'Explorer', value: explorer }]),
+        { label: 'Lane', value: lane ?? titleCase(event.provider_mode) },
+        { label: 'Reservation', value: event.reservation_id ?? 'None' },
+      ],
+    };
   });
   if (props.activeTab === 'routing') return props.routeObservations.map((observation) => ({ amount: formatMoney(observation.amount_usdc), chain: observation.supported_rail === null ? null : observation.supported_rail.replace(/^gateway_|^exact_/, '') as PaymentChain, id: observation.id, outcome: titleCase(observation.outcome), primary: observation.resource_category ?? observation.requested_asset ?? 'x402 request', secondary: observation.agent_id, target: formatOptionalRail(observation.supported_rail), time: observation.observed_at, details: [{ label: 'Reason', value: observation.reason_code }, { label: 'Requested network', value: observation.requested_network ?? 'Not recorded' }, { label: 'Requested rail', value: observation.requested_rail ?? 'Not recorded' }, { label: 'Resource URL', value: observation.resource_url ?? 'Not recorded' }] }));
   if (props.activeTab === 'reservations') return props.reservations.map((reservation) => ({ amount: formatMoney(reservation.amount_usdc), chain: reservation.rail.replace(/^gateway_|^exact_/, '') as PaymentChain, id: reservation.id, outcome: titleCase(reservation.status), primary: reservation.reason_code, secondary: reservation.agent_id, target: formatRail(reservation.rail), time: reservation.updated_at, details: [{ label: 'Quote hash', value: reservation.quote_hash }, { label: 'Source', value: reservation.source_id }, { label: 'Expires', value: formatUtcDateTime(reservation.expires_at) }, { label: 'Connection', value: reservation.connection_id ?? 'None' }] }));

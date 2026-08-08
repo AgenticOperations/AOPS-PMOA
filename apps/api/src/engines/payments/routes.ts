@@ -1381,7 +1381,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
           'Paying agent cannot hire itself — choose a different paying agent.',
         );
       }
-      await resolveClientAgentAuth(deps.pool, params.orgId, body.client_agent_id);
+      const clientAuth = await resolveClientAgentAuth(deps.pool, params.orgId, body.client_agent_id);
       try {
         const payment = await payIntraFleet(deps.pool, providerForOrg(params.orgId), {
           orgId: params.orgId,
@@ -1391,6 +1391,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
           chain: listing.chain,
           url,
           approvedBy: operator.actorId,
+          connectionId: clientAuth.connection_id,
         });
         return {
           lane: 'permit2_intra_fleet',
@@ -1592,6 +1593,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
       chain: input.chain,
       url: input.url,
       approvedBy: auth.connection_id,
+      connectionId: auth.connection_id,
     });
     return { payment: result };
   });

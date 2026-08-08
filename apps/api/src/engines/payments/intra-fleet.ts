@@ -1,10 +1,11 @@
 import type pg from 'pg';
+import { prefixedId } from '../identity/ids.js';
 import { resolveAgentPayee } from './agent-payee.js';
 import { nativeBalanceMicros } from './agent-wallets.js';
 import { fundAgentFromTreasuryDelegation } from './agent-funding.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { drawDown, recordSignedDelegation } from './permit2.js';
-import type { PaymentChain, PaymentMode } from './types.js';
+import type { PaymentChain, PaymentMode, PaymentRail } from './types.js';
 
 // Intra-fleet payments settle via Permit2 drawdown -- a direct
 // transferFrom() against a standing delegation -- not Circle's x402
@@ -41,6 +42,15 @@ function amountMicrosFromAccept(accept: X402Accept): bigint {
 const DEFAULT_DELEGATION_CEILING_USDC = '5.00';
 const DEFAULT_DELEGATION_TTL_MS = 24 * 60 * 60 * 1000;
 
+const CHAIN_NETWORK: Readonly<Record<PaymentChain, string>> = {
+  arc: 'eip155:5042002',
+  base: 'eip155:84532',
+  arbitrum: 'eip155:421614',
+  polygon: 'eip155:80002',
+  optimism: 'eip155:11155420',
+  avalanche: 'eip155:43113',
+};
+
 export type PayIntraFleetInput = {
   readonly orgId: string;
   readonly payerAgentId: string;
@@ -49,6 +59,7 @@ export type PayIntraFleetInput = {
   readonly chain: PaymentChain;
   readonly url: string;
   readonly approvedBy: string;
+  readonly connectionId?: string | null | undefined;
 };
 
 export type PayIntraFleetResult = {
@@ -56,12 +67,17 @@ export type PayIntraFleetResult = {
   readonly body: unknown;
   readonly txHash: string;
   readonly amountUsdc: string;
+  readonly paymentEventId: string;
 };
 
 function formatUsdc(micros: bigint): string {
   const whole = micros / 1_000_000n;
   const decimal = (micros % 1_000_000n).toString().padStart(6, '0');
   return `${whole.toString()}.${decimal}`;
+}
+
+function railForChain(chain: PaymentChain): PaymentRail {
+  return `exact_${chain}` as PaymentRail;
 }
 
 async function findActiveDelegationWithHeadroom(
@@ -84,6 +100,69 @@ async function findActiveDelegationWithHeadroom(
   return { id: row.id };
 }
 
+async function recordIntraFleetPaymentEvent(
+  pool: pg.Pool,
+  input: {
+    readonly orgId: string;
+    readonly payerAgentId: string;
+    readonly payeeAgentId: string;
+    readonly payeeName: string;
+    readonly payeeAddress: string;
+    readonly connectionId: string | null;
+    readonly mode: PaymentMode;
+    readonly chain: PaymentChain;
+    readonly amountUsdc: string;
+    readonly url: string;
+    readonly txHash: string;
+    readonly httpStatus: number;
+  },
+): Promise<string> {
+  const eventId = prefixedId('payevt');
+  const delivered = input.httpStatus >= 200 && input.httpStatus < 300;
+  await pool.query(
+    `INSERT INTO payment_events (
+       id, org_id, agent_id, connection_id, source_id, reservation_id,
+       decision, provider_mode, rail, chain, amount_usdc, asset,
+       recipient, network, resource_url, resource_category, quote, result, activity_id
+     )
+     VALUES (
+       $1, $2, $3, $4, NULL, NULL,
+       'settled', $5, $6, $7, $8::numeric, 'USDC',
+       $9, $10, $11, $12, $13::jsonb, $14::jsonb, NULL
+     )`,
+    [
+      eventId,
+      input.orgId,
+      input.payerAgentId,
+      input.connectionId,
+      input.mode,
+      railForChain(input.chain),
+      input.chain,
+      input.amountUsdc,
+      input.payeeAddress,
+      CHAIN_NETWORK[input.chain],
+      input.url,
+      `Fleet hire → ${input.payeeName}`,
+      JSON.stringify({
+        lane: 'permit2_intra_fleet',
+        scheme: 'permit2',
+        payee_agent_id: input.payeeAgentId,
+        payee_name: input.payeeName,
+        amount_usdc: input.amountUsdc,
+      }),
+      JSON.stringify({
+        settlement: 'settled',
+        lane: 'permit2_intra_fleet',
+        tx_hash: input.txHash,
+        payee_agent_id: input.payeeAgentId,
+        payee_name: input.payeeName,
+        fulfillment: { status: delivered ? 'delivered' : 'failed', http_status: input.httpStatus },
+      }),
+    ],
+  );
+  return eventId;
+}
+
 /**
  * Pays a fleet agent for a paid HTTP resource: discovers the 402 (real
  * x402 price quote), resolves the payee as an auto-allowlisted fleet
@@ -102,6 +181,11 @@ export async function payIntraFleet(
     mode: input.mode,
     chain: input.chain,
   });
+  const payeeNameResult = await pool.query<{ name: string }>(
+    'SELECT name FROM agents WHERE id = $1 AND org_id = $2 LIMIT 1',
+    [input.payeeAgentId, input.orgId],
+  );
+  const payeeName = payeeNameResult.rows[0]?.name ?? input.payeeAgentId;
 
   const discovery = await fetch(input.url, { method: 'GET' });
   if (discovery.status !== 402) throw new Error('intra_fleet_payment_not_required');
@@ -152,6 +236,23 @@ export async function payIntraFleet(
     headers: { 'x-payment': draw.txHash },
   });
   const body = await paid.json().catch(() => undefined);
+  const amountUsdc = formatUsdc(amountMicros);
+  const connectionId = input.connectionId
+    ?? (input.approvedBy.startsWith('conn_') ? input.approvedBy : null);
+  const paymentEventId = await recordIntraFleetPaymentEvent(pool, {
+    orgId: input.orgId,
+    payerAgentId: input.payerAgentId,
+    payeeAgentId: input.payeeAgentId,
+    payeeName,
+    payeeAddress: payee.address,
+    connectionId,
+    mode: input.mode,
+    chain: input.chain,
+    amountUsdc,
+    url: input.url,
+    txHash: draw.txHash,
+    httpStatus: paid.status,
+  });
 
-  return { status: paid.status, body, txHash: draw.txHash, amountUsdc: formatUsdc(amountMicros) };
+  return { status: paid.status, body, txHash: draw.txHash, amountUsdc, paymentEventId };
 }
