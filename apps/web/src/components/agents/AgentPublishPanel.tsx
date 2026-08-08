@@ -20,7 +20,7 @@ type AgentPublishPanelProps = {
   readonly endpointUrl: string;
   readonly identity: AgentOnchainIdentityView;
   readonly saveListingAction: (formData: FormData) => Promise<void>;
-  readonly registerIdentityAction: (formData: FormData) => Promise<void>;
+  readonly registerIdentityAction: (formData: FormData) => Promise<FormState>;
 };
 
 type FormState = { readonly error?: string; readonly ok?: string };
@@ -57,8 +57,9 @@ export function AgentPublishPanel({
   const [registerState, registerAction, registerPending] = useActionState(
     async (_state: FormState, formData: FormData): Promise<FormState> => {
       try {
-        await registerIdentityAction(formData);
-        return { ok: 'Registered.' };
+        const result = await registerIdentityAction(formData);
+        if (result.error !== undefined || result.ok !== undefined) return result;
+        return { ok: 'Registered on Arc.' };
       } catch (error) {
         return { error: error instanceof Error ? error.message : 'Identity registration failed.' };
       }

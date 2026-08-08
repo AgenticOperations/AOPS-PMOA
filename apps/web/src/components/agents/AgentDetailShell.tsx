@@ -115,7 +115,7 @@ export function AgentDetailShell({
     readonly bindPolicy?: ((formData: FormData) => Promise<void>) | undefined;
     readonly removePolicyBinding?: ((formData: FormData) => Promise<void>) | undefined;
     readonly savePublishListing?: ((formData: FormData) => Promise<void>) | undefined;
-    readonly registerOnchainIdentity?: ((formData: FormData) => Promise<void>) | undefined;
+    readonly registerOnchainIdentity?: ((formData: FormData) => Promise<{ readonly error?: string; readonly ok?: string }>) | undefined;
   } | undefined;
 }) {
   const [drawer, setDrawer] = useState<'edit' | 'lifecycle' | 'policy' | null>(null);
@@ -397,9 +397,7 @@ export function AgentDetailShell({
           credentialsHref={`/app/${orgSlug}/agents/${agent.id}?tab=credentials`}
           registerIdentityAction={
             actions?.registerOnchainIdentity
-            ?? (async () => {
-              throw new Error('Identity registration is unavailable.');
-            })
+            ?? (async () => ({ error: 'Identity registration is unavailable.' }))
           }
           saveListingAction={
             actions?.savePublishListing

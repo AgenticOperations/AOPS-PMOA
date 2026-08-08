@@ -171,7 +171,11 @@ describe('ERC-8004 identity registration', () => {
         chain: 'arc',
         agentUri: 'https://example.test/agents/nowallet.json',
       }),
-    ).rejects.toThrow(/erc8004_agent_wallet_not_found/);
+    ).rejects.toMatchObject({
+      code: 'erc8004_agent_wallet_not_found',
+      statusCode: 409,
+      message: expect.stringMatching(/does not have an Arc wallet/i),
+    });
   });
 
   it('throws rather than guessing when the receipt carries no Registered log', async () => {

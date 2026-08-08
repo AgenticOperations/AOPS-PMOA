@@ -1,5 +1,6 @@
 import { decodeEventLog, parseAbi } from 'viem';
 import type pg from 'pg';
+import { IdentityError } from './errors.js';
 import { prefixedId } from './ids.js';
 import { findAgentWallet, chainRpcUrl } from '../payments/agent-wallets.js';
 import type { CircleTreasuryProvider } from '../payments/circle-provider.js';
@@ -186,7 +187,13 @@ export async function registerAgentIdentity(
     if (existingRow !== undefined && existingRow.status === 'registered') return existingRow;
 
     const wallet = await findAgentWallet(client, input.agentId, input.mode, input.chain);
-    if (wallet === null) throw new Error(`erc8004_agent_wallet_not_found:${input.agentId}`);
+    if (wallet === null) {
+      throw new IdentityError(
+        'erc8004_agent_wallet_not_found',
+        409,
+        'This agent does not have an Arc wallet yet. Enable payment access for the agent, wait until the wallet is active, then try Register on Arc again.',
+      );
+    }
 
     // The agent's own wallet submits and becomes the NFT owner -- ERC-8004
     // gives the token owner control of the entry, and Reputation Registry's

@@ -17,7 +17,7 @@ import {
   testConnection,
   updateAgent,
 } from '@/lib/server/identity-spine-client';
-import { registerAgentOnchainIdentity } from '@/lib/server/payments-client';
+import { PaymentsApiError, registerAgentOnchainIdentity } from '@/lib/server/payments-client';
 
 export type ConnectionActionState = {
   readonly error?: string;
@@ -341,21 +341,47 @@ export async function savePublishListingAction(
   revalidatePath(agentDetailPath(orgSlug, agentId));
 }
 
+export type PublishIdentityActionState = {
+  readonly error?: string | undefined;
+  readonly ok?: string | undefined;
+};
+
+function friendlyIdentityRegisterError(error: unknown): string {
+  const code = error instanceof PaymentsApiError ? error.code : null;
+  const message = error instanceof Error ? error.message : '';
+  if (
+    code === 'erc8004_agent_wallet_not_found'
+    || message.includes('erc8004_agent_wallet_not_found')
+  ) {
+    return 'This agent does not have an Arc wallet yet. Enable payment access for the agent, wait until the wallet is active, then try again.';
+  }
+  if (code === 'circle_worker_unavailable' || message.includes('worker is unavailable')) {
+    return 'Circle Agent Wallet worker is unavailable. Try again in a moment.';
+  }
+  if (message.trim().length > 0) return message;
+  return 'Identity registration failed.';
+}
+
 export async function registerOnchainIdentityAction(
   orgId: string,
   orgSlug: string,
   agentId: string,
   formData: FormData,
-): Promise<void> {
-  const endpointUrl = requiredStringField(formData, 'endpoint_url');
-  const detail = await getAgentDetail(orgId, agentId);
-  await updateAgent(orgId, agentId, {
-    metadata: {
-      ...detail.agent.metadata,
-      public_endpoint_url: endpointUrl,
-      setup_mode: 'publish',
-    },
-  });
-  await registerAgentOnchainIdentity(orgId, agentId, { endpoint_url: endpointUrl });
-  revalidatePath(agentDetailPath(orgSlug, agentId));
+): Promise<PublishIdentityActionState> {
+  try {
+    const endpointUrl = requiredStringField(formData, 'endpoint_url');
+    const detail = await getAgentDetail(orgId, agentId);
+    await updateAgent(orgId, agentId, {
+      metadata: {
+        ...detail.agent.metadata,
+        public_endpoint_url: endpointUrl,
+        setup_mode: 'publish',
+      },
+    });
+    await registerAgentOnchainIdentity(orgId, agentId, { endpoint_url: endpointUrl });
+    revalidatePath(agentDetailPath(orgSlug, agentId));
+    return { ok: 'Registered on Arc.' };
+  } catch (error) {
+    return { error: friendlyIdentityRegisterError(error) };
+  }
 }
