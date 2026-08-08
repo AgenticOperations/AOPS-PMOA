@@ -15,10 +15,24 @@ export function MarketplaceActivityChart({ activity }: MarketplaceActivityChartP
 
   const series = useMemo(() => {
     const days = Number.parseInt(range, 10);
-    const cutoff = new Date();
-    cutoff.setUTCDate(cutoff.getUTCDate() - days);
-    const cutoffKey = cutoff.toISOString().slice(0, 10);
-    return activity.series.filter((point) => point.day >= cutoffKey);
+    const byDay = new Map(
+      activity.series.map((point) => [point.day, point] as const),
+    );
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const padded: MarketplaceListingActivity['series'][number][] = [];
+    for (let offset = days - 1; offset >= 0; offset -= 1) {
+      const day = new Date(today);
+      day.setUTCDate(today.getUTCDate() - offset);
+      const key = day.toISOString().slice(0, 10);
+      padded.push(byDay.get(key) ?? {
+        day: key,
+        settledUsdc: '0',
+        completedJobs: 0,
+        reputationEvents: 0,
+      });
+    }
+    return padded;
   }, [activity.series, range]);
 
   const events = useMemo(() => {
@@ -30,6 +44,7 @@ export function MarketplaceActivityChart({ activity }: MarketplaceActivityChartP
   }, [activity.recentEvents, range]);
 
   const values = series.map((point) => Number.parseFloat(point.settledUsdc) || point.completedJobs);
+  const hasActivity = values.some((value) => value > 0);
   const width = 640;
   const height = 240;
   const padX = 8;
@@ -105,7 +120,7 @@ export function MarketplaceActivityChart({ activity }: MarketplaceActivityChartP
       </div>
 
       <div className="amkt-chart-canvas">
-        {points.length < 2 ? (
+        {!hasActivity ? (
           <div className="amkt-chart-empty">
             <p>No settled on-chain activity in this window yet.</p>
             <p>Run live marketplace hires (Permit2 / x402 / escrow) to fill this chart.</p>

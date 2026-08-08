@@ -15,7 +15,15 @@ type Point = { readonly x: number; readonly y: number };
 
 function densify(values: readonly number[], target = 32): number[] {
   if (values.length === 0) return Array.from({ length: target }, () => 0);
-  if (values.length === 1) return Array.from({ length: target }, () => values[0] ?? 0);
+  if (values.length === 1) {
+    // Single settlement day: ease from zero so the card shows a real curve.
+    const peak = values[0] ?? 0;
+    return Array.from({ length: target }, (_, index) => {
+      const t = index / (target - 1);
+      const s = t * t * (3 - 2 * t);
+      return peak * s;
+    });
+  }
   if (values.length >= target) return [...values];
 
   const out: number[] = [];
@@ -75,9 +83,13 @@ function areaPath(line: string, width: number, height: number): string {
 }
 
 export function sparkTone(values: readonly number[]): SparkTone {
-  if (values.length < 2) return 'flat';
-  const first = values[0] ?? 0;
-  const last = values[values.length - 1] ?? first;
+  const nonzero = values.filter((value) => value > 0);
+  if (nonzero.length === 0) return 'flat';
+  if (values.length < 2) return nonzero.length > 0 ? 'up' : 'flat';
+  const first = values.find((value) => value > 0) ?? values[0] ?? 0;
+  const last = [...values].reverse().find((value) => value > 0) ?? values[values.length - 1] ?? first;
+  // Fresh single-day activity after zeros reads as an uptick.
+  if (values.slice(0, -1).every((value) => value === 0) && last > 0) return 'up';
   if (last > first) return 'up';
   if (last < first) return 'down';
   return 'flat';
@@ -92,7 +104,8 @@ export function MarketplaceSparkline({
   const reactId = useId().replace(/:/g, '');
   const gradientId = `amkt-spark-fill-${reactId}`;
   const resolvedTone = tone ?? sparkTone(values);
-  const empty = values.length < 2 || values.every((value) => value === 0);
+  // Only all-zero series is empty. A single settlement day still draws a curve.
+  const empty = values.length === 0 || values.every((value) => value === 0);
 
   if (empty) {
     const mid = height * 0.62;

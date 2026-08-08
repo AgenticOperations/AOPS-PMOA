@@ -35,9 +35,35 @@ function formatUsdc(value: string): string {
 }
 
 function sparkValues(
-  series: readonly { readonly settledUsdc: string; readonly completedJobs: number }[] | undefined,
+  series: readonly { readonly day?: string; readonly settledUsdc: string; readonly completedJobs: number }[] | undefined,
+  windowDays = 14,
 ): number[] {
-  return (series ?? []).map((point) => Number.parseFloat(point.settledUsdc) || point.completedJobs);
+  const points = series ?? [];
+  if (points.length === 0) return Array.from({ length: windowDays }, () => 0);
+
+  const byDay = new Map<string, number>();
+  for (const point of points) {
+    const value = Number.parseFloat(point.settledUsdc) || point.completedJobs;
+    if (point.day !== undefined && point.day.length > 0) {
+      byDay.set(point.day, (byDay.get(point.day) ?? 0) + value);
+    }
+  }
+
+  // Prefer calendar padding when days are present — one busy day still charts.
+  if (byDay.size > 0) {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const out: number[] = [];
+    for (let offset = windowDays - 1; offset >= 0; offset -= 1) {
+      const day = new Date(today);
+      day.setUTCDate(today.getUTCDate() - offset);
+      const key = day.toISOString().slice(0, 10);
+      out.push(byDay.get(key) ?? 0);
+    }
+    return out;
+  }
+
+  return points.map((point) => Number.parseFloat(point.settledUsdc) || point.completedJobs);
 }
 
 function seriesDelta(values: readonly number[]): { readonly amount: number; readonly pct: number | null } {
