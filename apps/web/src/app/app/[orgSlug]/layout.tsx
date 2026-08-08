@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { ConsoleQueryProvider } from '@/components/ConsoleQueryProvider';
 import { ConsoleShell } from '@/components/ConsoleShell';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 
@@ -19,5 +20,9 @@ export default async function ConsoleOrgLayout({ children, params }: ConsoleOrgL
     redirect('/auth');
   }
 
-  return <ConsoleShell org={org}>{children}</ConsoleShell>;
+  return (
+    <ConsoleQueryProvider>
+      <ConsoleShell org={org}>{children}</ConsoleShell>
+    </ConsoleQueryProvider>
+  );
 }
