@@ -50,6 +50,25 @@ describe('AOPS public landing page', () => {
     expect(screen.getByText('One evidence trail')).toBeInTheDocument();
     expect(screen.queryByText('2 rails verified')).not.toBeInTheDocument();
     expect(screen.queryByText('Ready')).not.toBeInTheDocument();
+
+    expect(screen.getByRole('heading', { name: /From agent intent/i })).toBeInTheDocument();
+    expect(screen.getByText('Orchestrator')).toBeInTheDocument();
+    const specialists = screen.getByRole('list', { name: 'Specialist agents' });
+    expect(within(specialists).getByText('DataFetcher')).toBeInTheDocument();
+    expect(within(specialists).getByText('SeniorReviewer')).toBeInTheDocument();
+    expect(within(specialists).getAllByRole('listitem')).toHaveLength(4);
+
+    fireEvent.click(within(stages).getByRole('tab', { name: /Prove/i }));
+    const arcTx = screen.getByRole('link', { name: '0xb48b…0904' });
+    expect(arcTx).toHaveAttribute(
+      'href',
+      'https://testnet.arcscan.app/tx/0xb48bdf0f541b415b4fcefb3b39e22f11507772a6ec76faef9d94f96abbe80904',
+    );
+    const baseTx = screen.getByRole('link', { name: '0xb84b…308a' });
+    expect(baseTx).toHaveAttribute(
+      'href',
+      'https://sepolia.basescan.org/tx/0xb84b2c0af82edb983a2fb863068d44210f125b8b9899ef1455a2ad8bbb6c308a',
+    );
   });
 
   it('uses local canonical chain assets and a complete reveal footer', async () => {

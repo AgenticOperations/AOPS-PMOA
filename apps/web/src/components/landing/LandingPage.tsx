@@ -9,12 +9,24 @@ function Manifesto() {
   return (
     <section className="aops-manifesto">
       <div className="aops-wrap aops-manifesto-grid">
-        <aside><span>The missing layer</span><p>Agents are getting more capable. Operational control has not kept up.</p></aside>
+        <aside>
+          <span>The missing layer</span>
+          <p>Agents are getting more capable. Operational control has not kept up.</p>
+        </aside>
         <div>
-          <p className="aops-manifesto-copy">Agents can call tools, move money, and act across systems. <span>Most teams still cannot answer who acted, what they were allowed to do, or why a decision was made.</span></p>
+          <p className="aops-manifesto-copy">
+            Agents can call tools, move money, and act across systems.{' '}
+            <span>Most teams still cannot answer who acted, what they were allowed to do, or why a decision was made.</span>
+          </p>
           <div className="aops-manifesto-proof">
-            <div><strong>Boundaries before execution.</strong><p>Identity and policy are evaluated before an action reaches a tool, approval, or payment rail.</p></div>
-            <div><strong>Evidence after the fact.</strong><p>Every relevant decision and outcome stays attributable to the agent, organization, and policy context.</p></div>
+            <div>
+              <strong>Boundaries before execution.</strong>
+              <p>Identity and policy are evaluated before an action reaches a tool, approval, or payment rail.</p>
+            </div>
+            <div>
+              <strong>Evidence after the fact.</strong>
+              <p>Every relevant decision and outcome stays attributable to the agent, organization, and policy context.</p>
+            </div>
           </div>
         </div>
       </div>
