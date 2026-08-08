@@ -13,6 +13,11 @@ export type AgentOnchainIdentityView = {
   readonly chain: string;
 } | null;
 
+export type PublishIdentityFormState = {
+  readonly error?: string;
+  readonly ok?: string;
+};
+
 type AgentPublishPanelProps = {
   readonly templateRepoUrl: string;
   readonly marketplaceHref: string;
@@ -20,10 +25,10 @@ type AgentPublishPanelProps = {
   readonly endpointUrl: string;
   readonly identity: AgentOnchainIdentityView;
   readonly saveListingAction: (formData: FormData) => Promise<void>;
-  readonly registerIdentityAction: (formData: FormData) => Promise<FormState>;
+  readonly registerIdentityAction: (formData: FormData) => Promise<PublishIdentityFormState>;
 };
 
-type FormState = { readonly error?: string; readonly ok?: string };
+type FormState = PublishIdentityFormState;
 
 const explorerBase = 'https://testnet.arcscan.app';
 const arcNanopaymentsUrl = 'https://github.com/circlefin/arc-nanopayments';

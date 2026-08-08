@@ -17,7 +17,7 @@ import { AgentAvatar } from './AgentAvatar';
 import { ConnectionPanel } from './ConnectionPanel';
 import { AgentActivityWorkspace } from './AgentActivityWorkspace';
 import { WalletRefsPanel } from './WalletRefsPanel';
-import { AgentPublishPanel, type AgentOnchainIdentityView } from './AgentPublishPanel';
+import { AgentPublishPanel, type AgentOnchainIdentityView, type PublishIdentityFormState } from './AgentPublishPanel';
 import { formatUtcDateTime } from '@/lib/date-format';
 import {
   Sheet,
@@ -115,7 +115,7 @@ export function AgentDetailShell({
     readonly bindPolicy?: ((formData: FormData) => Promise<void>) | undefined;
     readonly removePolicyBinding?: ((formData: FormData) => Promise<void>) | undefined;
     readonly savePublishListing?: ((formData: FormData) => Promise<void>) | undefined;
-    readonly registerOnchainIdentity?: ((formData: FormData) => Promise<{ readonly error?: string; readonly ok?: string }>) | undefined;
+    readonly registerOnchainIdentity?: ((formData: FormData) => Promise<PublishIdentityFormState>) | undefined;
   } | undefined;
 }) {
   const [drawer, setDrawer] = useState<'edit' | 'lifecycle' | 'policy' | null>(null);
