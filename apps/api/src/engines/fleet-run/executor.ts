@@ -287,7 +287,11 @@ export async function executeFleetRun(
     });
     return getFleetRun(pool, input.orgId, input.runId);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'fleet_run_failed';
+    const message = error instanceof IdentityError
+      ? `${error.code}: ${error.message}`
+      : error instanceof Error
+        ? error.message
+        : 'fleet_run_failed';
     await updateFleetRunState(pool, {
       orgId: input.orgId,
       runId: input.runId,
@@ -300,7 +304,10 @@ export async function executeFleetRun(
       orgId: input.orgId,
       runId: input.runId,
       kind: 'failed',
-      payload: { error: message },
+      payload: {
+        error: message,
+        code: error instanceof IdentityError ? error.code : 'fleet_run_failed',
+      },
     });
     if (error instanceof IdentityError) throw error;
     throw new IdentityError('fleet_run_failed', 500, message);

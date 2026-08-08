@@ -26,6 +26,7 @@ const CHAIN_BY_ROLE: Readonly<Record<FleetResolvedAgent['role'], 'arc' | 'base'>
 };
 
 function seedUrlForName(name: string): string | null {
+  if (name === 'Orchestrator') return 'http://127.0.0.1/orchestrator';
   const seed = seedMarketplaceServices().find((service) => service.name === name);
   if (seed === undefined) return null;
   if (name === 'DataFetcher') return `${seed.endpointUrl.replace(/\/+$/, '')}?q=fleet-run`;
@@ -44,11 +45,14 @@ export async function resolveFleetAgents(
   orgId: string,
 ): Promise<Readonly<Record<string, FleetResolvedAgent>>> {
   const result = await pool.query<AgentRow>(
-    `SELECT id, name, metadata
-       FROM agents
-      WHERE org_id = $1
-        AND status NOT IN ('deactivated', 'retired')
-        AND name = ANY($2::text[])`,
+    `SELECT DISTINCT ON (a.name) a.id, a.name, a.metadata
+       FROM agents a
+       INNER JOIN agent_chain_wallets w
+         ON w.agent_id = a.id AND w.status = 'active'
+      WHERE a.org_id = $1
+        AND a.status NOT IN ('deactivated', 'retired')
+        AND a.name = ANY($2::text[])
+      ORDER BY a.name, a.created_at DESC`,
     [orgId, Object.keys(ROLE_BY_NAME)],
   );
 

@@ -525,10 +525,20 @@ Play backup video → open saved explorer links → still show Fund ceiling + Pu
 | API | `npm run dev:api` |
 | Worker | `npm run dev:circle-worker` |
 | Web | `npm run dev:web` |
+| Fleet Run UI | http://localhost:3005/app/{orgSlug}/fleet-run |
+| Fleet Run E2E | `DEMO_ORG_ID=… node --env-file=apps/api/.env --import tsx validation/fleet-run-e2e.mts` |
 | Backstage full fleet | `DEMO_ORG_ID=… node --env-file=apps/api/.env demo/run.mjs` |
-| Live marketplace hires | `demo/live-marketplace-hires.mjs` |
+| Live marketplace hires | `KEEP_SELLERS=1 demo/live-marketplace-hires.mjs` |
 | Escrow+rep | `tsx validation/spike-manifest-k4-completion.mts` (from `apps/api` + `--env-file=.env`) |
 | Revoke | `POST /v1/orgs/:orgId/agents/:agentId/revoke` |
+
+### Fleet Run wake-up checklist (demo morning)
+
+1. API + circle-worker + web running; `GEMINI_API_KEY` optional in `apps/api/.env`.
+2. Reuse funded `DEMO_ORG_ID` with Orchestrator/DataFetcher/Analyst/Writer/SeniorReviewer wallets.
+3. Start sellers on `:4001–4004` (`KEEP_SELLERS=1` live-marketplace-hires or e2e script).
+4. Open **Runtime → Fleet Run**, submit canonical goal, watch checklist + receipts.
+5. If pay fails with `circle_worker_operation_failed`, Fund the Orchestrator on Arc/Base and retry — sellers must use the **same** agent wallet addresses Fleet Run resolved.
 
 ---
 
