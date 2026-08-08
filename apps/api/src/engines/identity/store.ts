@@ -94,6 +94,9 @@ type AgentRosterRow = AgentRow & {
   readonly wallet_refs_count: string;
   readonly policy_coverage: string;
   readonly last_activity_at: Date | null;
+  readonly identity_token_id: string | null;
+  readonly reputation_score: string;
+  readonly reputation_events: string;
 };
 
 type ConnectionRow = {
@@ -1578,6 +1581,9 @@ const agentRosterSelect = `SELECT
        COALESCE(w.active_wallet_refs, 0)::text AS wallet_refs_count,
        COALESCE(p.policy_coverage, 0)::text AS policy_coverage,
        la.last_activity_at,
+       i.identity_token_id,
+       COALESCE(r.reputation_score, '0') AS reputation_score,
+       COALESCE(r.reputation_events, '0') AS reputation_events,
        CASE
          WHEN c.total_connections IS NULL THEN 'not_connected'
          WHEN COALESCE(c.active_recent, 0) > 0 THEN 'healthy'
@@ -1658,7 +1664,22 @@ const agentRosterSelect = `SELECT
               )
             )
        ) activity
-     ) la ON true`;
+     ) la ON true
+     LEFT JOIN LATERAL (
+       SELECT token_id::text AS identity_token_id
+         FROM agent_onchain_identities
+        WHERE agent_id = a.id
+          AND status = 'registered'
+          AND token_id IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT 1
+     ) i ON true
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(score), 0)::text AS reputation_score,
+              COUNT(*)::text AS reputation_events
+         FROM agent_reputation_events
+        WHERE agent_id = a.id
+     ) r ON true`;
 
 function agentRosterItemFromRow(row: AgentRosterRow): AgentRosterItem {
   return {
@@ -1673,6 +1694,9 @@ function agentRosterItemFromRow(row: AgentRosterRow): AgentRosterItem {
     wallet_refs_count: Number(row.wallet_refs_count),
     policy_coverage: Number(row.policy_coverage),
     last_activity_at: row.last_activity_at?.toISOString() ?? null,
+    identity_token_id: row.identity_token_id,
+    reputation_score: Number(row.reputation_score),
+    reputation_events: Number(row.reputation_events),
   };
 }
 

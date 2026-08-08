@@ -82,6 +82,11 @@ export type AgentRosterItem = Pick<
   readonly wallet_refs_count: number;
   readonly policy_coverage: number;
   readonly last_activity_at: string | null;
+  /** ERC-8004 identity token id when registered on-chain. */
+  readonly identity_token_id: string | null;
+  /** Cumulative reputation score from settled feedback events. */
+  readonly reputation_score: number;
+  readonly reputation_events: number;
 };
 
 export type ConnectionKind =

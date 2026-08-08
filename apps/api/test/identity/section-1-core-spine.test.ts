@@ -322,6 +322,9 @@ describe('Section 1 core product spine', () => {
       connection_health: 'not_connected',
       wallet_refs_count: 0,
       policy_coverage: 0,
+      identity_token_id: null,
+      reputation_score: 0,
+      reputation_events: 0,
     });
     expect(rosterAgent?.last_activity_at).toEqual(expect.any(String));
   });
