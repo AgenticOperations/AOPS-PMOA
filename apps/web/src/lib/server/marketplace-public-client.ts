@@ -25,6 +25,18 @@ export type MarketplaceActivityPoint = {
   readonly reputationEvents: number;
 };
 
+export type MarketplaceActivityEvent = {
+  readonly id: string;
+  readonly day: string;
+  readonly kind: 'fleet_hire' | 'x402' | 'escrow';
+  readonly label: string;
+  readonly amountUsdc: string;
+  readonly chain: string;
+  readonly txHash: string | null;
+  readonly explorerUrl: string | null;
+  readonly occurredAt: string;
+};
+
 export type MarketplaceListingActivity = {
   readonly listingId: string;
   readonly agentId: string | null;
@@ -35,6 +47,7 @@ export type MarketplaceListingActivity = {
   readonly rejectedJobs: number;
   readonly settledUsdc: string;
   readonly series: readonly MarketplaceActivityPoint[];
+  readonly recentEvents: readonly MarketplaceActivityEvent[];
 };
 
 type ApiErrorBody = {

@@ -40,6 +40,7 @@ export default async function MarketplaceDetailPage({ params }: MarketplaceDetai
     rejectedJobs: 0,
     settledUsdc: '0.000000',
     series: [],
+    recentEvents: [],
   }));
 
   const session = await getCurrentSession().catch(() => null);

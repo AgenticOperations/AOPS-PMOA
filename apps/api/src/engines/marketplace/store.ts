@@ -83,7 +83,7 @@ const FLEET_SEED_AGENT_NAMES: Readonly<Record<string, string>> = {
 async function enrichFleetSeedListings(
   pool: pg.Pool,
   listings: readonly MarketplaceListing[],
-  input: { readonly mode: PaymentMode; readonly buyerOrgId: string },
+  input: { readonly mode: PaymentMode; readonly buyerOrgId?: string | undefined },
 ): Promise<readonly MarketplaceListing[]> {
   const neededNames = [...new Set(
     listings
@@ -98,14 +98,25 @@ async function enrichFleetSeedListings(
     wallet_address: string | null;
     chain: string;
   }>(
-    `SELECT a.id, a.name, w.address AS wallet_address, w.chain
-       FROM agents a
-       LEFT JOIN agent_chain_wallets w
-         ON w.agent_id = a.id AND w.mode = $2 AND w.status = 'active'
-      WHERE a.org_id = $1
-        AND a.status NOT IN ('deactivated', 'retired')
-        AND a.name = ANY($3::text[])`,
-    [input.buyerOrgId, input.mode, neededNames],
+    input.buyerOrgId === undefined
+      ? `SELECT a.id, a.name, w.address AS wallet_address, w.chain
+           FROM agents a
+           LEFT JOIN agent_chain_wallets w
+             ON w.agent_id = a.id AND w.mode = $1 AND w.status = 'active'
+          WHERE a.status NOT IN ('deactivated', 'retired')
+            AND a.name = ANY($2::text[])
+            AND coalesce(a.metadata->>'public_endpoint_url', '') <> ''
+          ORDER BY a.created_at DESC`
+      : `SELECT a.id, a.name, w.address AS wallet_address, w.chain
+           FROM agents a
+           LEFT JOIN agent_chain_wallets w
+             ON w.agent_id = a.id AND w.mode = $2 AND w.status = 'active'
+          WHERE a.org_id = $1
+            AND a.status NOT IN ('deactivated', 'retired')
+            AND a.name = ANY($3::text[])`,
+    input.buyerOrgId === undefined
+      ? [input.mode, neededNames]
+      : [input.buyerOrgId, input.mode, neededNames],
   );
 
   return listings.map((listing) => {
@@ -121,7 +132,7 @@ async function enrichFleetSeedListings(
     const rails: MarketplaceRail[] = providerAddress === null ? ['x402'] : ['x402', 'escrow'];
     return {
       ...listing,
-      orgId: input.buyerOrgId,
+      orgId: input.buyerOrgId ?? listing.orgId,
       agentId: onListingChain.id,
       providerAddress,
       rails,
@@ -156,12 +167,11 @@ export async function listMarketplaceListings(
       identityTokenId: null,
     }));
 
-  if (input.buyerOrgId !== undefined) {
-    seed = [...await enrichFleetSeedListings(pool, seed, {
-      mode: input.mode,
-      buyerOrgId: input.buyerOrgId,
-    })];
-  }
+  // Attach fleet agentId/wallet for public charts + buyer Lane-2 hire.
+  seed = [...await enrichFleetSeedListings(pool, seed, {
+    mode: input.mode,
+    ...(input.buyerOrgId === undefined ? {} : { buyerOrgId: input.buyerOrgId }),
+  })];
 
   const agentResult = await pool.query<PublishedAgentRow>(
     `SELECT DISTINCT ON (a.id)
@@ -267,10 +277,9 @@ export async function getMarketplaceListing(
       identityStatus: null,
       identityTokenId: null,
     };
-    if (input.buyerOrgId === undefined) return base;
     const enriched = await enrichFleetSeedListings(pool, [base], {
       mode: input.mode,
-      buyerOrgId: input.buyerOrgId,
+      ...(input.buyerOrgId === undefined ? {} : { buyerOrgId: input.buyerOrgId }),
     });
     return enriched[0] ?? base;
   }

@@ -8,6 +8,18 @@ export type MarketplaceActivityPoint = {
   readonly reputationEvents: number;
 };
 
+export type MarketplaceActivityEvent = {
+  readonly id: string;
+  readonly day: string;
+  readonly kind: 'fleet_hire' | 'x402' | 'escrow';
+  readonly label: string;
+  readonly amountUsdc: string;
+  readonly chain: string;
+  readonly txHash: string | null;
+  readonly explorerUrl: string | null;
+  readonly occurredAt: string;
+};
+
 export type MarketplaceListingActivity = {
   readonly listingId: string;
   readonly agentId: string | null;
@@ -18,7 +30,17 @@ export type MarketplaceListingActivity = {
   readonly rejectedJobs: number;
   readonly settledUsdc: string;
   readonly series: readonly MarketplaceActivityPoint[];
+  readonly recentEvents: readonly MarketplaceActivityEvent[];
 };
+
+const EXPLORER_TX: Readonly<Record<string, string>> = {
+  arc: 'https://testnet.arcscan.app/tx/',
+  base: 'https://sepolia.basescan.org/tx/',
+};
+
+/** Ignore demo chart-seed rows — only real settlement evidence. */
+const NOT_SEEDED_PAYMENT = `coalesce(result->>'seed_tag', '') = ''`;
+const NOT_SEEDED_ESCROW = `created_by <> 'marketplace_purchase_script'`;
 
 const EMPTY_ACTIVITY = (
   listing: MarketplaceListing,
@@ -32,6 +54,7 @@ const EMPTY_ACTIVITY = (
   rejectedJobs: 0,
   settledUsdc: '0.000000',
   series: [],
+  recentEvents: [],
 });
 
 /**
@@ -70,6 +93,11 @@ export async function getMarketplaceListingActivity(
     providerAddress: listing.providerAddress,
     since,
   });
+  const recentEvents = await loadRecentEvents(pool, {
+    agentId: listing.agentId,
+    providerAddress: listing.providerAddress,
+    since,
+  });
 
   return {
     listingId: listing.id,
@@ -81,6 +109,7 @@ export async function getMarketplaceListingActivity(
     rejectedJobs: escrow.rejected,
     settledUsdc: addUsdc(escrow.settledUsdc, fleet.settledUsdc),
     series,
+    recentEvents,
   };
 }
 
@@ -107,6 +136,7 @@ async function loadFleetHireStats(
         WHERE decision = 'settled'
           AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
           AND result->>'payee_agent_id' = $1
+          AND ${NOT_SEEDED_PAYMENT}
           AND created_at >= $2`,
       [input.agentId, input.since],
     );
@@ -126,6 +156,7 @@ async function loadFleetHireStats(
       WHERE decision = 'settled'
         AND lower(recipient) = lower($1)
         AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
+        AND ${NOT_SEEDED_PAYMENT}
         AND created_at >= $2`,
     [input.providerAddress, input.since],
   );
@@ -178,6 +209,7 @@ async function loadEscrowStats(
         COALESCE(SUM(budget_usdc) FILTER (WHERE state = 'completed'), 0)::text AS settled_usdc
        FROM escrow_jobs
       WHERE lower(provider_address) = lower($1)
+        AND ${NOT_SEEDED_ESCROW}
         AND created_at >= $2`,
     [input.providerAddress, input.since],
   );
@@ -210,6 +242,7 @@ async function loadActivitySeries(
               COUNT(*) FILTER (WHERE state = 'completed')::text AS completed
          FROM escrow_jobs
         WHERE lower(provider_address) = lower($1)
+          AND ${NOT_SEEDED_ESCROW}
           AND created_at >= $2
         GROUP BY 1
         ORDER BY 1 ASC`,
@@ -237,6 +270,7 @@ async function loadActivitySeries(
             WHERE decision = 'settled'
               AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
               AND result->>'payee_agent_id' = $1
+              AND ${NOT_SEEDED_PAYMENT}
               AND created_at >= $2
             GROUP BY 1
             ORDER BY 1 ASC`
@@ -247,6 +281,7 @@ async function loadActivitySeries(
             WHERE decision = 'settled'
               AND lower(recipient) = lower($1)
               AND coalesce(result->>'lane', '') = 'permit2_intra_fleet'
+              AND ${NOT_SEEDED_PAYMENT}
               AND created_at >= $2
             GROUP BY 1
             ORDER BY 1 ASC`,
@@ -304,4 +339,126 @@ async function loadActivitySeries(
   }
 
   return [...byDay.values()].sort((left, right) => left.day.localeCompare(right.day));
+}
+
+function explorerUrlFor(chain: string, txHash: string | null): string | null {
+  if (txHash === null || txHash.length === 0) return null;
+  const base = EXPLORER_TX[chain];
+  return base === undefined ? null : `${base}${txHash}`;
+}
+
+async function loadRecentEvents(
+  pool: pg.Pool,
+  input: {
+    readonly agentId: string | null;
+    readonly providerAddress: string | null;
+    readonly since: Date;
+  },
+): Promise<readonly MarketplaceActivityEvent[]> {
+  const events: MarketplaceActivityEvent[] = [];
+
+  if (input.agentId !== null || input.providerAddress !== null) {
+    const payments = await pool.query<{
+      id: string;
+      day: string;
+      amount_usdc: string;
+      chain: string;
+      tx_hash: string | null;
+      lane: string | null;
+      label: string | null;
+      occurred_at: string;
+    }>(
+      input.agentId !== null
+        ? `SELECT id,
+                  to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+                  amount_usdc::text,
+                  chain,
+                  result->>'tx_hash' AS tx_hash,
+                  result->>'lane' AS lane,
+                  coalesce(resource_category, result->>'payee_name', 'Fleet hire') AS label,
+                  created_at::text AS occurred_at
+             FROM payment_events
+            WHERE decision = 'settled'
+              AND ${NOT_SEEDED_PAYMENT}
+              AND result->>'payee_agent_id' = $1
+              AND created_at >= $2
+            ORDER BY created_at DESC
+            LIMIT 40`
+        : `SELECT id,
+                  to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+                  amount_usdc::text,
+                  chain,
+                  result->>'tx_hash' AS tx_hash,
+                  result->>'lane' AS lane,
+                  coalesce(resource_category, 'Hire') AS label,
+                  created_at::text AS occurred_at
+             FROM payment_events
+            WHERE decision = 'settled'
+              AND ${NOT_SEEDED_PAYMENT}
+              AND lower(recipient) = lower($1)
+              AND created_at >= $2
+            ORDER BY created_at DESC
+            LIMIT 40`,
+      input.agentId !== null
+        ? [input.agentId, input.since]
+        : [input.providerAddress, input.since],
+    );
+    for (const row of payments.rows) {
+      const kind = row.lane === 'permit2_intra_fleet' ? 'fleet_hire' : 'x402';
+      events.push({
+        id: row.id,
+        day: row.day,
+        kind,
+        label: row.label ?? 'Hire',
+        amountUsdc: row.amount_usdc,
+        chain: row.chain,
+        txHash: row.tx_hash,
+        explorerUrl: explorerUrlFor(row.chain, row.tx_hash),
+        occurredAt: row.occurred_at,
+      });
+    }
+  }
+
+  if (input.providerAddress !== null) {
+    const escrow = await pool.query<{
+      id: string;
+      day: string;
+      amount_usdc: string;
+      chain: string;
+      tx_hash: string | null;
+      occurred_at: string;
+    }>(
+      `SELECT id,
+              to_char(date_trunc('day', updated_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS day,
+              budget_usdc::text AS amount_usdc,
+              chain,
+              coalesce(terminal_tx_hash, submit_tx_hash, fund_tx_hash, create_tx_hash) AS tx_hash,
+              updated_at::text AS occurred_at
+         FROM escrow_jobs
+        WHERE lower(provider_address) = lower($1)
+          AND state = 'completed'
+          AND ${NOT_SEEDED_ESCROW}
+          AND created_at >= $2
+        ORDER BY updated_at DESC
+        LIMIT 20`,
+      [input.providerAddress, input.since],
+    );
+    for (const row of escrow.rows) {
+      events.push({
+        id: row.id,
+        day: row.day,
+        kind: 'escrow',
+        label: 'Escrow completion',
+        amountUsdc: row.amount_usdc,
+        chain: row.chain,
+        txHash: row.tx_hash,
+        explorerUrl: explorerUrlFor(row.chain, row.tx_hash),
+        occurredAt: row.occurred_at,
+      });
+    }
+  }
+
+  return events
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+    .slice(0, 40);
 }
