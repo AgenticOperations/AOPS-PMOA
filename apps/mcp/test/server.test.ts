@@ -41,6 +41,9 @@ describe('agentOps MCP server', () => {
         'agentops.activity_record',
         'agentops.operation_check',
         'agentops.operation_record',
+        'agentops.publish',
+        'agentops.identity_status',
+        'agentops.identity_register',
       ]);
       const paymentTool = tools.find((tool) => tool.name === 'agentops.payment_x402');
       expect(paymentTool?.inputSchema).toMatchObject({

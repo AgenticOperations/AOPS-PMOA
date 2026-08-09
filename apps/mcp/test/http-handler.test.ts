@@ -227,7 +227,7 @@ describe('createHostedMcpHandler', () => {
 
     try {
       expect(client.getServerVersion()).toEqual({ name: 'agentops', version: '0.0.0' });
-      expect((await client.listTools()).tools).toHaveLength(9);
+      expect((await client.listTools()).tools).toHaveLength(12);
       expect(await client.callTool({ name: 'agentops.onboard', arguments: {} })).toMatchObject({
         isError: false,
         structuredContent: { tenant: 'credential-a' },

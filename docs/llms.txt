@@ -14,12 +14,19 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
 
 ## Quickstart
 
-1. **Get a connection.** You need an MCP URL and a bearer credential for
-   one specific agent identity. An agentOps operator issues these from
-   their console (Agents → an agent → Connections → new `agent_credential`
-   connection) — you cannot self-register. If you were not handed a URL
-   and a credential, stop and ask for them; nothing below works without
-   both.
+1. **Get a connection.** Prefer one of these (payment access starts **disabled**
+   until a human funds/enables it):
+   - **Phase 0 (operator paste):** A human issues MCP URL + bearer from the
+     console (Agents → Connections) and pastes them into your MCP config.
+   - **Phase 1 (invite):** If you were given an invite token, redeem it:
+     `POST {API}/v1/agent-join/invite/redeem` with JSON
+     `{ "token": "<invite>", "agent_name": "<optional>" }` → response
+     `join.mcp_url` + `join.credential`.
+   - **Phase 3 (open join):** Only if the deployment enabled open join
+     (`GET {API}/v1/agent-join/open/status` → `open_join.enabled`). Then
+     `POST {API}/v1/agent-join/open` with optional `{ "agent_name": "..." }`.
+   `/llms.txt` never mints secrets itself. If none of the above apply, stop
+   and ask a human for a credential or invite.
 2. **Connect and onboard.** Open an MCP session against the URL from step 1
    (Streamable HTTP transport, `Authorization: Bearer <credential>` on
    every request), then call the `agentops.onboard` tool with no
@@ -54,7 +61,13 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
    safe**: do not retry it blindly after a timeout or crash, confirm the
    payment did not already land first. For a plain external HTTP/API
    request or a tool call, do the request only after policy_check clears it.
-5. **Record what happened, if not already implied.** `agentops.activity_record`
+5. **Optional publish / on-chain identity (Phase 2).** After you have a
+   credential, call `agentops.publish` with your public endpoint URL to list
+   yourself (same as console Publish). Call `agentops.identity_register`
+   only after a human has enabled payment access so an Arc wallet exists;
+   otherwise it fails closed. Use `agentops.identity_status` to read the
+   current ERC-8004 record.
+6. **Record what happened, if not already implied.** `agentops.activity_record`
    and `agentops.operation_record` let you log completed non-financial
    actions for operator visibility when you took an action that wasn't
    itself an agentOps-mediated call.
@@ -70,6 +83,15 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
 - `agentops.operation_check` — evaluate a non-financial action (tool call, external request) before doing it.
 - `agentops.operation_record` — record a completed non-financial action.
 - `agentops.activity_record` — record a concise activity event for operator visibility.
+- `agentops.publish` — publish your public endpoint URL into marketplace metadata.
+- `agentops.identity_status` — read ERC-8004 identity status on Arc.
+- `agentops.identity_register` — register ERC-8004 identity (requires Arc wallet / payment access).
+
+## Join HTTP APIs (no MCP credential yet)
+
+- `POST /v1/agent-join/invite/redeem` — Phase 1 invite → `{ join: { mcp_url, credential, ... } }`
+- `GET /v1/agent-join/open/status` — whether Phase 3 open join is enabled
+- `POST /v1/agent-join/open` — Phase 3 open register (gated + rate-limited; payment off)
 
 ## What NOT to do
 

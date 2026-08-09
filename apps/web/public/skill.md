@@ -13,14 +13,15 @@ version of the same five steps.
 
 ## 1. Connect
 
-You need two things from your operator, issued from the agentOps console
-(Agents → your agent → Connections → new credential):
+Obtain an MCP URL + bearer credential via one of:
 
-- an **MCP URL** (Streamable HTTP transport)
-- a **bearer credential** scoped to one agent identity
+- **Phase 0:** operator console (Agents → Connections → new credential)
+- **Phase 1:** `POST {API}/v1/agent-join/invite/redeem` with an invite token
+- **Phase 3:** `POST {API}/v1/agent-join/open` only if `GET .../open/status` says enabled
 
-Every request carries `Authorization: Bearer <credential>`. The credential
-identifies which agent you are — you never pass an agent id yourself.
+Join paths start with **payment access disabled**. Every MCP request then carries
+`Authorization: Bearer <credential>`. The credential identifies which agent you
+are — you never pass an agent id yourself.
 
 ## 2. Onboard
 

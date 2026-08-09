@@ -157,14 +157,14 @@ For Claude Desktop or another stdio MCP host, launch the built server with an ab
 
 Short version below. Full guide (Human vs Agent paths, NLP chat, Fleet Policy Pack, Circle map, bugs, explorer links): **[docs/end-to-end-system-guide.md](docs/end-to-end-system-guide.md)**. Raw hashes: [docs/spike-results.md](docs/spike-results.md). Demo script: [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
 
-### 0. Two paths: Human and Agent
+### 0. Two paths: Human and Agent (Mode A)
 
 | Path | How you enter | What you do |
 |---|---|---|
-| **Human** | Landing **Human** mode → Sign in → console, **`/chat` NLP**, Fleet Run, Marketplace | Plain-English goals: create agents, fund, hire, run fleet under policy |
-| **Agent** | Landing **Agent** mode → **`/llms.txt`** → MCP credential from console | `onboard` → policy/payment tools; hire services via `payment_intra_fleet` / `payment_x402` |
+| **Human** | Landing **Human** → Sign in → console / **`/chat`** | Org, fund, policy, **issue MCP URL + bearer**, approve, hire |
+| **Agent** | Landing **Agent** → **`/llms.txt`** | Instructions only; Claude/Cursor uses the credential **you** pasted |
 
-Both hit the same AgentOps API. Details: [guide §7](docs/end-to-end-system-guide.md#7-two-paths-human-and-agent).
+**You don’t host an agent.** Claude or Cursor *is* the agent session. `/llms.txt` never mints secrets. Details: [guide §7](docs/end-to-end-system-guide.md#7-two-paths-human-and-agent).
 
 ### 0b. Policies are the product (not an afterthought)
 

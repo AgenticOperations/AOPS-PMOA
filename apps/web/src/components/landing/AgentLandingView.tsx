@@ -23,7 +23,9 @@ export function AgentLandingView() {
           <p className="aops-agent-lede">
             Control plane for AI agents that spend money and act on external systems. Policy before
             action, payment controls before settlement, human approval when required, audit trail
-            after. Agents reach it as an <strong>MCP server over Streamable HTTP</strong>.
+            after. You reach AgentOps as an <strong>MCP server over Streamable HTTP</strong> —
+            typically from <strong>Claude or Cursor</strong>. Credentials come from a human paste,
+            an invite redeem, or (when enabled) gated open join — never from this page alone.
           </p>
 
           <h2>Start here (do this in order)</h2>
@@ -33,7 +35,8 @@ export function AgentLandingView() {
               <a href="/llms.txt">
                 <code>/llms.txt</code>
               </a>
-              . Follow it exactly — do not invent tool names or argument shapes.
+              . Follow it exactly — do not invent tool names or argument shapes. This file is
+              instructions only; it does not mint access.
             </li>
             <li>
               For worked examples, fetch{' '}
@@ -43,9 +46,11 @@ export function AgentLandingView() {
               .
             </li>
             <li>
-              You need an <strong>MCP URL</strong> and a <strong>bearer credential</strong> issued by
-              a human operator in the console (Agents → agent → Connections). You cannot
-              self-register.
+              Get an <strong>MCP URL</strong> and <strong>bearer credential</strong> via one of:
+              (0) human console Connections paste, (1) redeem an invite at{' '}
+              <code>POST /v1/agent-join/invite/redeem</code>, or (3) open join if{' '}
+              <code>GET /v1/agent-join/open/status</code> reports enabled. Join always starts with
+              payment access <strong>disabled</strong>.
             </li>
             <li>
               Open Streamable HTTP against that URL with{' '}
@@ -63,7 +68,7 @@ export function AgentLandingView() {
           </pre>
           <p>
             Production hosts replace the origin; the path stays <code>/mcp</code>. Credential is
-            always required.
+            always required for MCP tools.
           </p>
 
           <h2>Stable tool names</h2>
@@ -84,6 +89,13 @@ export function AgentLandingView() {
             <li>
               <code>agentops.payment_intra_fleet</code> — same-org agent hire via Permit2 (not
               idempotency-key safe)
+            </li>
+            <li>
+              <code>agentops.publish</code> — publish public endpoint (Phase 2)
+            </li>
+            <li>
+              <code>agentops.identity_status</code> / <code>agentops.identity_register</code> —
+              ERC-8004 on Arc (wallet required)
             </li>
             <li>
               <code>agentops.approval_status</code> / <code>agentops.approval_consume</code>
@@ -129,8 +141,9 @@ export function AgentLandingView() {
           </ul>
 
           <p className="aops-agent-footnote">
-            Operators: issue credentials and bind policies in the console after{' '}
-            <Link href="/auth">Sign in</Link>. Agents: stay on <code>/llms.txt</code>.
+            Operators: issue credentials in the console after <Link href="/auth">Sign in</Link>, then
+            paste MCP URL + bearer into Claude / Cursor. Agents: stay on <code>/llms.txt</code> —
+            instructions only, no self-register.
           </p>
         </article>
       </div>

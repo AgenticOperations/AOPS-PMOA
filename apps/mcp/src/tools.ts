@@ -12,6 +12,12 @@ export type AgentOpsRuntimeClient = {
   readonly approvalConsume: (approvalId: string, decisionId: string) => Promise<Record<string, unknown>>;
   readonly approvalStatus: (approvalId: string) => Promise<Record<string, unknown>>;
   readonly check: (input: RuntimeCheckInput) => Promise<Record<string, unknown>>;
+  readonly identityRegister: (input: {
+    readonly endpoint_url: string;
+    readonly agent_uri?: string | undefined;
+    readonly chain?: 'arc' | undefined;
+  }) => Promise<Record<string, unknown>>;
+  readonly identityStatus: () => Promise<Record<string, unknown>>;
   readonly onboard: () => Promise<Record<string, unknown>>;
   readonly operationCheck: (input: OperationInput) => Promise<Record<string, unknown>>;
   readonly operationRecord: (input: OperationInput & {
@@ -20,6 +26,7 @@ export type AgentOpsRuntimeClient = {
   }) => Promise<Record<string, unknown>>;
   readonly paymentIntraFleet: (input: RuntimeIntraFleetPaymentInput) => Promise<Record<string, unknown>>;
   readonly paymentX402: (input: RuntimeX402PaymentInput) => Promise<Record<string, unknown>>;
+  readonly publish: (input: { readonly public_endpoint_url: string }) => Promise<Record<string, unknown>>;
 };
 
 export type AgentOpsTool = {
@@ -122,6 +129,14 @@ const operationSchema = z.object({
 const operationRecordSchema = operationSchema.extend({
   outcome: z.enum(['success', 'denied', 'pending', 'error']).optional(),
   summary: z.string().trim().min(1).max(500),
+});
+const publishSchema = z.object({
+  public_endpoint_url: z.string().trim().url().max(2048),
+});
+const identityRegisterSchema = z.object({
+  endpoint_url: z.string().trim().url().max(2048),
+  agent_uri: z.string().trim().url().max(2048).optional(),
+  chain: z.literal('arc').optional(),
 });
 
 type OperationInput = z.infer<typeof operationSchema>;
@@ -324,6 +339,36 @@ export function createAgentOpsTools(client: AgentOpsRuntimeClient): readonly Age
       inputSchema: operationRecordSchema,
       name: 'agentops.operation_record',
       title: 'Record operation',
+    },
+    {
+      description:
+        'Publish this agent\'s public MCP/HTTP endpoint URL into agentOps marketplace metadata (same effect as console Publish). Payment remains operator-gated.',
+      execute: async (args) =>
+        safeExecute('Publish endpoint', async () => client.publish(publishSchema.parse(recordArgs(args)))),
+      inputSchema: publishSchema,
+      name: 'agentops.publish',
+      title: 'Publish public endpoint',
+    },
+    {
+      description: 'Read this agent\'s ERC-8004 on-chain identity status on Arc (if registered).',
+      execute: async (args) =>
+        safeExecute('Identity status', async () => {
+          emptySchema.parse(recordArgs(args));
+          return client.identityStatus();
+        }),
+      inputSchema: emptySchema,
+      name: 'agentops.identity_status',
+      title: 'ERC-8004 identity status',
+    },
+    {
+      description:
+        'Register this agent on Arc ERC-8004 Identity Registry. Requires a human operator to have enabled payment access so an Arc wallet exists; fails closed otherwise.',
+      execute: async (args) =>
+        safeExecute('Identity register', async () =>
+          client.identityRegister(identityRegisterSchema.parse(recordArgs(args)))),
+      inputSchema: identityRegisterSchema,
+      name: 'agentops.identity_register',
+      title: 'Register ERC-8004 identity',
     },
   ];
 }

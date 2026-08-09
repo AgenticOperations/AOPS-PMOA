@@ -24,6 +24,8 @@ import type { RegisterFleetRunRoutesDeps } from './engines/fleet-run/routes.js';
 import { registerFleetRunRoutes } from './engines/fleet-run/routes.js';
 import type { RegisterAgentChatRoutesDeps } from './engines/agent-chat/routes.js';
 import { registerAgentChatRoutes } from './engines/agent-chat/routes.js';
+import type { RegisterAgentJoinRoutesDeps } from './engines/agent-join/routes.js';
+import { registerAgentJoinRoutes } from './engines/agent-join/routes.js';
 
 export type BuildAppOptions = {
   readonly changelog?: RegisterChangelogRoutesDeps;
@@ -37,6 +39,7 @@ export type BuildAppOptions = {
   readonly runtime?: RegisterRuntimeRoutesDeps;
   readonly fleetRun?: RegisterFleetRunRoutesDeps;
   readonly agentChat?: RegisterAgentChatRoutesDeps;
+  readonly agentJoin?: RegisterAgentJoinRoutesDeps;
   readonly enableTestnetX402Fixtures?: boolean;
   readonly readiness?: () => Promise<boolean>;
 };
@@ -118,6 +121,19 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         options.policy === undefined &&
         options.approvals === undefined &&
         options.payments === undefined &&
+        options.operations === undefined,
+    });
+  }
+
+  if (options.agentJoin !== undefined) {
+    registerAgentJoinRoutes(app, {
+      ...options.agentJoin,
+      installErrorHandler:
+        options.identity === undefined &&
+        options.policy === undefined &&
+        options.approvals === undefined &&
+        options.payments === undefined &&
+        options.runtime === undefined &&
         options.operations === undefined,
     });
   }

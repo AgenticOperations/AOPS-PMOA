@@ -6970,6 +6970,42 @@ html[data-theme="dark"] .sidebar-brand-logo {
   filter: brightness(1.04);
 }
 
+.join-invite-reveal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.join-invite-hint {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.join-invite-hint code {
+  font-size: 0.7rem;
+  word-break: break-all;
+}
+
+.join-invite-copy-status {
+  min-height: 1.2em;
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.join-invite-id {
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+}
+
+.join-invite-muted {
+  color: var(--text-muted);
+}
+
 .registry-toolbar {
   display: flex;
   align-items: center;

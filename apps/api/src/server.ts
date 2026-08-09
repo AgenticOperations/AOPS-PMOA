@@ -12,6 +12,7 @@ import {
 } from './engines/payments/circle-worker-client.js';
 import { createX402ResultCryptoCodec } from './engines/payments/x402-result-crypto.js';
 import { deriveTestnetPaidHttpAllowOrigins } from './engines/payments/x402-http.js';
+import { readOpenJoinConfig } from './engines/agent-join/store.js';
 import { createHttpReadinessCheck, createReadinessProbe } from './readiness.js';
 import { installGracefulShutdown } from './shutdown.js';
 
@@ -19,6 +20,7 @@ const env = readApiEnv(process.env, 'api');
 const pool = new pg.Pool({ connectionString: env.databaseUrl });
 const redis = new Redis(env.redisUrl, { lazyConnect: false, maxRetriesPerRequest: 1 });
 const circleWorkerConfigured = env.circleWorkerUrl.length > 0 && env.circleWorkerToken.length >= 32;
+const openJoin = readOpenJoinConfig(process.env);
 const readiness = createReadinessProbe([
   () => pool.query('SELECT 1'),
   () => redis.ping(),
@@ -113,6 +115,21 @@ const app = buildApp({
   },
   runtime: {
     pool,
+    ...(circleWorkerConfigured
+      ? {
+          circleProviderFactory: (orgId: string) => createCircleWorkerTreasuryProvider({
+            baseUrl: env.circleWorkerUrl,
+            orgId,
+            timeoutMs: env.circleWorkerTimeoutMs,
+            token: env.circleWorkerToken,
+          }),
+        }
+      : {}),
+  },
+  agentJoin: {
+    pool,
+    sessionCookieName: env.sessionCookieName,
+    openJoin,
   },
   evidence: {
     pool,

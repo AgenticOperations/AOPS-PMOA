@@ -29,6 +29,7 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
     () => [
       { group: 'Workspace', href: `${base}/overview`, label: 'Home' },
       { group: 'Identity', href: `${base}/agents`, label: 'Agents' },
+      { group: 'Identity', href: `${base}/agents/join-invites`, label: 'Join invites' },
       { group: 'Identity', href: `${base}/marketplace`, label: 'Purchases' },
       { group: 'Identity', href: `${base}/controls`, label: 'Controls' },
       { group: 'Runtime', href: `${base}/operations`, label: 'Operations' },

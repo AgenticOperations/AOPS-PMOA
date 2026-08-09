@@ -217,146 +217,154 @@ For Gateway nanopayments, the authoritative receipt is often **Circle’s API**,
 
 ## 7. Two paths: Human and Agent
 
-AgentOps is built for **two audiences** that meet at the same control plane. The public landing page even has a **Human / Agent** toggle (same idea as Ampersand’s mode switch):
+AgentOps is built for **two audiences** that meet at the same control plane. The public landing page has a **Human / Agent** toggle:
 
 | Mode | Who | Entry | Job |
 |---|---|---|---|
-| **Human** | Operator / org admin | Marketing landing → Sign in → console / NLP chat | Set rules, fund wallets, approve, hire, chat in plain English |
-| **Agent** | LLM / coded agent / IDE | Landing Agent mode → `/llms.txt` → MCP | Call governed tools; spend only under policy |
+| **Human** | You — the operator | Landing **Human** → Sign in → console / NLP chat | Own org, fund wallets, set policy, **issue MCP credentials**, approve, hire |
+| **Agent** | Claude / Cursor / IDE session (or any MCP client) | Landing **Agent** → `/llms.txt` | Learn how to connect; call governed tools with the credential **you** pasted in |
 
-Both paths hit the **same** API, policies, wallets, and evidence. Humans configure; agents execute; neither bypasses AgentOps.
+**Canonical product today (Mode A):** you do **not** host an agent server. **Claude or Cursor is the agent session.** You bootstrap once in the console; then that session spends and acts only through AgentOps MCP.
+
+```text
+You (Human mode / console)
+  create org → fund → policy → create agent → issue MCP URL + bearer
+       │
+       │  paste into Claude / Cursor MCP settings
+       ▼
+Claude / Cursor session  ──MCP──►  AgentOps  ──►  Circle / chain
+       │
+       └── may also read /llms.txt (instructions only — does NOT mint credentials)
+```
+
+`/llms.txt` and Agent mode never hand out secrets by themselves. Credentials come from **you** (Phase 0), an **invite redeem** (Phase 1), or **gated open join** (Phase 3 when enabled).
+
+Both paths hit the **same** API, policies, wallets, and evidence.
 
 ---
 
-### 7.1 Human path — console + easy NLP chat
+### 7.0 Autonomous join phases (1–3)
 
-Humans never need to speak MCP. They use the product in ordinary language and buttons.
+| Phase | What it does | Payment on join? | How |
+|---|---|---|---|
+| **0** | Human issues MCP credential (Mode A) | No until you enable | Console Connections |
+| **1** | Invite / sandbox join | **Disabled** | Operator `POST /v1/orgs/:orgId/agent-join/invites` → agent `POST /v1/agent-join/invite/redeem` |
+| **2** | MCP publish + ERC-8004 | Unchanged | Authenticated `agentops.publish` / `agentops.identity_register` (wallet required for register) |
+| **3** | Open cold register | **Disabled** | Env `AGENT_OPEN_JOIN_ENABLED=true` + `AGENT_OPEN_JOIN_ORG_ID`; `POST /v1/agent-join/open` with rate caps |
 
-#### A. Operator console (full control)
+Join never grants spend. A human still enables payment access / funds the Arc wallet before ERC-8004 register or payments succeed.
+
+---
+
+### 7.1 Human path — what you provide initially
+
+Humans never need to speak MCP. Use the product in ordinary language and buttons.
+
+#### A. One-time bootstrap (required before Claude/Cursor can spend)
 
 ```text
-Sign in (Google)
-   → Create / pick organization
-   → Connect treasury (DCW entity secret path)
-   → Fund treasury (manual testnet USDC)
-   → Create agents (each gets wallet(s))
-   → Set allocations + gas reserve (solvency checked)
-   → Author + activate the Fleet Policy Pack (§8) — bind per agent
-   → Enable payment access + caps / approval thresholds per agent
-   → Authorize payTo destinations (fleet wallets + any external fixtures)
-   → Issue MCP / runtime credentials (one-time reveal) for agents
-   → Optional: Publish agent → Marketplace
-   → Hire desk / Fleet Run / Approvals inbox
-   → Activity & Evidence
-   → Revoke agent → sweep back to treasury
+1. Sign in (Google) → create / pick organization
+2. Connect treasury → fund testnet USDC
+3. Create an agent identity (e.g. "Research bot")
+4. Bind policy + payment access / caps / allowlists (Fleet Policy Pack in §8 is the deep demo shape)
+5. Allocate / fund that agent’s wallet (on-chain ceiling)
+6. Agents → Connections → issue agent_credential
+7. Copy MCP URL + bearer (shown once) → paste into Claude / Cursor MCP config
 ```
 
-Console: `http://localhost:3005` after sign-in → `/app/{org}/…`.
+That’s all you must provide. You are **not** required to host a public agent website for this path.
+
+Console: `http://localhost:3005` → `/app/{org}/…` after sign-in.
 
 #### B. NLP chat — “Chat with agent” (`/chat`)
 
-This is the **easy human surface**: type a goal in natural language; AgentOps classifies intent and drives real org actions under policy (not a toy FAQ bot).
+Easy human surface: type a goal in natural language; AgentOps drives real org actions under policy.
 
 | You might say | What AgentOps does |
 |---|---|
 | “What can AgentOps do?” | Product Q&A (MCP, marketplace, rails) |
-| “Recommend marketplace services” | Listing cards with prices / chains → open hire |
-| “Create 3 agents for research” | Proposes roster → **confirm** → creates agents + payment access |
-| “How funded are we?” / fund intents | Treasury / balance oriented answers + deep links |
-| “Set policies…” | Guidance + links into Controls |
-| Research / fleet goal (DataFetcher → Analyst → Writer → Base reviewer) | Starts a **Fleet Run**: plan checklist → real Permit2 (and optional x402) payments → brief + receipts |
+| “Recommend marketplace services” | Listing cards → open hire |
+| “Create 3 agents for research” | Propose → **confirm** → create agents |
+| Fund / policy questions | Answers + deep links into console |
+| Research / fleet goal | **Fleet Run**: checklist → real payments → brief + receipts |
 
-**Where:** [`/chat`](../apps/web/src/app/chat/page.tsx) (signed-in, primary org). Suggestions in the UI seed the same intents.
+**Where:** [`/chat`](../apps/web/src/app/chat/page.tsx). Also console **Fleet Run** (`/app/{org}/fleet-run`) — see [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) Part B.
 
-**Under the hood:** `POST /v1/orgs/:orgId/agent-chat/turn` → Gemini intent classify → handlers for `qa` | `marketplace` | `create_agents` | `fund` | `policies` | `fleet_run` | `confirm`. Fleet runs call the same payment engines as Marketplace hire / demo — policy and wallets still apply.
+#### C. Optional later (Mode B — only if you want to *sell* work)
 
-**Also:** console **Fleet Run** (`/app/{org}/fleet-run`) is the dedicated chat + live checklist + wire graph for a multi-agent goal (see [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) Part B).
-
-#### C. What humans should call out live
-
-1. Per-agent wallet = max loss (explorer)  
-2. Named policies bound before hire  
-3. NLP chat / Fleet Run goal → real txs under policy  
-4. Deny / approval pause  
-5. Second hop + cross-chain Base  
-6. Activity with decision ids + explorer links  
-7. Kill + sweep without OTP  
+Host an HTTPS seller → Publish URL → ERC-8004 → Marketplace listing. Not required for “Claude spends for me via MCP.”
 
 ---
 
-### 7.2 Agent path — how an agent accesses the platform and services
+### 7.2 Agent path — Claude / Cursor after credentials exist
 
-Agents do **not** log into the console and do **not** self-register. A human issues credentials; the agent follows the cold-start contract.
+The session obtains a credential via Phase 0 paste, Phase 1 invite redeem, or Phase 3 open join (when enabled). Then:
 
-#### Step 0 — Discover (no secret yet)
+#### Discover (no secret)
 
-1. Open landing **Agent** mode: `/?audience=agent` (structured summary).  
-2. Fetch canonical contract: **`GET /llms.txt`** (also in repo as [`docs/llms.txt`](llms.txt)).  
-3. Optional longer walkthrough: **`GET /skill.md`**.  
+- `/?audience=agent` — structured summary
+- `GET /llms.txt` — canonical cold-start ([`docs/llms.txt`](llms.txt))
+- `GET /skill.md` — worked examples
+- `GET /v1/agent-join/open/status` — whether open join is live
 
-These files tell the agent *how* to connect. They do **not** grant spend access.
+These explain *how*. Only the join HTTP APIs (invite/open) mint a connection when allowed.
 
-#### Step 1 — Human issues access
-
-In console: **Agents → [agent] → Connections → new `agent_credential`**.  
-One-time reveal gives:
-
-- MCP URL (local default `http://127.0.0.1:8070/mcp`)
-- Bearer credential for **that** agent only  
-
-Paste into Cursor / Claude / Codex / ADK / your runtime. Plaintext is never shown again.
-
-#### Step 2 — Connect and onboard
+#### Connect (secret from join or you)
 
 ```text
 Streamable HTTP → Authorization: Bearer <credential>
-     → agentops.onboard  (no args)
-     → live runtime contract = source of truth for tools + fields
+     → agentops.onboard
+     → live runtime contract
 ```
 
-#### Step 3 — Use platform services (all governed)
+Local MCP URL default: `http://127.0.0.1:8070/mcp`.
 
-| Goal | How the agent does it | Notes |
-|---|---|---|
-| Know what’s allowed | `agentops.onboard` | Always first; never hardcode the catalog |
-| Non-pay HTTP / tool | `agentops.operation_check` then act | Prefer over `policy_check` for `runtime.http.request` / `tool.call` |
-| Other actions | `agentops.policy_check` | allow / deny / approval_id |
-| Wait for human | `approval_status` → (human in Approvals) → `approval_consume` | Consume immediately before acting |
-| Pay external merchant / fixture | `agentops.payment_x402` | Policy + caps inside; **idempotency key** required |
-| Hire / pay another **same-org** agent | `agentops.payment_intra_fleet` | Permit2 drawdown; **not** idempotency-key safe |
-| Log non-financial work | `operation_record` / `activity_record` | Operator visibility |
+#### Act (all governed)
 
-So “accessing services” for an agent means: **call MCP tools that hit AgentOps runtime**, which then talks to Circle / chain / HTTP sellers. The agent never holds the org’s Circle entity secret.
+| Goal | MCP tool |
+|---|---|
+| Contract | `agentops.onboard` |
+| Non-pay HTTP / tool | `agentops.operation_check` |
+| Other checks | `agentops.policy_check` |
+| Human gate | `approval_status` → you approve in console → `approval_consume` |
+| External pay | `agentops.payment_x402` (idempotent) |
+| Same-org hire | `agentops.payment_intra_fleet` (not idempotency-key safe) |
+| Publish endpoint | `agentops.publish` |
+| ERC-8004 | `agentops.identity_status` / `agentops.identity_register` (wallet required) |
+| Log | `operation_record` / `activity_record` |
 
-#### Step 4 — Optional thin HTTP client
-
-Node templates can use [`packages/runtime-client`](../packages/runtime-client) against `/v1/runtime/...` with the same credential (not a Circle SDK). Mode B publish overlay: [`templates/arc-nanopayments-agentops`](../templates/arc-nanopayments-agentops).
-
-#### Proven agent-path evidence
+#### Proven
 
 | Proof | Link |
 |---|---|
-| Google ADK MCP `onboard` live | spike-results Phase 9 · Task 5 |
-| Claude MCP-only paid Gateway settle + replay | [`docs/qa/2026-07-13-x402-paid-http-evidence.md`](qa/2026-07-13-x402-paid-http-evidence.md) |
-| Policy matrix (allow / observe / deny / rate-limit / approval / caps) | [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-testnet-release-evidence.md) |
+| Google ADK MCP `onboard` | spike-results Phase 9 · Task 5 |
+| Claude MCP-only Gateway pay + replay | [`docs/qa/2026-07-13-x402-paid-http-evidence.md`](qa/2026-07-13-x402-paid-http-evidence.md) |
+| Policy matrix | [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-testnet-release-evidence.md) |
 
 ---
 
-### 7.3 How the two paths meet
+### 7.3 How the landing toggle maps to this
+
+| Landing toggle | Means |
+|---|---|
+| **Human** | Operator UI path — you set boundaries and mint credentials |
+| **Agent** | Docs path for the IDE/LLM — how to use MCP **after** you mint credentials |
+
+Future ideas (invite join, MCP publish / ERC-8004 self-list) are **not** shipped. Do not claim them from Agent mode today.
+
+---
+
+### 7.4 How the two paths meet
 
 ```text
-Human NLP chat / Fleet Run / Hire desk
-        │  (operator session cookie)
+You: console / NLP chat / Approvals
+        │  (operator session)
         ▼
    AgentOps API  ── policy · wallets · Permit2 / x402 · evidence
         ▲
-        │  (agent bearer credential)
-Coded agent / IDE via MCP (/llms.txt cold-start)
+        │  (bearer you pasted into Claude / Cursor)
+Claude / Cursor via MCP
 ```
-
-- Humans set **policy pack, caps, allowlists, approvals**.  
-- Agents **only** act through tools that enforce those rules.  
-- Same Activity feed shows both operator clicks and agent MCP calls.  
 
 ---
 

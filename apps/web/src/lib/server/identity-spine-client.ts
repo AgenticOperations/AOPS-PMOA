@@ -377,3 +377,48 @@ export async function detachWalletRef(
     method: 'DELETE',
   });
 }
+
+export type AgentJoinInviteRecord = {
+  readonly id: string;
+  readonly org_id: string;
+  readonly label: string;
+  readonly max_uses: number;
+  readonly use_count: number;
+  readonly expires_at: string | null;
+  readonly revoked_at: string | null;
+  readonly created_at: string;
+};
+
+export type CreateAgentJoinInviteResult = {
+  readonly invite: AgentJoinInviteRecord;
+  readonly token: string;
+};
+
+export async function listAgentJoinInvites(orgId: string): Promise<readonly AgentJoinInviteRecord[]> {
+  const body = await apiFetch<{ readonly invites: readonly AgentJoinInviteRecord[] }>(
+    `/v1/orgs/${orgId}/agent-join/invites`,
+  );
+  return body.invites;
+}
+
+export async function createAgentJoinInvite(
+  orgId: string,
+  input: {
+    readonly label?: string | undefined;
+    readonly max_uses?: number | undefined;
+    readonly expires_in_hours?: number | undefined;
+  } = {},
+): Promise<CreateAgentJoinInviteResult> {
+  return apiFetch<CreateAgentJoinInviteResult>(`/v1/orgs/${orgId}/agent-join/invites`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeAgentJoinInvite(orgId: string, inviteId: string): Promise<AgentJoinInviteRecord> {
+  const body = await apiFetch<{ readonly invite: AgentJoinInviteRecord }>(
+    `/v1/orgs/${orgId}/agent-join/invites/${inviteId}/revoke`,
+    { method: 'POST' },
+  );
+  return body.invite;
+}

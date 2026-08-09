@@ -212,6 +212,32 @@ export class RuntimeApiClient {
     });
   }
 
+  async publish(input: { readonly public_endpoint_url: string }): Promise<Record<string, unknown>> {
+    return this.request('/v1/runtime/publish', {
+      body: { public_endpoint_url: input.public_endpoint_url },
+      method: 'POST',
+    });
+  }
+
+  async identityStatus(): Promise<Record<string, unknown>> {
+    return this.request('/v1/runtime/identity', { method: 'GET' });
+  }
+
+  async identityRegister(input: {
+    readonly endpoint_url: string;
+    readonly agent_uri?: string | undefined;
+    readonly chain?: 'arc' | undefined;
+  }): Promise<Record<string, unknown>> {
+    return this.request('/v1/runtime/identity/register', {
+      body: {
+        endpoint_url: input.endpoint_url,
+        ...(input.agent_uri === undefined ? {} : { agent_uri: input.agent_uri }),
+        chain: input.chain ?? 'arc',
+      },
+      method: 'POST',
+    });
+  }
+
   private async request<T extends Record<string, unknown>>(path: string, options: RequestOptions): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -238,6 +264,102 @@ export class RuntimeApiClient {
           body.message ?? body.error ?? `agentOps API request failed with ${response.status}`,
           body.error ?? null,
           body,
+        );
+      }
+      return (await response.json()) as T;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+export type AgentJoinResult = {
+  readonly agent_id: string;
+  readonly org_id: string;
+  readonly connection_id: string;
+  readonly mcp_url: string;
+  readonly credential: string;
+  readonly payment_access: 'disabled';
+  readonly join_mode: 'invite' | 'open';
+};
+
+export type AgentJoinClientOptions = {
+  readonly apiBaseUrl: string;
+  readonly timeoutMs?: number | undefined;
+};
+
+/** Unauthenticated client for Phase 1 invite redeem and Phase 3 open register. */
+export class AgentJoinClient {
+  private readonly apiBaseUrl: string;
+  private readonly timeoutMs: number;
+
+  constructor(options: AgentJoinClientOptions) {
+    this.apiBaseUrl = normalizeBaseUrl(options.apiBaseUrl);
+    this.timeoutMs = options.timeoutMs ?? 15_000;
+  }
+
+  async redeemInvite(input: {
+    readonly token: string;
+    readonly agent_name?: string | undefined;
+  }): Promise<AgentJoinResult> {
+    const body = await this.postJson<{ readonly join: AgentJoinResult }>('/v1/agent-join/invite/redeem', {
+      token: input.token,
+      ...(input.agent_name === undefined ? {} : { agent_name: input.agent_name }),
+    });
+    return body.join;
+  }
+
+  async openRegister(input: { readonly agent_name?: string | undefined } = {}): Promise<AgentJoinResult> {
+    const body = await this.postJson<{ readonly join: AgentJoinResult }>('/v1/agent-join/open', {
+      ...(input.agent_name === undefined ? {} : { agent_name: input.agent_name }),
+    });
+    return body.join;
+  }
+
+  async openStatus(): Promise<Record<string, unknown>> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(`${this.apiBaseUrl}/v1/agent-join/open/status`, {
+        headers: { accept: 'application/json' },
+        method: 'GET',
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errBody = await parseErrorBody(response);
+        throw new RuntimeApiError(
+          response.status,
+          errBody.message ?? errBody.error ?? `agentOps join status failed with ${response.status}`,
+          errBody.error ?? null,
+          errBody,
+        );
+      }
+      return (await response.json()) as Record<string, unknown>;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(`${this.apiBaseUrl}${path}`, {
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+        },
+        method: 'POST',
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const errBody = await parseErrorBody(response);
+        throw new RuntimeApiError(
+          response.status,
+          errBody.message ?? errBody.error ?? `agentOps join request failed with ${response.status}`,
+          errBody.error ?? null,
+          errBody,
         );
       }
       return (await response.json()) as T;

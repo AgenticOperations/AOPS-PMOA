@@ -16,6 +16,10 @@ function fakeClient(overrides: Partial<AgentOpsRuntimeClient> = {}): AgentOpsRun
         input,
       },
     }),
+    identityRegister: () => Promise.resolve({
+      identity: { token_id: '1', status: 'registered', register_tx_hash: '0xabc' },
+    }),
+    identityStatus: () => Promise.resolve({ identity: null }),
     onboard: () => Promise.resolve({
       agent: { id: 'agt_1', name: 'Research agent' },
       contractVersion: '2026-07-07.1',
@@ -56,6 +60,9 @@ function fakeClient(overrides: Partial<AgentOpsRuntimeClient> = {}): AgentOpsRun
         responseAvailable: false,
       },
     }),
+    publish: () => Promise.resolve({
+      publish: { agent_id: 'agt_1', public_endpoint_url: 'https://agents.example/mcp' },
+    }),
     ...overrides,
   };
 }
@@ -88,6 +95,9 @@ describe('agentOps MCP tools', () => {
       'agentops.activity_record',
       'agentops.operation_check',
       'agentops.operation_record',
+      'agentops.publish',
+      'agentops.identity_status',
+      'agentops.identity_register',
     ]);
   });
 

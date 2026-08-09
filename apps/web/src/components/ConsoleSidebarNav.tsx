@@ -16,6 +16,7 @@ import {
   IconRobot,
   IconSettings,
   IconShieldCheck,
+  IconTicket,
 } from '@tabler/icons-react';
 import type { Org } from '@/lib/identity-spine-types';
 import { cn } from '@/lib/utils';
@@ -121,6 +122,12 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
             tour: 'nav-agents',
           },
           {
+            href: `${base}/agents/join-invites`,
+            icon: <IconTicket aria-hidden="true" className="nav-icon" {...iconProps} />,
+            label: 'Join invites',
+            tour: 'nav-join-invites',
+          },
+          {
             href: `${base}/controls`,
             icon: <IconShieldCheck aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Controls',
@@ -195,6 +202,13 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
     }
 
     if (href === `${base}/agents`) {
+      return (
+        pathname === href
+        || (pathname.startsWith(`${href}/`) && !pathname.startsWith(`${href}/join-invites`))
+      );
+    }
+
+    if (href === `${base}/agents/join-invites`) {
       return pathname === href || pathname.startsWith(`${href}/`);
     }
 
