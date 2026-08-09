@@ -141,7 +141,7 @@ Create an agent in the console, open **Credentials & wallets**, and issue a cred
 
 Agents call `agentops.payment_x402` for a bounded paid HTTP request (policy, approval, budget, settlement, retry) or `agentops.payment_intra_fleet` to pay another org agent via Permit2. Production paid-resource URLs require HTTPS; local QA merchant fixtures remain disabled unless `ENABLE_TESTNET_X402_FIXTURES=true` is explicitly set for an isolated test run.
 
-Agent-facing onboarding: [docs/llms.txt](docs/llms.txt) and [docs/skill.md](docs/skill.md).
+Agent-facing onboarding: [docs/llms.txt](docs/llms.txt) and [docs/skill.md](docs/skill.md). The web app also serves them at [`/llms.txt`](apps/web/public/llms.txt) and [`/skill.md`](apps/web/public/skill.md); the landing page **Human / Agent** toggle switches to a structured Agent mode (`/?audience=agent`) that points agents at those files for full MCP setup.
 
 The local stdio adapter remains supported for repository-local hosts:
 
@@ -155,7 +155,14 @@ For Claude Desktop or another stdio MCP host, launch the built server with an ab
 
 ## End-to-end flow (plain English + proofs)
 
-This is the story we actually ran and re-checked on testnets — not a slide deck. Full write-up with every hash: [docs/spike-results.md](docs/spike-results.md) (§K.4 fleet demo and steps 9–11). How to repeat it: [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
+Short version below. Full **policy-composed** fleet story (named policies per agent, approval gates, caps, deny beats + every explorer link): **[docs/end-to-end-system-guide.md](docs/end-to-end-system-guide.md)** §9. Raw hashes: [docs/spike-results.md](docs/spike-results.md). Demo script: [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
+
+### 0. Policies are the product (not an afterthought)
+
+In this example the org does **not** run on empty defaults. Before any hire, the operator activates a **Fleet Policy Pack** and binds it per agent — fail-closed unknown actions, Orchestrator Arc hire allowlist, Analyst second-hop-only, Base SeniorReviewer **requires human approval**, deny unknown payTo, deny external x402 unless explicitly authorized, observe outbound HTTP, optional deny-weather beat, plus per-request caps / budgets / payment access.
+
+Stack: **policy decides → payment controls bound amount → wallet balance is hard stop → Permit2 / x402 / escrow settles.**  
+See the named P1–P9 pack and step table in the [end-to-end guide §9](docs/end-to-end-system-guide.md#9-fleet-end-to-end-story-policy-composed--proven).
 
 ### 1. A real org puts real money on a ceiling
 
@@ -163,9 +170,9 @@ An operator signs in, funds the org treasury, and each agent gets its **own** wa
 
 **Proof we tested:** funded wallet, over-cap attempt rejected (`409 insufficient_agent_wallet_balance`), under-cap settle succeeded — recorded in [spike-results acceptance artifacts](docs/spike-results.md#acceptance-artifacts). Example funded address on Arc: [0xecf29492…9b48f](https://testnet.arcscan.app/address/0xecf29492264424ae73fc1434a30a66d2f6a9b48f).
 
-### 2. Agents hire each other under AgentOps (same chain)
+### 2. Agents hire each other under AgentOps policy (same chain)
 
-The Orchestrator pays specialists for work. Each hop goes through AgentOps runtime (policy / budget first, then settlement). Money moves agent → agent with Permit2 drawdowns, not a shared spreadsheet budget.
+The Orchestrator pays specialists for work. Each hop clears the Fleet Policy Pack + caps, then settles via Permit2 — not a shared spreadsheet budget. The Analyst’s second hop runs under **Analyst’s own credential and P4 (second-hop-only)**.
 
 **Proof we tested** (Arc USDC, receipts verified from chain state — Transfer logs, not just our API):
 
@@ -176,9 +183,9 @@ The Orchestrator pays specialists for work. Each hop goes through AgentOps runti
 | Analyst → DataFetcher (second hop — agent is buyer *and* seller) | 0.01 USDC | [tx](https://testnet.arcscan.app/tx/0x576be257d15dfeddcab8801ef0187115076dde6e346c0388ca52adaceae6abfa) |
 | Orchestrator → Writer | 0.02 USDC | [tx](https://testnet.arcscan.app/tx/0x9939df2b2c5d694802e1c53cccd5bb933cc01c01965bcb4b4f0ec548e2275822) |
 
-### 3. Same fleet, different chain
+### 3. Same fleet, different chain (with approval gate)
 
-The Orchestrator on Arc also pays a SeniorReviewer that settles on **Base**. Same product path; separate per-chain wallet funding.
+The Orchestrator pays SeniorReviewer on **Base**. In the composed example this is policy **P3**: cross-chain hire **requires human approval** (Approvals inbox → consume → re-issue), then settlement from the Orchestrator’s Base-funded wallet.
 
 **Proof we tested:** [Base Sepolia tx 0x738e4229…716e](https://sepolia.basescan.org/tx/0x738e4229f6a35e953e647cca23ed102399abe871704461423aefa4e05594716e) (0.03 USDC).
 
@@ -200,11 +207,11 @@ Revoking an agent sweeps remaining funds back to treasury — one on-chain move,
 
 **Proof we tested:** [sweep tx 0x566966b7…5627](https://testnet.arcscan.app/tx/0x566966b754ae9dca563f9f8592bfc6ba6051713c3bbcb423f272b3ec0f3d5627).
 
-### 6. One agent through MCP (Mode A)
+### 6. One agent through MCP (Mode A) under payment policy
 
-Separately from the five-agent fleet, a real Claude process connected only via hosted MCP, called `agentops.payment_x402`, settled a Gateway payment, and replayed the same idempotency key without double-charging.
+Separately from the five-agent fleet, a real Claude process connected only via hosted MCP exercised allow / observe / deny / rate-limit / approval / payment-cap paths, then settled a Gateway payment and replayed the same idempotency key without double-charging.
 
-**Proof we tested:** [docs/qa/2026-07-13-x402-paid-http-evidence.md](docs/qa/2026-07-13-x402-paid-http-evidence.md) (payment event `payevt_2e37ca8b-…`, Gateway Base, `0.001 USDC`, replay confirmed).
+**Proof we tested:** [policy matrix](docs/qa/2026-07-12-testnet-release-evidence.md) · [paid HTTP evidence](docs/qa/2026-07-13-x402-paid-http-evidence.md) (`payevt_2e37ca8b-…`, Gateway Base, `0.001 USDC`, replay confirmed).
 
 ### Honest limit
 
@@ -244,6 +251,7 @@ All `/internal/circle/*` routes require the worker bearer token. The worker owns
 ## Current documentation
 
 ### Start here
+- [docs/end-to-end-system-guide.md](docs/end-to-end-system-guide.md): **deep end-to-end guide** — Circle infra map, full flows, every proof tx link, and known bugs (including Base Sepolia external ETH indexing).
 - [PRODUCT.md](PRODUCT.md): product boundaries and language.
 - [DESIGN.md](DESIGN.md): authenticated-console design contract.
 - [docs/arc-agentops-addon.md](docs/arc-agentops-addon.md): what AgentOps is on Arc vs Circle SDKs.

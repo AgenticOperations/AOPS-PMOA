@@ -123,4 +123,34 @@ describe('AOPS public landing page', () => {
     expect(container.querySelector('[data-chain-marquee]')).toBeInTheDocument();
     expect(container.querySelectorAll('[data-chain-marquee-track] > ul')).toHaveLength(2);
   });
+
+  it('exposes a Human/Agent toggle that switches to the structured MCP / llms.txt view', async () => {
+    const { container } = render(await HomePage());
+
+    const dock = screen.getByRole('group', { name: 'Landing audience' });
+    const human = within(dock).getByRole('button', { name: 'Human' });
+    const agent = within(dock).getByRole('button', { name: 'Agent' });
+
+    expect(human).toHaveAttribute('aria-pressed', 'true');
+    expect(agent).toHaveAttribute('aria-pressed', 'false');
+    expect(container.querySelector('.aops-landing')).toHaveAttribute('data-audience', 'human');
+    expect(screen.queryByRole('region', { name: 'Agent mode structured view' })).not.toBeInTheDocument();
+
+    fireEvent.click(agent);
+
+    expect(agent).toHaveAttribute('aria-pressed', 'true');
+    expect(human).toHaveAttribute('aria-pressed', 'false');
+    expect(container.querySelector('.aops-landing')).toHaveAttribute('data-audience', 'agent');
+    const agentView = screen.getByRole('region', { name: 'Agent mode structured view' });
+    expect(within(agentView).getByRole('heading', { level: 1, name: 'agentOps' })).toBeInTheDocument();
+    expect(within(agentView).getByRole('link', { name: '/llms.txt' })).toHaveAttribute('href', '/llms.txt');
+    expect(within(agentView).getByRole('link', { name: '/skill.md' })).toHaveAttribute('href', '/skill.md');
+    expect(screen.queryByRole('heading', { level: 1, name: 'Let agents act. Keep authority.' })).not.toBeInTheDocument();
+
+    fireEvent.click(human);
+    expect(container.querySelector('.aops-landing')).toHaveAttribute('data-audience', 'human');
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Let agents act. Keep authority.' }),
+    ).toBeInTheDocument();
+  });
 });

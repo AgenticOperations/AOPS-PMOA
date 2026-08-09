@@ -16316,8 +16316,10 @@ html[data-theme="dark"] .chain-mark[src*="/landing/chains/arc.png"] {
   display: block;
 }
 
-/* Square geometry throughout — no rounded controls on this surface. */
-.aops-landing button,
+/* Square geometry throughout — no rounded controls on this surface.
+ * Exception: the Human/Agent audience dock is intentionally pill-shaped
+ * (Ampersand-style mode switch for agent-readable /llms.txt). */
+.aops-landing button:not(.aops-audience-option),
 .aops-landing a {
   border-radius: 0;
 }
@@ -16475,6 +16477,187 @@ html[data-theme="dark"] .chain-mark[src*="/landing/chains/arc.png"] {
 
 .aops-mobile-menu[data-open="true"] { opacity: 1; pointer-events: auto; }
 .aops-mobile-menu a { font-size: clamp(34px, 10vw, 56px); letter-spacing: -0.05em; }
+
+/* -------- Human / Agent audience dock (Ampersand-style mode switch) -------- */
+.aops-audience-dock {
+  position: fixed;
+  z-index: 40;
+  right: 0;
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  left: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.aops-audience-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(12, 12, 12, 0.92);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(80, 100, 255, 0.08);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  pointer-events: auto;
+}
+
+.aops-audience-option {
+  min-width: 88px;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--aops-faint);
+  cursor: pointer;
+  font-size: var(--aops-type-label);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: background 200ms ease, color 200ms ease;
+}
+
+.aops-audience-option:hover {
+  color: var(--aops-ink);
+}
+
+.aops-audience-option[data-active="true"] {
+  background: #f4f4f4;
+  color: #0a0a0a;
+}
+
+.aops-landing[data-audience="agent"] .aops-audience-option[data-active="true"] {
+  background: var(--aops-blue);
+  color: #ffffff;
+}
+
+.aops-audience-option:focus-visible {
+  outline: 2px solid var(--aops-blue);
+  outline-offset: 2px;
+}
+
+/* -------- Agent mode structured view -------- */
+.aops-agent-view {
+  min-height: 100dvh;
+  padding: 110px var(--aops-gutter) 120px;
+  background: #050505;
+  color: #e8e8e8;
+}
+
+.aops-agent-view-inner {
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+
+.aops-agent-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 28px;
+  color: var(--aops-blue-light);
+  font-family: var(--aops-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.aops-agent-status span {
+  color: var(--aops-blue);
+}
+
+.aops-agent-mark {
+  margin: 0 0 36px;
+  color: rgba(80, 100, 255, 0.55);
+  font-family: var(--aops-mono);
+  font-size: 0.7rem;
+  line-height: 1.15;
+  white-space: pre;
+}
+
+.aops-agent-doc h1 {
+  margin: 0 0 12px;
+  color: #fff;
+  font-size: clamp(1.75rem, 4vw, 2.25rem);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.aops-agent-lede {
+  margin: 0 0 32px;
+  color: rgba(232, 232, 232, 0.72);
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.aops-agent-doc h2 {
+  margin: 28px 0 12px;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.aops-agent-doc ol,
+.aops-agent-doc ul {
+  margin: 0 0 8px;
+  padding-left: 1.25rem;
+  color: rgba(232, 232, 232, 0.78);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.aops-agent-doc li + li {
+  margin-top: 10px;
+}
+
+.aops-agent-doc a {
+  color: var(--aops-blue-light);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.aops-agent-doc a:hover {
+  color: #fff;
+}
+
+.aops-agent-doc code {
+  padding: 0.1em 0.35em;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #c8d0ff;
+  font-family: var(--aops-mono);
+  font-size: 0.84em;
+}
+
+.aops-agent-code {
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(80, 100, 255, 0.28);
+  background: rgba(80, 100, 255, 0.06);
+  overflow-x: auto;
+}
+
+.aops-agent-code code {
+  border: 0;
+  background: transparent;
+  color: #dce2ff;
+  font-size: 0.85rem;
+}
+
+.aops-agent-footnote {
+  margin: 36px 0 0;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(232, 232, 232, 0.45);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
 
 /* ---------------------------------------------------------------- Hero ---
  * Layered bottom-up: wave field, primary glow, baseline shade, copy.

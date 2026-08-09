@@ -1,3 +1,9 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { AgentLandingView } from './AgentLandingView';
+import { AudienceModeToggle } from './AudienceModeToggle';
+import { AUDIENCE_QUERY, parseAudienceParam, type LandingAudience } from './audience-mode';
 import { ChainMarquee } from './ChainMarquee';
 import { ChainStory } from './ChainStory';
 import { ControlStory } from './ControlStory';
@@ -41,7 +47,13 @@ function DeveloperSection() {
         <div>
           <span className="aops-label">For coded agents</span>
           <h2>One surface for operators.<br />One contract for agents.</h2>
-          <p>Connect through API or MCP. The same identity, policy, approval, treasury, and evidence controls apply.</p>
+          <p>
+            Connect through API or MCP. Agents cold-start from{' '}
+            <a href="/llms.txt">
+              <code>/llms.txt</code>
+            </a>{' '}
+            — switch to Agent mode on this page for the structured view.
+          </p>
           <div className="aops-dev-notes">
             <div><b>01</b><p><strong>Credentials stay scoped.</strong> Issue, rotate, and revoke runtime connections without exposing existing secrets.</p></div>
             <div><b>02</b><p><strong>Decisions stay explainable.</strong> Agents receive an outcome; operators retain the policy and evidence context.</p></div>
@@ -94,7 +106,6 @@ function WorkflowSection() {
     <section className="aops-workflow" id="workflow">
       <div className="aops-wrap">
         <div className="aops-section-head"><h2>Start with one agent.<br />Grow control with the system.</h2><p>AOPS does not require a giant automation rewrite. Add the policies, approvals, and treasury access that each job actually requires.</p></div>
-        {/* Hairline grid: cells sit on the rail colour and are separated by 1px gaps. */}
         <div className="aops-workflow-grid">
           {steps.map((step, index) => (
             <article key={step[0]}>
@@ -119,21 +130,48 @@ function WorkflowSection() {
   );
 }
 
-export function LandingPage() {
+function HumanLandingBody() {
   return (
-    <div className="aops-landing">
+    <>
+      <Hero />
+      <ChainMarquee />
+      <Manifesto />
+      <ControlStory />
+      <ChainStory />
+      <DeveloperSection />
+      <SecuritySection />
+      <WorkflowSection />
+    </>
+  );
+}
+
+export function LandingPage() {
+  const [audience, setAudience] = useState<LandingAudience>('human');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setAudience(parseAudienceParam(params.get(AUDIENCE_QUERY)));
+  }, []);
+
+  const setMode = useCallback((mode: LandingAudience) => {
+    setAudience(mode);
+    const url = new URL(window.location.href);
+    if (mode === 'agent') {
+      url.searchParams.set(AUDIENCE_QUERY, 'agent');
+    } else {
+      url.searchParams.delete(AUDIENCE_QUERY);
+    }
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  return (
+    <div className="aops-landing" data-audience={audience}>
       <LandingNavigation />
       <main className="aops-page-surface">
-        <Hero />
-        <ChainMarquee />
-        <Manifesto />
-        <ControlStory />
-        <ChainStory />
-        <DeveloperSection />
-        <SecuritySection />
-        <WorkflowSection />
+        {audience === 'agent' ? <AgentLandingView /> : <HumanLandingBody />}
       </main>
-      <LandingFooter />
+      {audience === 'human' ? <LandingFooter /> : null}
+      <AudienceModeToggle mode={audience} onChange={setMode} />
     </div>
   );
 }
