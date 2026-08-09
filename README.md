@@ -155,14 +155,23 @@ For Claude Desktop or another stdio MCP host, launch the built server with an ab
 
 ## End-to-end flow (plain English + proofs)
 
-Short version below. Full **policy-composed** fleet story (named policies per agent, approval gates, caps, deny beats + every explorer link): **[docs/end-to-end-system-guide.md](docs/end-to-end-system-guide.md)** §9. Raw hashes: [docs/spike-results.md](docs/spike-results.md). Demo script: [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
+Short version below. Full guide (Human vs Agent paths, NLP chat, Fleet Policy Pack, Circle map, bugs, explorer links): **[docs/end-to-end-system-guide.md](docs/end-to-end-system-guide.md)**. Raw hashes: [docs/spike-results.md](docs/spike-results.md). Demo script: [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
 
-### 0. Policies are the product (not an afterthought)
+### 0. Two paths: Human and Agent
 
-In this example the org does **not** run on empty defaults. Before any hire, the operator activates a **Fleet Policy Pack** and binds it per agent — fail-closed unknown actions, Orchestrator Arc hire allowlist, Analyst second-hop-only, Base SeniorReviewer **requires human approval**, deny unknown payTo, deny external x402 unless explicitly authorized, observe outbound HTTP, optional deny-weather beat, plus per-request caps / budgets / payment access.
+| Path | How you enter | What you do |
+|---|---|---|
+| **Human** | Landing **Human** mode → Sign in → console, **`/chat` NLP**, Fleet Run, Marketplace | Plain-English goals: create agents, fund, hire, run fleet under policy |
+| **Agent** | Landing **Agent** mode → **`/llms.txt`** → MCP credential from console | `onboard` → policy/payment tools; hire services via `payment_intra_fleet` / `payment_x402` |
+
+Both hit the same AgentOps API. Details: [guide §7](docs/end-to-end-system-guide.md#7-two-paths-human-and-agent).
+
+### 0b. Policies are the product (not an afterthought)
+
+In the fleet example the org does **not** run on empty defaults. Before any hire, the operator activates a **Fleet Policy Pack** and binds it per agent — fail-closed unknown actions, Orchestrator Arc hire allowlist, Analyst second-hop-only, Base SeniorReviewer **requires human approval**, deny unknown payTo, deny external x402 unless explicitly authorized, observe outbound HTTP, optional deny-weather beat, plus per-request caps / budgets / payment access.
 
 Stack: **policy decides → payment controls bound amount → wallet balance is hard stop → Permit2 / x402 / escrow settles.**  
-See the named P1–P9 pack and step table in the [end-to-end guide §9](docs/end-to-end-system-guide.md#9-fleet-end-to-end-story-policy-composed--proven).
+See the named P1–P9 pack and step table in the [end-to-end guide §8](docs/end-to-end-system-guide.md#8-fleet-end-to-end-story-policy-composed--proven).
 
 ### 1. A real org puts real money on a ceiling
 

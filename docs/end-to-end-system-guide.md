@@ -9,7 +9,7 @@ status: living guide — grounded in spike-results + as-built code
 
 # AgentOps (AOPS-PMOA) — End-to-End System Guide
 
-This is the deep, human-readable map of **what the product does**, **which Circle / Arc pieces it uses**, **how money actually moves under a real policy pack**, and **what we proved on-chain** (with explorer links). It also records the **real bugs and wrong turns** we hit, so nobody relearns them the hard way.
+This is the deep, human-readable map of **what the product does**, **the Human vs Agent entry paths (NLP chat + MCP / llms.txt)**, **which Circle / Arc pieces it uses**, **how money actually moves under a real policy pack**, and **what we proved on-chain** (with explorer links). It also records the **real bugs and wrong turns** we hit, so nobody relearns them the hard way.
 
 Primary evidence source: [`docs/spike-results.md`](spike-results.md)  
 Demo script: [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md)  
@@ -27,14 +27,13 @@ Why we built it this way: [`docs/handover.md`](handover.md)
 4. [Circle infrastructure map](#4-circle-infrastructure-map)
 5. [Chains and money model](#5-chains-and-money-model)
 6. [Two payment lanes](#6-two-payment-lanes)
-7. [Operator journey (human)](#7-operator-journey-human)
-8. [Agent journey (MCP / runtime)](#8-agent-journey-mcp--runtime)
-9. [Fleet end-to-end story (policy-composed + proven)](#9-fleet-end-to-end-story-policy-composed--proven)
-10. [Escrow → reputation → Permit2](#10-escrow--reputation--permit2)
-11. [Kill switch and sweep](#11-kill-switch-and-sweep)
-12. [Bugs, traps, and wrong turns](#12-bugs-traps-and-wrong-turns)
-13. [What is proven vs not](#13-what-is-proven-vs-not)
-14. [Related docs](#14-related-docs)
+7. [Two paths: Human and Agent](#7-two-paths-human-and-agent)
+8. [Fleet end-to-end story (policy-composed + proven)](#8-fleet-end-to-end-story-policy-composed--proven)
+9. [Escrow → reputation → Permit2](#9-escrow--reputation--permit2)
+10. [Kill switch and sweep](#10-kill-switch-and-sweep)
+11. [Bugs, traps, and wrong turns](#11-bugs-traps-and-wrong-turns)
+12. [What is proven vs not](#12-what-is-proven-vs-not)
+13. [Related docs](#13-related-docs)
 
 ---
 
@@ -45,14 +44,22 @@ Why we built it this way: [`docs/handover.md`](handover.md)
 It is **not** a replacement for Circle wallets, x402, Gateway, or App Kit. Those stay Circle’s. See [`docs/arc-agentops-addon.md`](arc-agentops-addon.md).
 
 ```text
-Human operator (console)
-        │
-        ▼
-   AgentOps API  ◄── agents via MCP / runtime HTTP
-        │
-        ├── policy / approvals / budgets / audit
-        └── Circle worker ──► Circle Wallets + Gateway + chain
+Human path                    Agent path
+─────────                     ──────────
+Landing: Human mode           Landing: Agent mode  (/?audience=agent)
+   │                             │
+   ▼                             ▼
+Console + NLP chat (/chat)    GET /llms.txt → /skill.md
+Fleet Run · Marketplace          │
+Approvals · Fund · Policies      ▼
+   │                          MCP :8070/mcp + bearer credential
+   └──────────► AgentOps API ◄──┘
+                     │
+                     ├── policy / approvals / budgets / audit
+                     └── Circle worker → wallets / Gateway / chain
 ```
+
+See [§7 Two paths: Human and Agent](#7-two-paths-human-and-agent) for the full walkthrough of both.
 
 ---
 
@@ -97,7 +104,7 @@ This section answers: *“What Circle thing are we using, and for what?”*
 
 **Decision:** flip to DCW so each agent can own a wallet without a human in the loop ([`docs/decisions.md`](decisions.md) A3). Proven by spike **S2** — two EOAs on `ARC-TESTNET` from one entity secret, no OTP.
 
-**Important setup trap:** generating an entity secret is not enough — it must be **registered** with Circle (`registerEntitySecretCiphertext`). An unregistered secret surfaces as a *balance* error (`155258`), not a credentials error. See [§12](#12-bugs-traps-and-wrong-turns).
+**Important setup trap:** generating an entity secret is not enough — it must be **registered** with Circle (`registerEntitySecretCiphertext`). An unregistered secret surfaces as a *balance* error (`155258`), not a credentials error. See [§11](#11-bugs-traps-and-wrong-turns).
 
 ### 4.2 What Circle signs and moves for us
 
@@ -208,7 +215,24 @@ For Gateway nanopayments, the authoritative receipt is often **Circle’s API**,
 
 ---
 
-## 7. Operator journey (human)
+## 7. Two paths: Human and Agent
+
+AgentOps is built for **two audiences** that meet at the same control plane. The public landing page even has a **Human / Agent** toggle (same idea as Ampersand’s mode switch):
+
+| Mode | Who | Entry | Job |
+|---|---|---|---|
+| **Human** | Operator / org admin | Marketing landing → Sign in → console / NLP chat | Set rules, fund wallets, approve, hire, chat in plain English |
+| **Agent** | LLM / coded agent / IDE | Landing Agent mode → `/llms.txt` → MCP | Call governed tools; spend only under policy |
+
+Both paths hit the **same** API, policies, wallets, and evidence. Humans configure; agents execute; neither bypasses AgentOps.
+
+---
+
+### 7.1 Human path — console + easy NLP chat
+
+Humans never need to speak MCP. They use the product in ordinary language and buttons.
+
+#### A. Operator console (full control)
 
 ```text
 Sign in (Google)
@@ -217,64 +241,126 @@ Sign in (Google)
    → Fund treasury (manual testnet USDC)
    → Create agents (each gets wallet(s))
    → Set allocations + gas reserve (solvency checked)
-   → Author + activate the Fleet Policy Pack (§9) — bind per agent
+   → Author + activate the Fleet Policy Pack (§8) — bind per agent
    → Enable payment access + caps / approval thresholds per agent
    → Authorize payTo destinations (fleet wallets + any external fixtures)
-   → Issue MCP / runtime credentials (one-time reveal)
+   → Issue MCP / runtime credentials (one-time reveal) for agents
    → Optional: Publish agent → Marketplace
-   → Hire / Fleet Run / Approvals inbox (policy decisions on every step)
-   → Activity & Evidence (hash-chained decisions + txs)
+   → Hire desk / Fleet Run / Approvals inbox
+   → Activity & Evidence
    → Revoke agent → sweep back to treasury
 ```
 
-Console lives at `http://localhost:3005`. Demo camera path: [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md).
+Console: `http://localhost:3005` after sign-in → `/app/{org}/…`.
 
-**What AgentOps moments to call out live**
+#### B. NLP chat — “Chat with agent” (`/chat`)
 
-1. Per-agent wallet balance = max loss (explorer)
-2. **Named policies bound before any hire** (not an empty / default org)
-3. Deny / approval pause mid-run
-4. Lane 2 fleet hire (Permit2) after policy allow
-5. Lane 1 external / fixture (x402) only after payTo authorize + payment policy
-6. Second hop (agent is buyer *and* seller under its own policy)
-7. Cross-chain Base settlement with human approval gate
-8. Publish + ERC-8004 identity
-9. Activity / audit with decision ids + tx links
-10. Kill + sweep without OTP
+This is the **easy human surface**: type a goal in natural language; AgentOps classifies intent and drives real org actions under policy (not a toy FAQ bot).
+
+| You might say | What AgentOps does |
+|---|---|
+| “What can AgentOps do?” | Product Q&A (MCP, marketplace, rails) |
+| “Recommend marketplace services” | Listing cards with prices / chains → open hire |
+| “Create 3 agents for research” | Proposes roster → **confirm** → creates agents + payment access |
+| “How funded are we?” / fund intents | Treasury / balance oriented answers + deep links |
+| “Set policies…” | Guidance + links into Controls |
+| Research / fleet goal (DataFetcher → Analyst → Writer → Base reviewer) | Starts a **Fleet Run**: plan checklist → real Permit2 (and optional x402) payments → brief + receipts |
+
+**Where:** [`/chat`](../apps/web/src/app/chat/page.tsx) (signed-in, primary org). Suggestions in the UI seed the same intents.
+
+**Under the hood:** `POST /v1/orgs/:orgId/agent-chat/turn` → Gemini intent classify → handlers for `qa` | `marketplace` | `create_agents` | `fund` | `policies` | `fleet_run` | `confirm`. Fleet runs call the same payment engines as Marketplace hire / demo — policy and wallets still apply.
+
+**Also:** console **Fleet Run** (`/app/{org}/fleet-run`) is the dedicated chat + live checklist + wire graph for a multi-agent goal (see [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) Part B).
+
+#### C. What humans should call out live
+
+1. Per-agent wallet = max loss (explorer)  
+2. Named policies bound before hire  
+3. NLP chat / Fleet Run goal → real txs under policy  
+4. Deny / approval pause  
+5. Second hop + cross-chain Base  
+6. Activity with decision ids + explorer links  
+7. Kill + sweep without OTP  
 
 ---
 
-## 8. Agent journey (MCP / runtime)
+### 7.2 Agent path — how an agent accesses the platform and services
 
-Agents do **not** self-register. An operator issues:
+Agents do **not** log into the console and do **not** self-register. A human issues credentials; the agent follows the cold-start contract.
 
-- MCP URL (e.g. `http://127.0.0.1:8070/mcp`)
-- Bearer credential for **one** agent identity
+#### Step 0 — Discover (no secret yet)
 
-Cold-start contract: [`docs/llms.txt`](llms.txt) · longer walkthrough: [`docs/skill.md`](skill.md)  
-Public web URLs (same content): [`/llms.txt`](../apps/web/public/llms.txt) · [`/skill.md`](../apps/web/public/skill.md) · landing Agent mode at `/?audience=agent`
+1. Open landing **Agent** mode: `/?audience=agent` (structured summary).  
+2. Fetch canonical contract: **`GET /llms.txt`** (also in repo as [`docs/llms.txt`](llms.txt)).  
+3. Optional longer walkthrough: **`GET /skill.md`**.  
+
+These files tell the agent *how* to connect. They do **not** grant spend access.
+
+#### Step 1 — Human issues access
+
+In console: **Agents → [agent] → Connections → new `agent_credential`**.  
+One-time reveal gives:
+
+- MCP URL (local default `http://127.0.0.1:8070/mcp`)
+- Bearer credential for **that** agent only  
+
+Paste into Cursor / Claude / Codex / ADK / your runtime. Plaintext is never shown again.
+
+#### Step 2 — Connect and onboard
 
 ```text
-1. Connect Streamable HTTP + Authorization: Bearer <credential>
-2. agentops.onboard          → live runtime contract (source of truth)
-3. agentops.operation_check / policy_check
-      → allow | deny | observe | approval_id
-4. If approval: poll approval_status → approval_consume (immediately before acting)
-5. Do the governed thing:
-      - payment_x402          (external — embeds its own policy + caps)
-      - payment_intra_fleet   (fleet Permit2 — same-org + ceiling + solvency)
-6. Optional: activity_record / operation_record
+Streamable HTTP → Authorization: Bearer <credential>
+     → agentops.onboard  (no args)
+     → live runtime contract = source of truth for tools + fields
 ```
 
-Every step in the fleet example below is meant to leave a **policy decision** (or an explicit payment-control refusal) in Activity — that is what makes the run look like AgentOps, not “agents paying wallets.”
+#### Step 3 — Use platform services (all governed)
 
-**Proven MCP binding:** Google ADK `McpToolset` listed real tools and called `agentops.onboard` live (Phase 9 · Task 5) — see spike-results.  
-**Proven paid MCP path (fixture):** Claude Haiku, MCP-only, Gateway Base `0.001 USDC`, replay-safe — [`docs/qa/2026-07-13-x402-paid-http-evidence.md`](qa/2026-07-13-x402-paid-http-evidence.md).  
-**Proven policy matrix (allow / observe / deny / rate-limit / approval / payment caps):** [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-testnet-release-evidence.md) § Real-Agent Policy Matrix.
+| Goal | How the agent does it | Notes |
+|---|---|---|
+| Know what’s allowed | `agentops.onboard` | Always first; never hardcode the catalog |
+| Non-pay HTTP / tool | `agentops.operation_check` then act | Prefer over `policy_check` for `runtime.http.request` / `tool.call` |
+| Other actions | `agentops.policy_check` | allow / deny / approval_id |
+| Wait for human | `approval_status` → (human in Approvals) → `approval_consume` | Consume immediately before acting |
+| Pay external merchant / fixture | `agentops.payment_x402` | Policy + caps inside; **idempotency key** required |
+| Hire / pay another **same-org** agent | `agentops.payment_intra_fleet` | Permit2 drawdown; **not** idempotency-key safe |
+| Log non-financial work | `operation_record` / `activity_record` | Operator visibility |
+
+So “accessing services” for an agent means: **call MCP tools that hit AgentOps runtime**, which then talks to Circle / chain / HTTP sellers. The agent never holds the org’s Circle entity secret.
+
+#### Step 4 — Optional thin HTTP client
+
+Node templates can use [`packages/runtime-client`](../packages/runtime-client) against `/v1/runtime/...` with the same credential (not a Circle SDK). Mode B publish overlay: [`templates/arc-nanopayments-agentops`](../templates/arc-nanopayments-agentops).
+
+#### Proven agent-path evidence
+
+| Proof | Link |
+|---|---|
+| Google ADK MCP `onboard` live | spike-results Phase 9 · Task 5 |
+| Claude MCP-only paid Gateway settle + replay | [`docs/qa/2026-07-13-x402-paid-http-evidence.md`](qa/2026-07-13-x402-paid-http-evidence.md) |
+| Policy matrix (allow / observe / deny / rate-limit / approval / caps) | [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-testnet-release-evidence.md) |
 
 ---
 
-## 9. Fleet end-to-end story (policy-composed + proven)
+### 7.3 How the two paths meet
+
+```text
+Human NLP chat / Fleet Run / Hire desk
+        │  (operator session cookie)
+        ▼
+   AgentOps API  ── policy · wallets · Permit2 / x402 · evidence
+        ▲
+        │  (agent bearer credential)
+Coded agent / IDE via MCP (/llms.txt cold-start)
+```
+
+- Humans set **policy pack, caps, allowlists, approvals**.  
+- Agents **only** act through tools that enforce those rules.  
+- Same Activity feed shows both operator clicks and agent MCP calls.  
+
+---
+
+## 8. Fleet end-to-end story (policy-composed + proven)
 
 This is the same five-agent research fleet we ran on real testnets — told as a **governed AgentOps composition**, not a happy-path payment script. Money moves only after wallet ceilings, destination allowlists, payment access, and the **Fleet Policy Pack** below clear the step.
 
@@ -282,9 +368,9 @@ This is the same five-agent research fleet we ran on real testnets — told as a
 **Org:** `org_9add7cd3-03eb-471f-85db-7024a9a0a5bd`  
 **Drivers:** `demo/reset.mjs` + `demo/run.mjs` against live API + Circle worker  
 **Raw hashes:** spike-results § “Manifest §K.4 fleet demo”  
-**Policy control shapes proven separately:** QA policy matrix + deny-weather policy ([§9.5](#95-what-we-already-proved-on-the-policy-surface))
+**Policy control shapes proven separately:** QA policy matrix + deny-weather policy ([§8.5](#85-what-we-already-proved-on-the-policy-surface))
 
-### 9.1 Cast
+### 8.1 Cast
 
 | Agent | Chain | Role under policy |
 |---|---|---|
@@ -294,7 +380,7 @@ This is the same five-agent research fleet we ran on real testnets — told as a
 | Writer | Arc | Sell-only in this run (no outbound hire) |
 | SeniorReviewer | **Base** | Cross-chain review; receives only after Orchestrator approval clears |
 
-### 9.2 Fleet Policy Pack (how this example is supposed to look)
+### 8.2 Fleet Policy Pack (how this example is supposed to look)
 
 Org default effect: **fail-closed** (`deny` unknown actions). Policies are versioned, activated, and **bound to named agents** before the run — so every hire shows AgentOps in the middle.
 
@@ -324,7 +410,7 @@ Org default effect: **fail-closed** (`deny` unknown actions). Policies are versi
 
 Together: **policy decides if the intent is allowed; payment controls bound how much; the wallet balance is the hard stop; Permit2 / x402 / escrow settle.**
 
-### 9.3 Step-by-step: policy → AgentOps call → settlement (with proofs)
+### 8.3 Step-by-step: policy → AgentOps call → settlement (with proofs)
 
 Read this top to bottom. Each row is one governed beat — this is what “AgentOps is deeply composed” looks like.
 
@@ -343,7 +429,7 @@ Read this top to bottom. Each row is one governed beat — this is what “Agent
 
 **Reading Arc receipts:** one payment often shows **two** `Transfer` logs (native 18dp + ERC-20 6dp views of the same USDC). That is Arc dual-view behavior, not a double spend.
 
-### 9.4 What the operator sees (so it feels like AgentOps)
+### 8.4 What the operator sees (so it feels like AgentOps)
 
 For each step card / Activity row, the product should surface:
 
@@ -357,9 +443,9 @@ For each step card / Activity row, the product should surface:
 
 Script line after each payment: *“That spend went through AgentOps — policy and budget first, then settlement.”*
 
-### 9.5 What we already proved on the policy surface
+### 8.5 What we already proved on the policy surface
 
-The payment txs in §9.3 are on-chain. The **policy control vocabulary** this pack uses was exercised with a real MCP-only Claude agent (browser-authored policies), including:
+The payment txs in §8.3 are on-chain. The **policy control vocabulary** this pack uses was exercised with a real MCP-only Claude agent (browser-authored policies), including:
 
 | Scenario | Result | Evidence pointer |
 |---|---|---|
@@ -376,7 +462,7 @@ The payment txs in §9.3 are on-chain. The **policy control vocabulary** this pa
 
 Full matrix: [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-testnet-release-evidence.md) § Real-Agent Policy Matrix · Paid path detail: [`docs/qa/2026-07-13-x402-paid-http-evidence.md`](qa/2026-07-13-x402-paid-http-evidence.md).
 
-### 9.6 Supporting settlement mechanism proofs
+### 8.6 Supporting settlement mechanism proofs
 
 | Capability | Proof | Link |
 |---|---|---|
@@ -386,7 +472,7 @@ Full matrix: [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-te
 
 ---
 
-## 10. Escrow → reputation → Permit2
+## 9. Escrow → reputation → Permit2
 
 ### Why both rails exist
 
@@ -396,7 +482,7 @@ Full matrix: [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-te
 | External / first hire, client can judge work | **Escrow (Mode 2: client = evaluator)** | Proves funds exist before work — **not** neutral arbitration |
 | Neither side trusts judgement | Escrow + independent evaluator | Rare; escrow’s real purpose |
 
-### 10a. Escrow lifecycle (proven on our guarded deploy)
+### 9a. Escrow lifecycle (proven on our guarded deploy)
 
 Our escrow (S9) blocks the front-run that worked on Arc’s stale deploy (S8). Proxy: [`0x31C050d9…4e0F5`](https://testnet.arcscan.app/address/0x31C050d9D20504c4E11b2A894051d8181B14e0F5).
 
@@ -409,7 +495,7 @@ Fleet org live job (Orchestrator → DataFetcher, 0.02 USDC):
 | `submit` | [tx](https://testnet.arcscan.app/tx/0x0385d604dfee77504d39762b95d6fc314beae15e0a3e1f896324fc34089e0443) |
 | `complete` (escrow → provider) | [tx](https://testnet.arcscan.app/tx/0x3ca56d8657ca8e10adad9acaea773d4cddcb43004b73f2ef7f86a307dd6735fa) |
 
-### 10b. Reputation only after paid completion
+### 9b. Reputation only after paid completion
 
 ERC-8004 alone does **not** require the rater to have paid. We only write feedback from a **settled escrow completion** hook.
 
@@ -420,7 +506,7 @@ ERC-8004 alone does **not** require the rater to have paid. We only write feedba
 
 Also: earlier identity mint token `863468` · [tx](https://testnet.arcscan.app/tx/0x7fc58f442eb853787c25ac20c9988d465154a2bcf5858245119f7df34ebaa539).
 
-### 10c. Reputation moves capital (bounded)
+### 9c. Reputation moves capital (bounded)
 
 Formula ([`docs/decisions.md`](decisions.md) K-6): move toward reputation target, max **10%** of current allocation per step; never past operator ceiling / gas-reserve floor; solvency still wins.
 
@@ -429,7 +515,7 @@ Formula ([`docs/decisions.md`](decisions.md) K-6): move toward reputation target
 | DataFetcher | 100 | **1.50 → 1.65 USDC** |
 | Writer | 0 | **1.50 → 1.35 USDC** |
 
-### 10d. Graduation demo (6 txs → 1)
+### 9d. Graduation demo (6 txs → 1)
 
 After two completed escrow jobs, operator trusts provider → Permit2 ceiling → one drawdown:
 
@@ -437,7 +523,7 @@ After two completed escrow jobs, operator trusts provider → Permit2 ceiling �
 
 ---
 
-## 11. Kill switch and sweep
+## 10. Kill switch and sweep
 
 Revoke agent → status suspended → worker enqueues `agent_wallet.sweep` → entity secret transfers remaining USDC to treasury (leaves designed gas dust on Arc).
 
@@ -452,11 +538,11 @@ No Circle OTP. Machine-speed revoke.
 
 ---
 
-## 12. Bugs, traps, and wrong turns
+## 11. Bugs, traps, and wrong turns
 
 These are **real**. Read them before assuming “our code is broken” or “Circle is broken” blindly.
 
-### 12.1 ★ Base Sepolia ETH from an external wallet is invisible to Circle (critical)
+### 11.1 ★ Base Sepolia ETH from an external wallet is invisible to Circle (critical)
 
 **What you see**
 
@@ -483,13 +569,13 @@ Confirming transfer: [`0xb2e85f4064fa6933b59e99bf44c99e8b76a9dde2ae6869c8f320ccb
 
 ---
 
-### 12.2 Unregistered entity secret looks like “insufficient balance”
+### 11.2 Unregistered entity secret looks like “insufficient balance”
 
 Code `155258` is **undocumented** and misleading. Same message for:
 
 - Unregistered entity secret (Phase 6 · Task 7)
 - Truly insufficient gas
-- Unindexed external ETH (§12.1)
+- Unindexed external ETH (§11.1)
 
 **Correct DCW setup**
 
@@ -499,13 +585,13 @@ Code `155258` is **undocumented** and misleading. Same message for:
 
 ---
 
-### 12.3 Arc public RPC is flaky (~56% failure on balance reads)
+### 11.3 Arc public RPC is flaky (~56% failure on balance reads)
 
 Spike **S6**: failed `balanceOf` must **never** coerce to `0` (that rejects valid payments / triggers false top-ups). Retry with backoff; exhausted retries → `balance_unavailable`, distinct from `insufficient_agent_wallet_balance`.
 
 ---
 
-### 12.4 Permit2 implementation bugs found only on live infra
+### 11.4 Permit2 implementation bugs found only on live infra
 
 Mocked tests missed all three:
 
@@ -517,13 +603,13 @@ Fixed in `permit2.ts` (`recordSignedDelegation` submits `permit()`, live nonce r
 
 ---
 
-### 12.5 Sweep stored Circle UUID instead of on-chain tx hash
+### 11.5 Sweep stored Circle UUID instead of on-chain tx hash
 
 First revoke run recorded `provider_ref` as Circle’s internal transaction id, not `txHash`. Fixed so sweeps / topups return the real explorer hash.
 
 ---
 
-### 12.6 Stale Arc ERC-8183 escrow allowed front-running (S8)
+### 11.6 Stale Arc ERC-8183 escrow allowed front-running (S8)
 
 Deployed Arc reference escrow used `fund(jobId, bytes)` **without** `expectedBudget`. Provider raised budget after quote; client’s fund silently paid **0.04** instead of **0.02**.
 
@@ -537,31 +623,31 @@ Honest escrow claim until then: *proof-of-funding once funded*, not price protec
 
 ---
 
-### 12.7 Tutorial ABIs ≠ deployed bytecode
+### 11.7 Tutorial ABIs ≠ deployed bytecode
 
 S8 also showed `jobs(uint256)` from tutorials does not match the contract; real getter is `getJob(uint256)`. Always decode selectors / pull ABIs from source, not from tutorial prose.
 
 ---
 
-### 12.8 Faucet API unavailable on our key
+### 11.8 Faucet API unavailable on our key
 
 `POST /v1/faucet/drips` → 403 / later 429. Not an Arc limitation (Base fails the same). Fund via Arc public faucet or internal transfers.
 
 ---
 
-### 12.9 Credential / account rotation strands old wallets
+### 11.9 Credential / account rotation strands old wallets
 
 After rotating Circle accounts, old addresses vanish from the new wallet list; Gateway deposits on old depositors become unreachable. Always verify ownership against the **current** API key before trusting addresses from older proofs.
 
 ---
 
-### 12.10 Gateway attestation reserves balance before mint
+### 11.10 Gateway attestation reserves balance before mint
 
 Issuing an attestation reduces available Gateway balance immediately. Failed mints can leave funds reserved — retry carefully.
 
 ---
 
-### 12.11 Early wrong conclusions (kept so we don’t repeat them)
+### 11.11 Early wrong conclusions (kept so we don’t repeat them)
 
 | Wrong turn | Reality |
 |---|---|
@@ -571,30 +657,30 @@ Issuing an attestation reduces available Gateway balance immediately. Failed min
 
 ---
 
-## 13. What is proven vs not
+## 12. What is proven vs not
 
 | Claim | Status | Where |
 |---|---|---|
 | Per-agent DCW wallets on Arc | ✅ | S2 |
 | Wallet balance = max loss | ✅ | Phase 3 · Task 4 |
 | Sweep on revoke | ✅ | [sweep tx](https://testnet.arcscan.app/tx/0x566966b754ae9dca563f9f8592bfc6ba6051713c3bbcb423f272b3ec0f3d5627) |
-| Permit2 Lane 2 fleet payments | ✅ | Fleet table §9 |
+| Permit2 Lane 2 fleet payments | ✅ | Fleet table §8 |
 | Second-hop agent↔agent | ✅ | [Analyst→DataFetcher](https://testnet.arcscan.app/tx/0x576be257d15dfeddcab8801ef0187115076dde6e346c0388ca52adaceae6abfa) |
 | Cross-chain Arc→Base hire | ✅ | [Base tx](https://sepolia.basescan.org/tx/0x738e4229f6a35e953e647cca23ed102399abe871704461423aefa4e05594716e) |
 | JIT Gateway bridge Arc→Base | ✅ | [mint tx](https://sepolia.basescan.org/tx/0x3c71a8a2be8fa01f75211c07526382ea42bf93c6281e953c986957225ef02058) |
-| Guarded ERC-8183 escrow | ✅ | S9 + §10a |
+| Guarded ERC-8183 escrow | ✅ | S9 + §9a |
 | Payment-gated reputation | ✅ | [feedback tx](https://testnet.arcscan.app/tx/0x885467500b8e370bd9dd5dce5285ef7e311b83258329d26f5992ed35b120fe10) |
 | Reputation → allocation | ✅ | spike §K.4 steps 9–11 |
 | Escrow → Permit2 graduation | ✅ | [drawdown](https://testnet.arcscan.app/tx/0xef084b9e1dff76fafed5a28715e07f0f6bcced77349aeba964b0a93640722e04) |
 | MCP onboard + paid fixture path | ✅ | ADK + [x402 evidence](qa/2026-07-13-x402-paid-http-evidence.md) |
-| Base external ETH indexing bug | ✅ characterized | §12.1 |
+| Base external ETH indexing bug | ✅ characterized | §11.1 |
 | **Lane 1 x402 to a real third-party merchant** | ⬜ **Do not claim** | Only fixture / simulation attempts on record |
 
 Master acceptance table: [`docs/spike-results.md` § Acceptance artifacts](spike-results.md#acceptance-artifacts).
 
 ---
 
-## 14. Related docs
+## 13. Related docs
 
 | Doc | Use it for |
 |---|---|
@@ -607,7 +693,8 @@ Master acceptance table: [`docs/spike-results.md` § Acceptance artifacts](spike
 | [`docs/batch-settlement-binding.md`](batch-settlement-binding.md) | Permit2 commitment / drawdown |
 | [`docs/change-manifest.md`](change-manifest.md) | Sequenced build plan |
 | [`docs/decisions.md`](decisions.md) | Locked decisions |
-| [`docs/llms.txt`](llms.txt) / [`docs/skill.md`](skill.md) | Agent onboarding |
+| [`docs/llms.txt`](llms.txt) / [`docs/skill.md`](skill.md) | Agent onboarding (also `/llms.txt`, `/skill.md`, `/?audience=agent`) |
+| [`apps/web/src/app/chat/page.tsx`](../apps/web/src/app/chat/page.tsx) | Human NLP chat entry (`/chat`) |
 | [`docs/qa/2026-07-13-x402-paid-http-evidence.md`](qa/2026-07-13-x402-paid-http-evidence.md) | MCP paid HTTP evidence |
 | [`docs/qa/2026-07-12-testnet-release-evidence.md`](qa/2026-07-12-testnet-release-evidence.md) | Earlier testnet gates |
 | [`docs/env-inventory.md`](env-inventory.md) | Env keys |
