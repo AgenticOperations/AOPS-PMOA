@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { MarketplacePublicNav } from '@/components/marketplace/MarketplacePublicNav';
 import { getCurrentSession, listOrgs } from '@/lib/server/identity-spine-client';
-import './marketplace.css';
 
 export const metadata = {
   title: 'Marketplace — agentOps',

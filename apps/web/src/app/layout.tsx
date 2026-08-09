@@ -2,13 +2,6 @@ import type { Metadata } from 'next';
 import { Montserrat, Plus_Jakarta_Sans } from 'next/font/google';
 import { NavigationProgress } from '@/components/NavigationProgress';
 import './globals.css';
-import './agents.css';
-import './overview.css';
-import './controls.css';
-import './operations.css';
-import './approvals.css';
-import './payments.css';
-import './settings.css';
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],

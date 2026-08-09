@@ -3,8 +3,6 @@ import { LandingNavigation } from '@/components/landing/LandingNavigation';
 import { ChangelogView } from '@/components/changelog/ChangelogView';
 import { getChangelogMetrics, getChangelogOrganization } from '@/lib/server/changelog-client';
 import type { ChangelogMetrics, ChangelogOrganizationDetails } from '@/lib/changelog-types';
-import '../landing.css';
-import './changelog.css';
 
 export const metadata = {
   title: 'Changelog — agentOps PMOA',

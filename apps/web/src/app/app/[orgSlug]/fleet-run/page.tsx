@@ -2,7 +2,6 @@ import { redirect } from 'next/navigation';
 import { FleetRunWorkspace } from '@/components/fleet-run/FleetRunWorkspace';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import { getCanonicalFleetGoal, listFleetRuns } from '@/lib/server/fleet-run-client';
-import '@/app/fleet-run.css';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
