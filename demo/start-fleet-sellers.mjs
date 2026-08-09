@@ -26,6 +26,13 @@ const ORG_ID =
 const ARC_RPC_URL = process.env.ARC_RPC_URL;
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org';
 const OPTIONAL = process.env.FLEET_SELLERS_OPTIONAL === '1' || process.env.FLEET_SELLERS_OPTIONAL === 'true';
+// Local demo defaults to loopback. Railway / Docker must use 0.0.0.0 so the
+// API container can reach sellers over private networking.
+const LISTEN_HOST = (process.env.FLEET_SELLERS_HOST?.trim() || '127.0.0.1');
+const DATA_FETCHER_PORT = Number(process.env.DATA_FETCHER_PORT ?? '4001');
+const ANALYST_PORT = Number(process.env.ANALYST_PORT ?? '4002');
+const WRITER_PORT = Number(process.env.WRITER_PORT ?? '4003');
+const SENIOR_REVIEWER_PORT = Number(process.env.SENIOR_REVIEWER_PORT ?? '4004');
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL required');
 if (!ARC_RPC_URL) throw new Error('ARC_RPC_URL required');
@@ -134,9 +141,9 @@ async function main() {
   log(`org ${ORG_ID}`);
   log(`DF=${wallets.DataFetcher} AN=${wallets.Analyst} WR=${wallets.Writer} SR=${wallets.SeniorReviewer}`);
 
-  const dataFetcherUrl = 'http://127.0.0.1:4001/data?q=fleet-run';
+  const dataFetcherUrl = `http://127.0.0.1:${DATA_FETCHER_PORT}/data?q=fleet-run`;
   const dataFetcher = createDataFetcherAgent({ walletAddress: wallets.DataFetcher, rpcUrl: ARC_RPC_URL });
-  await dataFetcher.listen({ host: '127.0.0.1', port: 4001 });
+  await dataFetcher.listen({ host: LISTEN_HOST, port: DATA_FETCHER_PORT });
 
   const analyst = createAnalystAgent({
     walletAddress: wallets.Analyst,
@@ -146,20 +153,24 @@ async function main() {
     dataFetcherAgentId: agents.DataFetcher,
     dataFetcherUrl,
   });
-  await analyst.listen({ host: '127.0.0.1', port: 4002 });
+  await analyst.listen({ host: LISTEN_HOST, port: ANALYST_PORT });
 
   const writer = createWriterAgent({ walletAddress: wallets.Writer, rpcUrl: ARC_RPC_URL });
-  await writer.listen({ host: '127.0.0.1', port: 4003 });
+  await writer.listen({ host: LISTEN_HOST, port: WRITER_PORT });
 
   const reviewer = createSeniorReviewerAgent({
     walletAddress: wallets.SeniorReviewer,
     rpcUrl: BASE_SEPOLIA_RPC_URL,
   });
-  await reviewer.listen({ host: '127.0.0.1', port: 4004 });
+  await reviewer.listen({ host: LISTEN_HOST, port: SENIOR_REVIEWER_PORT });
 
   await pool.end();
-  log('sellers live: :4001 DataFetcher · :4002 Analyst · :4003 Writer · :4004 SeniorReviewer');
-  log('Leave this process running. Retry Fleet Run in the console.');
+  log(
+    `sellers live on ${LISTEN_HOST}: `
+      + `:${DATA_FETCHER_PORT} DataFetcher · :${ANALYST_PORT} Analyst · `
+      + `:${WRITER_PORT} Writer · :${SENIOR_REVIEWER_PORT} SeniorReviewer`,
+  );
+  log('Leave this process running. Point API MARKETPLACE_DEMO_HOST / agent public_endpoint_url at this host.');
 
   await new Promise(() => {});
 }
