@@ -15,7 +15,7 @@ import type { AgentRosterItem } from '@/lib/identity-spine-types';
 import type { TreasuryOverviewRecord } from '@/lib/payments-types';
 
 type OverviewHomeViewProps = {
-  readonly mcpEndpoint: string;
+  readonly appBaseUrl?: string | undefined;
   readonly orgSlug: string;
 };
 
@@ -26,7 +26,7 @@ type AttentionItem = {
   readonly tone: 'danger' | 'warning';
 };
 
-export function OverviewHomeView({ mcpEndpoint, orgSlug }: OverviewHomeViewProps) {
+export function OverviewHomeView({ appBaseUrl, orgSlug }: OverviewHomeViewProps) {
   const query = useQuery({
     queryKey: overviewHomeQueryKey(orgSlug),
     queryFn: () => fetchOverviewHome(orgSlug),
@@ -58,15 +58,15 @@ export function OverviewHomeView({ mcpEndpoint, orgSlug }: OverviewHomeViewProps
   }
 
   const data = query.data as OverviewHomeData;
-  return <OverviewHomeContent data={data} mcpEndpoint={mcpEndpoint} />;
+  return <OverviewHomeContent appBaseUrl={appBaseUrl} data={data} />;
 }
 
 function OverviewHomeContent({
+  appBaseUrl,
   data,
-  mcpEndpoint,
 }: {
+  readonly appBaseUrl?: string | undefined;
   readonly data: OverviewHomeData;
-  readonly mcpEndpoint: string;
 }) {
   const { agents, org, pendingApprovals, recentEvidence, treasuryOverview } = data;
   const activeAgents = agents.filter((agent) => agent.status === 'active').length;
@@ -90,8 +90,8 @@ function OverviewHomeContent({
     {
       done: agents.length > 0,
       href: `/app/${org.slug}/agents`,
-      label: 'Create agent',
-      detail: agents.length > 0 ? `${agents.length} registered` : 'Register the first identity',
+      label: 'Create or invite agent',
+      detail: agents.length > 0 ? `${agents.length} registered` : 'Add agent → create or invite token',
     },
     {
       done: treasuryFunded,
@@ -102,10 +102,10 @@ function OverviewHomeContent({
     {
       done: agentsWithCredentials > 0,
       href: `/app/${org.slug}/agents`,
-      label: 'Issue credential',
+      label: 'Agent joined',
       detail: agentsWithCredentials > 0
         ? `${agentsWithCredentials} with credentials`
-        : 'Agents → Credentials & wallets',
+        : 'Invite token redeem or Connections',
     },
     {
       done: agents.some((agent) => agent.status === 'active' && agent.policy_coverage > 0),
@@ -122,7 +122,7 @@ function OverviewHomeContent({
           <p className="canonical-overview-eyebrow">Home</p>
           <h1>Overview</h1>
           <p className="canonical-overview-copy">
-            Govern agent spend through MCP — fund treasury, empower agents, review activity.
+            Govern agent spend — fund treasury, invite agents, review activity.
           </p>
         </div>
         <div className="canonical-overview-header-actions">
@@ -241,9 +241,8 @@ function OverviewHomeContent({
       </div>
 
       <HomeConnectGuide
-        agents={agents}
+        appBaseUrl={appBaseUrl}
         checklist={checklist}
-        mcpEndpoint={mcpEndpoint}
         orgSlug={org.slug}
       />
     </div>

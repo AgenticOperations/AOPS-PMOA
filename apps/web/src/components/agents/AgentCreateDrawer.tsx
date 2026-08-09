@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
 import { IconPlus, IconPlugConnected, IconTicket } from '@tabler/icons-react';
 import type { JoinInviteActionState } from '@/app/actions/agent-join';
@@ -21,6 +22,8 @@ type AgentCreateDrawerProps = {
     prev: JoinInviteActionState,
     formData: FormData,
   ) => Promise<JoinInviteActionState>;
+  /** Open invite form immediately (e.g. from Home ?add=invite). */
+  readonly initialOpenMode?: AgentSetupMode | null | undefined;
 };
 
 type AgentCreateState = {
@@ -33,12 +36,33 @@ const initialInviteState: JoinInviteActionState = {};
 export function AgentCreateDrawer({
   action,
   inviteAction,
+  initialOpenMode = null,
 }: AgentCreateDrawerProps) {
-  const [open, setOpen] = useState(false);
-  const [step, setStep] = useState<'mode' | 'details' | 'invite-reveal'>('mode');
-  const [setupMode, setSetupMode] = useState<AgentSetupMode | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const [open, setOpen] = useState(() => initialOpenMode !== null);
+  const [step, setStep] = useState<'mode' | 'details' | 'invite-reveal'>(() =>
+    initialOpenMode !== null ? 'details' : 'mode',
+  );
+  const [setupMode, setSetupMode] = useState<AgentSetupMode | null>(() => initialOpenMode);
   const [copyStatus, setCopyStatus] = useState('');
   const copyTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+  const didConsumeInitial = useRef(false);
+
+  function clearAddQuery() {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('add')) return;
+    url.searchParams.delete('add');
+    const qs = url.searchParams.toString();
+    router.replace(qs.length > 0 ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
+
+  function resetDrawer() {
+    setStep('mode');
+    setSetupMode(null);
+    setCopyStatus('');
+  }
 
   const [createState, createFormAction, createPending] = useActionState(
     async (_state: AgentCreateState, formData: FormData) => {
@@ -46,6 +70,7 @@ export function AgentCreateDrawer({
         await action(formData);
         setOpen(false);
         resetDrawer();
+        clearAddQuery();
         return initialCreateState;
       } catch (error) {
         if (isRedirectError(error)) throw error;
@@ -68,16 +93,22 @@ export function AgentCreateDrawer({
     }
   }, [inviteState.token, setupMode]);
 
-  function resetDrawer() {
-    setStep('mode');
-    setSetupMode(null);
-    setCopyStatus('');
-  }
+  useEffect(() => {
+    if (didConsumeInitial.current) return;
+    if (initialOpenMode === null) return;
+    didConsumeInitial.current = true;
+    setOpen(true);
+    setSetupMode(initialOpenMode);
+    setStep('details');
+  }, [initialOpenMode]);
 
   function handleOpenChange(next: boolean) {
     if (pending) return;
     setOpen(next);
-    if (!next) resetDrawer();
+    if (!next) {
+      resetDrawer();
+      clearAddQuery();
+    }
   }
 
   function chooseMode(mode: AgentSetupMode) {

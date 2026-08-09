@@ -113,6 +113,8 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
   const hasFilters = filters.search.length > 0 || filters.team.length > 0 || filters.status.length > 0;
   const activeTeams = teams.filter((team) => team.archived_at === null);
   const setupFleet = singleParam(query.setup) === 'fleet';
+  const addParam = singleParam(query.add).trim().toLowerCase();
+  const initialOpenMode = addParam === 'invite' || addParam === 'mcp' ? addParam : null;
 
   return (
       <main className="registry-page" id="main-content">
@@ -127,6 +129,7 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
           </div>
           <AgentCreateDrawer
             action={createAgentAction.bind(null, org.id, org.slug)}
+            initialOpenMode={initialOpenMode}
             inviteAction={createJoinInviteAction.bind(null, org.id, org.slug)}
           />
         </header>

@@ -11749,7 +11749,7 @@ html.dark .marketplace-btn-primary,
     animation: none;
   }
 }
-/* Home MCP connect — compact bar; configs stay collapsed by default when ready */
+/* Home agent kickstart — invite token + /llms.txt (not manual MCP config) */
 .home-connect {
   margin-top: 8px;
   margin-bottom: 0;
@@ -11827,7 +11827,8 @@ html.dark .marketplace-btn-primary,
 }
 
 .home-connect-copy,
-.home-connect-toggle {
+.home-connect-toggle,
+a.home-connect-toggle {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--bg-panel);
@@ -11835,27 +11836,32 @@ html.dark .marketplace-btn-primary,
   font-size: 0.8125rem;
   font-weight: 500;
   padding: 6px 10px;
+  text-decoration: none;
   cursor: pointer;
 }
 
 .home-connect-copy:hover,
-.home-connect-toggle:hover {
+.home-connect-toggle:hover,
+a.home-connect-toggle:hover {
   border-color: var(--border-strong);
   background: var(--bg-soft);
 }
 
-.home-connect-toggle {
+.home-connect-toggle,
+a.home-connect-toggle {
   background: var(--bg-ink);
   border-color: transparent;
   color: var(--text-on-dark);
 }
 
-.home-connect-toggle:hover {
+.home-connect-toggle:hover,
+a.home-connect-toggle:hover {
   background: #222;
   color: var(--text-on-dark);
 }
 
-html[data-theme="dark"] .home-connect-toggle {
+html[data-theme="dark"] .home-connect-toggle,
+html[data-theme="dark"] a.home-connect-toggle {
   background: var(--console-action);
   color: var(--text-on-accent);
 }
@@ -11906,6 +11912,29 @@ html[data-theme="dark"] .home-connect-toggle {
 
 .home-connect-steps a:hover {
   text-decoration: underline;
+}
+
+.home-connect-kickstart {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.home-connect-kickstart .home-connect-snippet {
+  position: relative;
+  margin-top: 12px;
+}
+
+.home-connect-kickstart-foot {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.home-connect-kickstart-foot a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .home-connect-drawer {

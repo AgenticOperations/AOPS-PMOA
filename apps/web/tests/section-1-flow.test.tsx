@@ -206,7 +206,7 @@ describe('Section 1 product flow', () => {
     render(await OverviewPage({ params: Promise.resolve({ orgSlug: 'acme-agent-ops' }) }));
 
     expect(screen.getByRole('heading', { name: 'Overview' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Connect via MCP' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Connect an agent' })).toBeInTheDocument();
     expect(screen.getAllByText('Acme Agent Ops').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Switch to dark theme/ })).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: '+ New agent' })[0]).toHaveAttribute('href', '/app/acme-agent-ops/agents');

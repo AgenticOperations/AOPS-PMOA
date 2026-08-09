@@ -25,7 +25,7 @@ const ALL_STEPS: readonly PlatformTourStep[] = [
     id: 'add-agent',
     title: 'Create your first agent',
     description:
-      'Use Add agent and pick Publish Arc agent (hire story) or Connect via MCP. Optional — you can do this later.',
+      'Use Add agent → Create in console or Invite with token. Agents follow /llms.txt to redeem.',
     element: '[data-tour="add-agent"]',
     route: 'agents',
     side: 'bottom',

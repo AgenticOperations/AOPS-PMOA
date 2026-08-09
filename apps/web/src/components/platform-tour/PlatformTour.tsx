@@ -467,8 +467,8 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
                 type="button"
               >
                 <IconRobot aria-hidden="true" size={18} stroke={1.8} />
-                <strong>Connect via MCP</strong>
-                <span>Create → policy → credential → approvals</span>
+                <strong>Invite an agent</strong>
+                <span>Create → invite token → /llms.txt → onboard</span>
               </button>
               <button
                 className="aops-tour-path-card"

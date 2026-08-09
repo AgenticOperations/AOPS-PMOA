@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { OverviewHomeView } from '@/components/home/OverviewHomeView';
+import { readWebEnv } from '@/lib/env';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
-import { resolveMcpPublicUrl } from '@/lib/server/mcp-public-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,5 +17,5 @@ export default async function OverviewPage({ params }: OverviewPageProps) {
     redirect('/auth');
   }
 
-  return <OverviewHomeView mcpEndpoint={resolveMcpPublicUrl()} orgSlug={orgSlug} />;
+  return <OverviewHomeView appBaseUrl={readWebEnv().APP_BASE_URL} orgSlug={orgSlug} />;
 }
