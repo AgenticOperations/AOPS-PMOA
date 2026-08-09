@@ -28,6 +28,7 @@ function fakeProvider(): CircleTreasuryProvider {
     settleGatewayX402: vi.fn(),
     signPermit2Delegation,
     transferWallet: vi.fn(),
+    transferNativeGas: vi.fn(),
   };
 }
 

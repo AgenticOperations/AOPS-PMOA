@@ -2,7 +2,7 @@ import { encodeFunctionData, parseAbi } from 'viem';
 import type pg from 'pg';
 import { badRequest, conflict } from '../identity/errors.js';
 import { prefixedId } from '../identity/ids.js';
-import { chainRpcUrl, nativeBalanceMicros } from './agent-wallets.js';
+import { chainRpcUrl, nativeBalanceMicros, nativeGasBalanceWei } from './agent-wallets.js';
 import { assertDelegationWithinCeilings, outstandingHeadroomMicros } from './delegation-ceiling.js';
 import type { CircleTreasuryProvider } from './circle-provider.js';
 import { usdcTokenAddress } from './circle-provider.js';
@@ -309,26 +309,34 @@ async function resolvePermitSubmitter(
   throw new Error('permit_submitter_unavailable');
 }
 
-// Enough to submit one permit() call, no more. On Arc this is literally gas,
-// because USDC is the native gas asset there. Same floor and same
-// treasury-funds-it approach as agent-funding.ts's ensureAgentGasFloor,
-// which covers the agent's OWN drawdown submission later -- this one covers
-// the permit() submission that happens right here, which for a user-signed
-// delegation is sent from the payee agent's wallet, not the payer's.
+// Enough to submit one Permit2 call (permit() or transferFrom), no more.
+// On Arc this is literally gas, because USDC is the native gas asset there.
+// Same floor and treasury-funds-it approach as agent-funding.ts's
+// ensureAgentGasFloor (which tops the payer so it can spend). This one
+// tops the SUBMITTER: permit() may come from payee/treasury, and drawDown's
+// transferFrom is always sent by the payee (msg.sender must be the spender).
 const SUBMITTER_GAS_FLOOR_MICROS = 100_000n; // 0.10 USDC
+// Base Sepolia: ETH for contract-execution fees. Circle cannot send native
+// ETH via transferWallet (USDC-only); transferNativeGas (walletId+tokenId)
+// is the path Circle indexes. Faucet is Forbidden on this API key.
+const BASE_SUBMITTER_ETH_FLOOR_WEI = 50_000_000_000_000n; // 0.00005 ETH
+const BASE_GAS_POLL_ATTEMPTS = 8;
+const BASE_GAS_POLL_DELAY_MS = 2_000;
 
 /**
- * Tops up whoever `resolvePermitSubmitter` picked so its permit() call can
- * actually land, instead of failing at Circle with "insufficient funds"
- * (confirmed live: a fresh agent wallet has a zero balance and this was the
- * exact failure the first time a non-custodial delegation named an agent as
- * payee).
+ * Tops up whoever will submit a Permit2 contract call so it can land,
+ * instead of failing at Circle with "the asset amount owned by the wallet
+ * is insufficient for the transaction" (confirmed live: DataFetcher payee
+ * at 0 USDC blocked Orchestrator→DataFetcher drawDown even with a valid
+ * on-chain allowance; Orchestrator/SeniorReviewer at 0 ETH blocked the
+ * Base SeniorReviewer hop the same way).
  *
- * Silently a no-op wherever it can't help -- Base/etc need native gas the
- * Circle provider has no method to send, and if the submitter already IS
- * the treasury there's nothing to move funds from. Both cases fall through
- * to executePermit2Transaction, which still raises a real error if the
- * submitter truly can't pay.
+ * Arc: treasury USDC transfer. Base (test): Circle-originated native ETH
+ * from the org treasury (faucet is Forbidden on this key; external ETH is
+ * often invisible to Circle's pre-flight until a Circle transfer lands).
+ * Silently a no-op wherever it can't help -- other chains, unset RPC in
+ * unit tests, live mode. Those cases fall through to
+ * executePermit2Transaction, which still raises if the submitter can't pay.
  */
 async function ensureSubmitterGasFloor(
   client: pg.PoolClient,
@@ -340,6 +348,44 @@ async function ensureSubmitterGasFloor(
     readonly mode: PaymentMode;
   },
 ): Promise<void> {
+  if (chainRpcUrl(input.chain) === undefined) return;
+
+  if (input.chain === 'base') {
+    if (input.mode !== 'test') return;
+    let eth = await nativeGasBalanceWei(input.submitterAddress, input.chain);
+    if (eth >= BASE_SUBMITTER_ETH_FLOOR_WEI) return;
+
+    const treasury = await client.query<{ address: string; circle_wallet_id: string }>(
+      `SELECT address, circle_wallet_id FROM circle_chain_wallets
+        WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+        LIMIT 1`,
+      [input.orgId, input.mode, input.chain],
+    );
+    const treasuryRow = treasury.rows[0];
+    if (treasuryRow === undefined || treasuryRow.address === input.submitterAddress) return;
+
+    const need = BASE_SUBMITTER_ETH_FLOOR_WEI - eth;
+    try {
+      await provider.transferNativeGas({
+        amountWei: need,
+        chain: input.chain,
+        destinationAddress: input.submitterAddress,
+        mode: input.mode,
+        refId: `agentops-base-gas-${crypto.randomUUID()}`,
+        sourceWalletId: treasuryRow.circle_wallet_id,
+      });
+    } catch {
+      // Treasury may be out of indexed ETH; execute still surfaces.
+      return;
+    }
+    for (let attempt = 0; attempt < BASE_GAS_POLL_ATTEMPTS; attempt += 1) {
+      await sleep(BASE_GAS_POLL_DELAY_MS);
+      eth = await nativeGasBalanceWei(input.submitterAddress, input.chain);
+      if (eth >= BASE_SUBMITTER_ETH_FLOOR_WEI) return;
+    }
+    return;
+  }
+
   if (input.chain !== 'arc') return;
 
   const balance = await nativeBalanceMicros(input.submitterAddress, input.chain, input.mode);
@@ -500,6 +546,15 @@ export async function recordSignedDelegation(
         tokenAddress,
       }) + ceilingMicros;
 
+      // approve() is submitted by the payer -- on Base that wallet needs ETH
+      // before Circle will accept the contract execution.
+      await ensureSubmitterGasFloor(client, provider, {
+        orgId: input.orgId,
+        submitterAddress: payerAddress,
+        chain: input.chain,
+        mode: input.mode,
+      });
+
       await provider.executePermit2Transaction({
         mode: input.mode,
         chain: input.chain,
@@ -623,6 +678,17 @@ export async function drawDown(
     // works whether the payer is an agent wallet or a user-owned one the
     // platform holds no key for -- the payee submits transferFrom either way.
     const payerAddress = delegation.payer_address;
+
+    // Permit2 transferFrom requires msg.sender == spender (payee). A fresh
+    // seller wallet often holds 0 USDC; without this top-up Circle rejects
+    // with insufficient funds even when the payer is solvent and the
+    // allowance is live on-chain.
+    await ensureSubmitterGasFloor(client, provider, {
+      orgId: delegation.org_id,
+      submitterAddress: delegation.payee_address,
+      chain: delegation.chain,
+      mode: delegation.mode,
+    });
 
     const drawdownId = prefixedId('deledraw');
     // Inserted 'submitted' before the provider call so a crash mid-call

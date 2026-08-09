@@ -27,6 +27,7 @@ function fakeProvider(createWallet: CircleTreasuryProvider['createWallet']): Cir
     signPermit2Delegation: vi.fn(),
     executePermit2Transaction: vi.fn(),
     transferWallet: vi.fn(),
+    transferNativeGas: vi.fn(),
   };
 }
 

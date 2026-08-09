@@ -43,6 +43,7 @@ const operationSchema = z.enum([
   'settleExactX402',
   'settleGatewayX402',
   'transferWallet',
+  'transferNativeGas',
   'signPermit2Delegation',
   'executePermit2Transaction',
 ]);
@@ -173,6 +174,11 @@ async function executeProviderOperation(
         ...rawInput,
         amountMicros: BigInt(String(rawInput.amountMicros)),
       } as Parameters<CircleTreasuryProvider['transferWallet']>[0]);
+    case 'transferNativeGas':
+      return provider.transferNativeGas({
+        ...rawInput,
+        amountWei: BigInt(String(rawInput.amountWei)),
+      } as Parameters<CircleTreasuryProvider['transferNativeGas']>[0]);
     case 'signPermit2Delegation':
       return provider.signPermit2Delegation(rawInput as Parameters<CircleTreasuryProvider['signPermit2Delegation']>[0]);
     case 'executePermit2Transaction':
@@ -192,21 +198,25 @@ export function registerCircleWorkerRoutes(app: FastifyInstance, deps: CircleWor
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
-      return reply.code(400).send({ error: 'circle_worker_validation_error' });
+      return reply.code(400).send({ error: 'circle_worker_validation_error', message: error.message });
     }
     if (error instanceof PaidHttpError && error.code === 'invalid_destination') {
-      return reply.code(400).send({ error: 'circle_worker_validation_error' });
+      return reply.code(400).send({ error: 'circle_worker_validation_error', message: error.message });
     }
     if (error instanceof IdentityError) {
       return reply.code(error.statusCode).send({ error: error.code, message: error.message });
     }
-    const message = error instanceof Error ? error.message : '';
-    const code = message.startsWith('circle_') ? message : 'circle_worker_operation_failed';
+    const underlying = error instanceof Error ? error.message : String(error);
+    reply.log.error({ err: error }, 'circle worker operation failed');
+    const code = underlying.startsWith('circle_') ? underlying.split(':')[0]! : 'circle_worker_operation_failed';
     const status = code === 'circle_worker_testnet_only' ||
       code === 'circle_worker_x402_authority_invalid'
       ? 400
       : 409;
-    return reply.code(status).send({ error: code, message: code });
+    return reply.code(status).send({
+      error: code,
+      message: underlying.length > 0 ? underlying : code,
+    });
   });
 
   app.get('/healthz', () => ({ ok: true, service: 'circle-worker' }));

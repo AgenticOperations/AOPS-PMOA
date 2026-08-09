@@ -124,6 +124,23 @@ export type CircleTransferResult = {
   readonly transactionId: string;
 };
 
+export type CircleNativeGasTransferInput = {
+  readonly amountWei: bigint;
+  readonly chain: CirclePaymentChain;
+  readonly destinationAddress: string;
+  readonly mode: ProviderMode;
+  readonly refId: string;
+  // Circle's createTransaction native path requires walletId + tokenId
+  // (walletAddress + tokenAddress is USDC-only). Caller resolves the
+  // treasury row's circle_wallet_id.
+  readonly sourceWalletId: string;
+};
+
+export type CircleNativeGasTransferResult = {
+  readonly amountWei: string;
+  readonly transactionId: string;
+};
+
 export type CirclePermit2SignInput = {
   readonly mode: ProviderMode;
   readonly ownerAddress: string;
@@ -165,6 +182,7 @@ export type CircleTreasuryProvider = {
   readonly settleGatewayX402: (input: CircleGatewayX402SettlementInput) => Promise<CircleGatewayX402SettlementResult>;
   readonly signPermit2Delegation: (input: CirclePermit2SignInput) => Promise<CirclePermit2SignResult>;
   readonly transferWallet: (input: CircleTransferInput) => Promise<CircleTransferResult>;
+  readonly transferNativeGas: (input: CircleNativeGasTransferInput) => Promise<CircleNativeGasTransferResult>;
 };
 
 export const SECTION_9_CHAINS: readonly CirclePaymentChain[] = [
@@ -626,6 +644,17 @@ function formatMicros(micros: bigint): string {
   const whole = absolute / 1_000_000n;
   const fraction = (absolute % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
   return `${sign}${whole.toString()}${fraction.length === 0 ? '' : `.${fraction}`}`;
+}
+
+// Circle token id for BASE-SEPOLIA native ETH (isNative: true). Confirmed
+// live in docs/spike-results.md — the only funding path Circle indexes
+// reliably for new Base agent wallets.
+const BASE_SEPOLIA_NATIVE_ETH_TOKEN_ID = 'f2ab11ae-53fa-5373-86e5-8b38447b65fb';
+
+function formatWeiAsEth(wei: bigint): string {
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const fraction = (wei % 1_000_000_000_000_000_000n).toString().padStart(18, '0').replace(/0+$/, '');
+  return fraction.length === 0 ? whole.toString() : `${whole.toString()}.${fraction}`;
 }
 
 function parseGatewayAmount(value: unknown): string {
@@ -1312,6 +1341,35 @@ export function createDeveloperControlledCircleTreasuryProvider(
         transactionId: txHash ?? transactionId,
       };
     },
+    transferNativeGas: async ({ amountWei, chain, destinationAddress, mode, refId, sourceWalletId }) => {
+      if (chain !== 'base') throw new Error('circle_native_gas_base_only');
+      if (mode !== 'test') throw new Error('circle_native_gas_testnet_only');
+      if (amountWei <= 0n) throw new Error('circle_native_gas_amount_invalid');
+      const env = readEnv(mode);
+      const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
+      // walletId + tokenId is required for native ETH. walletAddress +
+      // tokenAddress is the USDC path (transferWallet). Confirmed live:
+      // external ETH deposits are invisible to Circle's pre-flight until a
+      // Circle-originated native transfer forces a balance rescan.
+      const transfer = await client.createTransaction({
+        amount: [formatWeiAsEth(amountWei)],
+        destinationAddress,
+        fee: circleFee(),
+        idempotencyKey: crypto.randomUUID(),
+        refId,
+        tokenId: BASE_SEPOLIA_NATIVE_ETH_TOKEN_ID,
+        walletId: sourceWalletId,
+      });
+      const transactionId = transfer.data?.id;
+      if (transactionId === undefined || transactionId.length === 0) throw new Error('circle_native_gas_transaction_missing');
+      await waitForCircleTransaction(client, transactionId, 'circle_native_gas');
+      const confirmed = await client.getTransaction({ id: transactionId });
+      const txHash = confirmed.data?.transaction?.txHash;
+      return {
+        amountWei: amountWei.toString(),
+        transactionId: txHash ?? transactionId,
+      };
+    },
     signPermit2Delegation: async ({ chain, mode, ownerAddress, typedData }) => {
       const env = readEnv(mode);
       const client = CircleWalletsSdk.initiateDeveloperControlledWalletsClient(clientParams(env));
@@ -1591,6 +1649,7 @@ export function createCircleAgentWalletTreasuryProvider(options: {
       };
     },
     transferWallet: () => Promise.reject(new Error('circle_agent_wallet_cli_transfer_not_supported')),
+    transferNativeGas: () => Promise.reject(new Error('circle_agent_wallet_cli_native_gas_not_supported')),
     signPermit2Delegation: () => Promise.reject(new Error('circle_agent_wallet_cli_permit2_not_supported')),
     executePermit2Transaction: () => Promise.reject(new Error('circle_agent_wallet_cli_permit2_not_supported')),
     settleExactX402: async (input) => {

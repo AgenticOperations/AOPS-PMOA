@@ -31,6 +31,7 @@ function fakeProviderWithGatewayBalance(availableByChain: Record<string, string>
     signPermit2Delegation: vi.fn(),
     executePermit2Transaction: vi.fn(),
     transferWallet: vi.fn(),
+    transferNativeGas: vi.fn(),
   };
 }
 

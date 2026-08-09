@@ -24,6 +24,7 @@ function fakeProvider(overrides: Partial<CircleTreasuryProvider> = {}): CircleTr
     settleGatewayX402: vi.fn(),
     signPermit2Delegation: vi.fn(),
     transferWallet: vi.fn(),
+    transferNativeGas: vi.fn(),
     ...overrides,
   };
 }

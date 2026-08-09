@@ -52,5 +52,6 @@ export function createOrgScopedCircleTreasuryProvider(
     signPermit2Delegation: (input) => invoke((provider) => provider.signPermit2Delegation(input)),
     executePermit2Transaction: (input) => invoke((provider) => provider.executePermit2Transaction(input)),
     transferWallet: (input) => invoke((provider) => provider.transferWallet(input)),
+    transferNativeGas: (input) => invoke((provider) => provider.transferNativeGas(input)),
   };
 }

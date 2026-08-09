@@ -158,6 +158,10 @@ describe('durable x402 paid HTTP flow', () => {
       amountMicros: amountMicros.toString(),
       transactionId: '0xtransfer',
     }),
+    transferNativeGas: ({ amountWei }) => Promise.resolve({
+      amountWei: amountWei.toString(),
+      transactionId: '0xnativegas',
+    }),
   };
 
   beforeAll(async () => {

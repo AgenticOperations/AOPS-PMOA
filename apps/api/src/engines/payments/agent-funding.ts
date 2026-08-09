@@ -145,5 +145,34 @@ export async function fundAgentFromTreasuryDelegation(
     return { funded: true, amountUsdc, txHash: draw.txHash };
   }
 
+  // Base has no Arc-style gas=USDC loop: agents often hold 0 USDC until the
+  // treasury pushes spend money. When no treasury Permit2 delegation exists,
+  // move the shortfall directly -- same platform plumbing as gas floor, still
+  // bounded to what this payment needs.
+  if (input.chain === 'base') {
+    const treasury = await pool.query<{ address: string }>(
+      `SELECT address FROM circle_chain_wallets
+        WHERE org_id = $1 AND mode = $2 AND chain = $3 AND status = 'active'
+        LIMIT 1`,
+      [input.orgId, input.mode, input.chain],
+    );
+    const treasuryAddress = treasury.rows[0]?.address;
+    if (treasuryAddress !== undefined && treasuryAddress !== address) {
+      const transfer = await provider.transferWallet({
+        amountMicros: shortfall,
+        chain: input.chain,
+        destinationAddress: address,
+        mode: input.mode,
+        refId: `agentops-base-fund-${crypto.randomUUID()}`,
+        sourceAddress: treasuryAddress,
+      });
+      return {
+        funded: true,
+        amountUsdc: formatUsdc(shortfall),
+        txHash: transfer.transactionId,
+      };
+    }
+  }
+
   return { funded: false, reason: 'no_treasury_delegation' };
 }

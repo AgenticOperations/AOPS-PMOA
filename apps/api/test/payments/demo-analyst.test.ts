@@ -36,6 +36,7 @@ function fakeProvider(): CircleTreasuryProvider {
     settleGatewayX402: vi.fn(),
     signPermit2Delegation: vi.fn(() => Promise.resolve({ signature: '0xsig' })),
     transferWallet: vi.fn(),
+    transferNativeGas: vi.fn(),
   };
 }
 

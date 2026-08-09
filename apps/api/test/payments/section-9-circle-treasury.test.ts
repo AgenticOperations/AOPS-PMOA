@@ -412,6 +412,10 @@ function fakeCircleProvider(): CircleTreasuryProvider {
       amountMicros: amountMicros.toString(),
       transactionId: 'circle_tx_transfer_test',
     }),
+    transferNativeGas: ({ amountWei }) => Promise.resolve({
+      amountWei: amountWei.toString(),
+      transactionId: 'circle_tx_native_gas_test',
+    }),
   };
 }
 

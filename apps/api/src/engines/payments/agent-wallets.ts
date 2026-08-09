@@ -108,6 +108,21 @@ export async function nativeBalanceMicros(address: string, chain: PaymentChain, 
   return BigInt(result) / USDC_DECIMALS_MICROS_SCALE;
 }
 
+/**
+ * Native gas-token balance in wei (ETH on Base, etc.). Distinct from
+ * nativeBalanceMicros, which on Base returns USDC ERC-20 balance -- the
+ * unit Permit2 drawdowns care about -- while contract execution fees are
+ * paid in ETH.
+ */
+export async function nativeGasBalanceWei(address: string, chain: PaymentChain): Promise<bigint> {
+  const rpcUrl = chainRpcUrl(chain);
+  if (rpcUrl === undefined || rpcUrl.length === 0) {
+    throw new Error(`agent_wallet_gas_rpc_not_configured:${chain}`);
+  }
+  const result = await rpcCallWithRetry(rpcUrl, 'eth_getBalance', [address, 'latest'], 'agent_wallet_gas');
+  return BigInt(result);
+}
+
 async function circleBlockchainForChain(db: Db, mode: PaymentMode, chain: PaymentChain): Promise<string> {
   const result = await db.query<{ circle_blockchain: string }>(
     'SELECT circle_blockchain FROM circle_chain_capabilities WHERE mode = $1 AND chain = $2',

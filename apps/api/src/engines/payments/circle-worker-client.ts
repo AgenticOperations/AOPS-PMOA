@@ -136,6 +136,7 @@ export function createCircleWorkerTreasuryProvider(options: WorkerProviderOption
       'ambiguous_post_submit',
     ),
     transferWallet: (input) => execute('transferWallet', input),
+    transferNativeGas: (input) => execute('transferNativeGas', input),
     signPermit2Delegation: (input) => execute('signPermit2Delegation', input),
     executePermit2Transaction: (input) => execute('executePermit2Transaction', input),
   };

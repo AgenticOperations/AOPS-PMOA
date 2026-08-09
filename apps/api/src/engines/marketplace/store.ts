@@ -74,11 +74,49 @@ const FLEET_SEED_AGENT_NAMES: Readonly<Record<string, string>> = {
   svc_demo_senior_reviewer: 'SeniorReviewer',
 };
 
+const FLEET_ROLE_NAMES = ['DataFetcher', 'Analyst', 'Writer', 'SeniorReviewer'] as const;
+
+/**
+ * Public marketplace has no buyer org. Without a scope, "newest Analyst
+ * globally" can be another org's agent — charts then ignore Fleet Run
+ * payments in the demo org. Prefer DEMO_ORG_ID / MARKETPLACE_DEMO_ORG_ID,
+ * else the org that still holds all four fleet roles.
+ */
+async function resolveFleetDemoOrgId(
+  pool: pg.Pool,
+  mode: PaymentMode,
+): Promise<string | undefined> {
+  const fromEnv = process.env.MARKETPLACE_DEMO_ORG_ID?.trim()
+    || process.env.DEMO_ORG_ID?.trim();
+  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
+
+  const result = await pool.query<{ org_id: string }>(
+    `SELECT a.org_id
+       FROM agents a
+       INNER JOIN agent_chain_wallets w
+         ON w.agent_id = a.id AND w.mode = $1 AND w.status = 'active'
+      WHERE a.status NOT IN ('deactivated', 'retired')
+        AND a.name = ANY($2::text[])
+      GROUP BY a.org_id
+     HAVING COUNT(DISTINCT a.name) >= 4
+      ORDER BY MAX(a.created_at) DESC
+      LIMIT 1`,
+    [mode, [...FLEET_ROLE_NAMES]],
+  );
+  return result.rows[0]?.org_id;
+}
+
 /**
  * When the buyer's org already has the fleet agents, attach their wallet +
  * agentId onto the matching seed listing so marketplace hire can use Lane 2
  * (Permit2 intra-fleet) instead of failing the payTo allowlist on a null
  * providerAddress.
+ *
+ * Resolution MUST match Fleet Run (`resolve-agents.ts`): newest agent per
+ * name with an active wallet on the listing chain. Preferring only
+ * `public_endpoint_url` agents left marketplace cards stuck on older
+ * published clones while Fleet Run paid the newer wallets — charts looked
+ * unchanged after a successful fleet run.
  */
 async function enrichFleetSeedListings(
   pool: pg.Pool,
@@ -92,48 +130,46 @@ async function enrichFleetSeedListings(
   )];
   if (neededNames.length === 0) return listings;
 
-  const result = await pool.query<{
+  const buyerOrgId = input.buyerOrgId
+    ?? await resolveFleetDemoOrgId(pool, input.mode);
+  if (buyerOrgId === undefined) return listings;
+
+  // Newest agent per (name, chain) with an active wallet — aligns with Fleet Run.
+  const chainAware = await pool.query<{
     id: string;
     name: string;
     wallet_address: string | null;
     chain: string;
   }>(
-    input.buyerOrgId === undefined
-      ? `SELECT a.id, a.name, w.address AS wallet_address, w.chain
-           FROM agents a
-           LEFT JOIN agent_chain_wallets w
-             ON w.agent_id = a.id AND w.mode = $1 AND w.status = 'active'
-          WHERE a.status NOT IN ('deactivated', 'retired')
-            AND a.name = ANY($2::text[])
-            AND coalesce(a.metadata->>'public_endpoint_url', '') <> ''
-          ORDER BY a.created_at DESC`
-      : `SELECT a.id, a.name, w.address AS wallet_address, w.chain
-           FROM agents a
-           LEFT JOIN agent_chain_wallets w
-             ON w.agent_id = a.id AND w.mode = $2 AND w.status = 'active'
-          WHERE a.org_id = $1
-            AND a.status NOT IN ('deactivated', 'retired')
-            AND a.name = ANY($3::text[])`,
-    input.buyerOrgId === undefined
-      ? [input.mode, neededNames]
-      : [input.buyerOrgId, input.mode, neededNames],
+    `SELECT DISTINCT ON (a.name, w.chain)
+            a.id, a.name, w.address AS wallet_address, w.chain
+       FROM agents a
+       INNER JOIN agent_chain_wallets w
+         ON w.agent_id = a.id AND w.mode = $2 AND w.status = 'active'
+      WHERE a.org_id = $1
+        AND a.status NOT IN ('deactivated', 'retired')
+        AND a.name = ANY($3::text[])
+      ORDER BY a.name, w.chain, a.created_at DESC`,
+    [buyerOrgId, input.mode, neededNames],
   );
 
   return listings.map((listing) => {
     const fleetName = FLEET_SEED_AGENT_NAMES[listing.id];
     if (fleetName === undefined) return listing;
-    const matches = result.rows.filter((row) => row.name === fleetName);
-    if (matches.length === 0) return listing;
-    const onListingChain = matches.find((row) => row.chain === listing.chain && row.wallet_address !== null)
-      ?? matches.find((row) => row.wallet_address !== null)
-      ?? matches[0];
-    if (onListingChain === undefined) return listing;
-    const providerAddress = onListingChain.wallet_address ?? listing.providerAddress;
+    const onChain = chainAware.rows.find(
+      (row) => row.name === fleetName && row.chain === listing.chain && row.wallet_address !== null,
+    );
+    const fallback = chainAware.rows.find(
+      (row) => row.name === fleetName && row.wallet_address !== null,
+    );
+    const chosen = onChain ?? fallback;
+    if (chosen === undefined) return listing;
+    const providerAddress = chosen.wallet_address ?? listing.providerAddress;
     const rails: MarketplaceRail[] = providerAddress === null ? ['x402'] : ['x402', 'escrow'];
     return {
       ...listing,
-      orgId: input.buyerOrgId ?? listing.orgId,
-      agentId: onListingChain.id,
+      orgId: buyerOrgId,
+      agentId: chosen.id,
       providerAddress,
       rails,
     };
