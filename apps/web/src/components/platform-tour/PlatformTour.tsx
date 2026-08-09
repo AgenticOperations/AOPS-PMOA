@@ -18,11 +18,65 @@ type PlatformTourProps = {
 };
 
 const AUTO_OFFER_DELAY_MS = 700;
-const ELEMENT_WAIT_MS = 1600;
+const ELEMENT_WAIT_MS = 2000;
+const STEP_FADE_OUT_MS = 150;
+const STEP_FADE_IN_MS = 280;
 
 function setTourRunningClass(active: boolean): void {
   if (typeof document === 'undefined') return;
   document.documentElement.classList.toggle('aops-tour-running', active);
+}
+
+function getTourPopover(): HTMLElement | null {
+  const el = document.querySelector('.aops-tour-popover');
+  return el instanceof HTMLElement ? el : null;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function animatePopoverIn(): void {
+  const popover = getTourPopover();
+  if (popover === null) return;
+  popover.getAnimations().forEach((animation) => animation.cancel());
+  if (prefersReducedMotion()) {
+    popover.style.opacity = '1';
+    popover.style.transform = '';
+    return;
+  }
+  popover.animate(
+    [
+      { opacity: 0, transform: 'translate3d(0, 8px, 0) scale(0.985)' },
+      { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
+    ],
+    {
+      duration: STEP_FADE_IN_MS,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      fill: 'both',
+    },
+  );
+}
+
+async function animatePopoverOut(): Promise<void> {
+  const popover = getTourPopover();
+  if (popover === null || prefersReducedMotion()) return;
+  try {
+    await popover.animate(
+      [
+        { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
+        { opacity: 0, transform: 'translate3d(0, -6px, 0) scale(0.99)' },
+      ],
+      {
+        duration: STEP_FADE_OUT_MS,
+        easing: 'ease',
+        fill: 'forwards',
+      },
+    ).finished;
+  } catch {
+    // Canceled when driver destroys — ignore.
+  }
 }
 
 async function waitForElement(selector: string | undefined, timeoutMs: number): Promise<Element | null> {
@@ -41,16 +95,20 @@ async function waitForElement(selector: string | undefined, timeoutMs: number): 
   return document.querySelector(selector);
 }
 
+function isOnRoute(pathname: string | null, targetRoute: string): boolean {
+  return pathname === targetRoute || Boolean(pathname?.startsWith(`${targetRoute}/`));
+}
+
 export function PlatformTour({ orgSlug }: PlatformTourProps) {
   const router = useRouter();
   const pathname = usePathname();
   const driverRef = useRef<Driver | null>(null);
   const navigatingRef = useRef(false);
   const pathRef = useRef<TourPath | null>(null);
+  const advancingRef = useRef(false);
   const bootLockRef = useRef(false);
   const [state, setState] = useState<PlatformTourState | null>(null);
   const [booting, setBooting] = useState(true);
-  /** Mute only while hopping routes — never under an active spotlight. */
   const [bridging, setBridging] = useState(false);
 
   const persist = useCallback((next: PlatformTourState) => {
@@ -89,6 +147,7 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
 
   const dismiss = useCallback((phase: 'dismissed' | 'completed') => {
     navigatingRef.current = true;
+    advancingRef.current = false;
     bootLockRef.current = false;
     setBridging(false);
     destroyDriver();
@@ -122,12 +181,7 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
     }
 
     const targetRoute = tourRoute(orgSlug, active.route);
-    const onTarget =
-      targetRoute === null
-      || pathname === targetRoute
-      || Boolean(pathname?.startsWith(`${targetRoute}/`));
-
-    if (!onTarget && targetRoute !== null) {
+    if (targetRoute !== null && !isOnRoute(pathname, targetRoute)) {
       setBridging(true);
       navigatingRef.current = true;
       destroyDriver();
@@ -145,50 +199,67 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
 
     await waitForElement(active.element, ELEMENT_WAIT_MS);
 
-    // Route changed while waiting — let the pathname effect resume.
-    if (
-      targetRoute !== null
-      && pathname !== targetRoute
-      && !pathname?.startsWith(`${targetRoute}/`)
-    ) {
-      bootLockRef.current = false;
-      return;
-    }
-
     navigatingRef.current = true;
     destroyDriver();
     navigatingRef.current = false;
 
-    const goToStepRoute = (index: number) => {
+    const needsRouteChange = (index: number): string | null => {
       const step = steps[index];
-      if (step === undefined) return false;
+      if (step === undefined) return null;
       const route = tourRoute(orgSlug, step.route);
-      if (route === null) return false;
-      if (pathname === route || pathname?.startsWith(`${route}/`)) return false;
-      setBridging(true);
-      navigatingRef.current = true;
+      if (route === null) return null;
+      if (isOnRoute(pathname, route)) return null;
+      return route;
+    };
+
+    const advanceTo = async (index: number, direction: 'next' | 'prev') => {
+      if (advancingRef.current) return;
+      advancingRef.current = true;
+      await animatePopoverOut();
+
+      const nextRoute = needsRouteChange(index);
+      if (nextRoute !== null) {
+        // Only used for Agents sidebar → Add agent button (agents page).
+        setBridging(true);
+        navigatingRef.current = true;
+        persist({
+          phase: 'running',
+          path,
+          stepIndex: index,
+          version: PLATFORM_TOUR_VERSION,
+        });
+        destroyDriver();
+        navigatingRef.current = false;
+        bootLockRef.current = false;
+        advancingRef.current = false;
+        router.push(nextRoute);
+        return;
+      }
+
       persist({
         phase: 'running',
         path,
         stepIndex: index,
         version: PLATFORM_TOUR_VERSION,
       });
-      driverRef.current?.destroy();
-      driverRef.current = null;
-      navigatingRef.current = false;
-      bootLockRef.current = false;
-      router.push(route);
-      return true;
+      if (direction === 'next') {
+        driverRef.current?.moveNext();
+      } else {
+        driverRef.current?.movePrevious();
+      }
+      window.requestAnimationFrame(() => {
+        animatePopoverIn();
+        advancingRef.current = false;
+      });
     };
 
     const instance = driver({
-      // Stage morph animation causes spotlight jitter.
       animate: false,
       smoothScroll: false,
       allowClose: true,
       disableActiveInteraction: false,
       overlayClickBehavior: undefined as unknown as 'close',
-      overlayOpacity: 0.58,
+      overlayOpacity: 0.55,
       stagePadding: 8,
       stageRadius: 10,
       popoverOffset: 12,
@@ -220,8 +291,9 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
         }
         const idx = opts.driver.getActiveIndex() ?? clamped;
         const atEnd = idx >= steps.length - 1;
-        setBridging(false);
+        advancingRef.current = false;
         bootLockRef.current = false;
+        setBridging(false);
         persist({
           phase: atEnd ? 'completed' : 'dismissed',
           path,
@@ -252,41 +324,30 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
           onNextClick: (_element: Element | undefined, _step: unknown, opts: { driver: Driver }) => {
             const nextIndex = (opts.driver.getActiveIndex() ?? 0) + 1;
             if (nextIndex >= steps.length) {
-              navigatingRef.current = true;
-              setBridging(false);
-              bootLockRef.current = false;
-              persist({
-                phase: 'completed',
-                path,
-                stepIndex: 0,
-                version: PLATFORM_TOUR_VERSION,
+              void animatePopoverOut().finally(() => {
+                navigatingRef.current = true;
+                advancingRef.current = false;
+                bootLockRef.current = false;
+                setBridging(false);
+                persist({
+                  phase: 'completed',
+                  path,
+                  stepIndex: 0,
+                  version: PLATFORM_TOUR_VERSION,
+                });
+                setTourRunningClass(false);
+                opts.driver.destroy();
+                driverRef.current = null;
+                navigatingRef.current = false;
               });
-              setTourRunningClass(false);
-              opts.driver.destroy();
-              driverRef.current = null;
-              navigatingRef.current = false;
               return;
             }
-            if (goToStepRoute(nextIndex)) return;
-            persist({
-              phase: 'running',
-              path,
-              stepIndex: nextIndex,
-              version: PLATFORM_TOUR_VERSION,
-            });
-            opts.driver.moveNext();
+            void advanceTo(nextIndex, 'next');
           },
           onPrevClick: (_element: Element | undefined, _step: unknown, opts: { driver: Driver }) => {
             const prevIndex = (opts.driver.getActiveIndex() ?? 0) - 1;
             if (prevIndex < 0) return;
-            if (goToStepRoute(prevIndex)) return;
-            persist({
-              phase: 'running',
-              path,
-              stepIndex: prevIndex,
-              version: PLATFORM_TOUR_VERSION,
-            });
-            opts.driver.movePrevious();
+            void advanceTo(prevIndex, 'prev');
           },
         },
       })),
@@ -302,7 +363,10 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
 
     instance.drive(clamped);
     setBridging(false);
-    // Keep bootLock until destroy/navigation so the resume effect cannot double-start.
+    window.requestAnimationFrame(() => {
+      animatePopoverIn();
+    });
+    // Keep bootLock while active so the resume effect cannot double-start.
   }, [destroyDriver, dismiss, orgSlug, pathname, persist, router]);
 
   useEffect(() => {
@@ -321,16 +385,12 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
     }
 
     const targetRoute = tourRoute(orgSlug, active.route);
-    if (
-      targetRoute !== null
-      && pathname !== targetRoute
-      && !pathname?.startsWith(`${targetRoute}/`)
-    ) {
+    if (targetRoute !== null && !isOnRoute(pathname, targetRoute)) {
       setBridging(true);
       return;
     }
 
-    setBridging(true);
+    setBridging(Boolean(active.route));
     void runFromIndex(state.path, state.stepIndex);
   }, [booting, dismiss, orgSlug, pathname, runFromIndex, state]);
 
@@ -343,6 +403,7 @@ export function PlatformTour({ orgSlug }: PlatformTourProps) {
   useEffect(() => {
     function onReplay() {
       navigatingRef.current = true;
+      advancingRef.current = false;
       bootLockRef.current = false;
       setBridging(false);
       destroyDriver();

@@ -1,42 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { stepsForPath, tourRoute } from '../../src/lib/platform-tour/steps.js';
+import { assertUniqueStepTargets, stepsForPath, tourRoute } from '../../src/lib/platform-tour/steps.js';
 
 describe('platform tour steps', () => {
-  it('includes publish-specific funding steps for the hire path', () => {
-    const ids = stepsForPath('publish').map((step) => step.id);
-    expect(ids).toContain('fund');
-    expect(ids).toContain('empower');
-    expect(ids).toContain('publish');
-    expect(ids).toContain('marketplace');
-    expect(ids).not.toContain('credentials');
+  it('restores Agents sidebar → Add agent button as distinct steps', () => {
+    const steps = stepsForPath('publish');
+    const agents = steps.find((step) => step.id === 'agents');
+    const addAgent = steps.find((step) => step.id === 'add-agent');
+    expect(agents?.element).toBe('[data-tour="nav-agents"]');
+    expect(addAgent?.element).toBe('[data-tour="add-agent"]');
+    expect(addAgent?.route).toBe('agents');
+    expect(agents?.element).not.toBe(addAgent?.element);
   });
 
-  it('emphasizes credentials for the MCP path and skips funding', () => {
-    const ids = stepsForPath('mcp').map((step) => step.id);
-    expect(ids).toContain('credentials');
-    expect(ids).not.toContain('fund');
-    expect(ids).not.toContain('empower');
-    expect(ids).not.toContain('publish');
+  it('keeps unique spotlights across each path', () => {
+    for (const path of ['publish', 'mcp', 'explore'] as const) {
+      expect(assertUniqueStepTargets(path), path).toEqual([]);
+    }
   });
 
-  it('keeps the full map for explore', () => {
-    const ids = stepsForPath('explore').map((step) => step.id);
-    expect(ids).toEqual([
+  it('orders the hire path with the create beat after Agents', () => {
+    expect(stepsForPath('publish').map((step) => step.id)).toEqual([
       'map',
       'agents',
       'add-agent',
       'controls',
-      'credentials',
       'fund',
       'empower',
-      'publish',
       'marketplace',
       'approvals',
       'done',
     ]);
   });
 
-  it('builds org-scoped routes', () => {
+  it('builds org-scoped routes when provided', () => {
     expect(tourRoute('acme', 'agents')).toBe('/app/acme/agents');
     expect(tourRoute('acme', undefined)).toBeNull();
   });

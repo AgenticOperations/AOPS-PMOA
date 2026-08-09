@@ -19739,6 +19739,10 @@ html[data-theme='dark'] .aops-tour-welcome-backdrop {
     0 12px 32px rgb(0 0 0 / 0.22);
 }
 
+.aops-tour-popover {
+  will-change: opacity, transform;
+}
+
 .aops-tour-replay {
   display: inline-flex;
   align-items: center;
@@ -20063,8 +20067,8 @@ html[data-theme='dark'] .aops-tour-popover.driver-popover {
 @media (prefers-reduced-motion: reduce) {
   .aops-tour-welcome-card,
   .aops-tour-path-card {
-    animation: none;
-    transition: none;
+    animation: none !important;
+    transition: none !important;
   }
 }
 

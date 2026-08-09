@@ -7,10 +7,8 @@ export type TourStepId =
   | 'agents'
   | 'add-agent'
   | 'controls'
-  | 'credentials'
   | 'fund'
   | 'empower'
-  | 'publish'
   | 'marketplace'
   | 'approvals'
   | 'done';
@@ -34,5 +32,5 @@ export type PlatformTourState = {
   readonly version: number;
 };
 
-export const PLATFORM_TOUR_VERSION = 1;
+export const PLATFORM_TOUR_VERSION = 2;
 export const PLATFORM_TOUR_STORAGE_PREFIX = 'agentops-platform-tour:v1:';
