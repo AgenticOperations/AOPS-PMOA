@@ -253,7 +253,7 @@ export type AgentDetail = AgentRecord & {
   readonly children: Array<{ readonly id: string; readonly name: string; readonly status: AgentStatus }>;
   readonly connection_health: ConnectionHealth;
   readonly wallet_refs_count: number;
-  /** Cumulative score from settled escrow completions (+100 each). */
+  /** Reputation on a 0–100 scale (payment-gated; capped aggregate of settled escrow). */
   readonly reputation_score: number;
   readonly reputation_events: number;
 };
@@ -1687,7 +1687,7 @@ const agentRosterSelect = `SELECT
         LIMIT 1
      ) i ON true
      LEFT JOIN LATERAL (
-       SELECT COALESCE(SUM(score), 0)::text AS reputation_score,
+       SELECT LEAST(100, COALESCE(SUM(score), 0))::text AS reputation_score,
               COUNT(*)::text AS reputation_events
          FROM agent_reputation_events
         WHERE agent_id = a.id
@@ -1707,7 +1707,7 @@ function agentRosterItemFromRow(row: AgentRosterRow): AgentRosterItem {
     policy_coverage: Number(row.policy_coverage),
     last_activity_at: row.last_activity_at?.toISOString() ?? null,
     identity_token_id: row.identity_token_id,
-    reputation_score: Number(row.reputation_score),
+    reputation_score: Math.min(100, Math.max(0, Number(row.reputation_score))),
     reputation_events: Number(row.reputation_events),
   };
 }
@@ -1836,7 +1836,7 @@ export async function getAgentDetail(
        GROUP BY agent_id
      ) w ON w.agent_id = a.id
      LEFT JOIN LATERAL (
-       SELECT COALESCE(SUM(score), 0)::text AS reputation_score,
+       SELECT LEAST(100, COALESCE(SUM(score), 0))::text AS reputation_score,
               COUNT(*)::text AS reputation_events
          FROM agent_reputation_events
         WHERE agent_id = a.id
@@ -1931,7 +1931,7 @@ export async function getAgentDetail(
       children: children.rows,
       connection_health: row.connection_health,
       wallet_refs_count: Number(row.wallet_refs_count),
-      reputation_score: Number(row.reputation_score),
+      reputation_score: Math.min(100, Math.max(0, Number(row.reputation_score))),
       reputation_events: Number(row.reputation_events),
     },
     connections,

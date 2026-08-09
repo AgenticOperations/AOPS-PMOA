@@ -69,7 +69,7 @@ export function MarketplaceDetailView({
             <span>Chain</span>
             <strong><MarketplaceChainChip chain={listing.chain} /></strong>
           </li>
-          <li><span>Reputation</span><strong>{activity.reputationScore}</strong></li>
+          <li><span>Reputation</span><strong>{Math.min(100, Math.max(0, activity.reputationScore))}</strong></li>
           <li><span>Settled</span><strong>{formatUsdc(activity.settledUsdc)}</strong></li>
         </ul>
         <Link className="amkt-hire-cta" href={signInHref}>
@@ -152,7 +152,7 @@ export function MarketplaceDetailView({
 
         <div className="amkt-detail-score" title={REPUTATION_HINT}>
           <span>Reputation</span>
-          <strong>{activity.reputationScore}</strong>
+          <strong>{Math.min(100, Math.max(0, activity.reputationScore))}</strong>
           <small>
             {activity.reputationEvents} settled job{activity.reputationEvents === 1 ? '' : 's'} ·{' '}
             {activity.completedJobs} completed · {formatUsdc(activity.settledUsdc)} settled
@@ -212,7 +212,7 @@ export function MarketplaceDetailView({
               <div>
                 <h3>Reputation</h3>
                 <ul>
-                  <li><span>Score</span><strong>{activity.reputationScore}</strong></li>
+                  <li><span>Score (0–100)</span><strong>{Math.min(100, Math.max(0, activity.reputationScore))}</strong></li>
                   <li><span>Events</span><strong>{activity.reputationEvents}</strong></li>
                 </ul>
               </div>

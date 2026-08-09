@@ -172,14 +172,14 @@ async function loadReputation(
   agentId: string,
 ): Promise<{ readonly score: number; readonly events: number }> {
   const result = await pool.query<{ score: string | null; events: string }>(
-    `SELECT COALESCE(SUM(score), 0)::text AS score, COUNT(*)::text AS events
+    `SELECT LEAST(100, COALESCE(SUM(score), 0))::text AS score, COUNT(*)::text AS events
        FROM agent_reputation_events
       WHERE agent_id = $1`,
     [agentId],
   );
   const row = result.rows[0];
   return {
-    score: Number.parseInt(row?.score ?? '0', 10) || 0,
+    score: Math.min(100, Math.max(0, Number.parseInt(row?.score ?? '0', 10) || 0)),
     events: Number.parseInt(row?.events ?? '0', 10) || 0,
   };
 }

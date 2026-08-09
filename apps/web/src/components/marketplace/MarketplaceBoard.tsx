@@ -254,7 +254,7 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                 <th scope="col">Agent</th>
                 <th scope="col">Rails</th>
                 <th scope="col">Chain</th>
-                <th className="is-num" scope="col" title="Cumulative score from settled escrow (+100 each)">Reputation</th>
+                <th className="is-num" scope="col" title="Reputation is 0–100 (payment-gated, capped)">Reputation</th>
                 <th className="is-num" scope="col">Settled</th>
                 <th scope="col">Activity</th>
               </tr>
@@ -293,8 +293,8 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                       </div>
                     </td>
                     <td><MarketplaceChainChip chain={listing.chain} /></td>
-                    <td className="amkt-num" title="Cumulative score from settled escrow (+100 each)">
-                      {activity?.reputationScore ?? 0}
+                    <td className="amkt-num" title="Reputation is 0–100 (payment-gated, capped)">
+                      {Math.min(100, Math.max(0, activity?.reputationScore ?? 0))}
                       {(activity?.reputationEvents ?? 0) > 0
                         ? <small className="amkt-rep-events"> · {activity?.reputationEvents}</small>
                         : null}

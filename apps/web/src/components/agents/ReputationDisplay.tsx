@@ -1,13 +1,20 @@
 /**
- * Payment-gated reputation: +100 per settled escrow completion (not a 0–100 star rating).
+ * Payment-gated reputation on a fixed 0–100 scale.
+ * Settled escrow completions raise the score (capped at 100).
  */
 export const REPUTATION_HINT =
-  'Cumulative score from settled escrow jobs (+100 each). Not a star rating — earned only after payment completes.';
+  'Reputation is 0–100. It rises when escrow jobs for this agent complete (payment-gated), and never exceeds 100.';
+
+export function clampReputationScore(score: number): number {
+  if (!Number.isFinite(score)) return 0;
+  return Math.min(100, Math.max(0, Math.round(score)));
+}
 
 export function formatReputationScore(score: number, events = 0): string {
-  if (events <= 0 && score <= 0) return '0';
-  if (events <= 0) return String(score);
-  return `${score} · ${events} job${events === 1 ? '' : 's'}`;
+  const capped = clampReputationScore(score);
+  if (events <= 0 && capped <= 0) return '0';
+  if (events <= 0) return String(capped);
+  return `${capped} · ${events} job${events === 1 ? '' : 's'}`;
 }
 
 type ReputationDisplayProps = {
@@ -24,13 +31,14 @@ export function ReputationDisplay({
   className,
   compact = false,
 }: ReputationDisplayProps) {
-  const label = formatReputationScore(score, events);
+  const capped = clampReputationScore(score);
+  const label = formatReputationScore(capped, events);
   return (
     <span
       className={className ?? 'reputation-display'}
       title={REPUTATION_HINT}
     >
-      <strong>{compact ? score : label}</strong>
+      <strong>{compact ? capped : label}</strong>
       {compact && events > 0 ? <small>{events} settled</small> : null}
     </span>
   );

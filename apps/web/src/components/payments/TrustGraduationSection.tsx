@@ -30,7 +30,7 @@ export function TrustGraduationSection({ orgId, orgSlug, targets }: TrustGraduat
           <p>
             After settled escrow jobs with an external provider, review the record and graduate them
             to a standing Permit2 ceiling (cheaper drawdowns). Not automatic — you choose the ceiling.
-            Completed escrow also earns the seller agent +100 reputation (see Agents / marketplace).
+            Completed escrow also raises the seller agent’s reputation on a 0–100 scale (see Agents / marketplace).
           </p>
         </div>
         <span>{targets.length}</span>

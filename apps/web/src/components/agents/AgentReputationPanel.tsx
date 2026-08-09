@@ -28,8 +28,8 @@ export function AgentReputationPanel({ score, events, history }: AgentReputation
         <div className="treasury-empty-state">
           <strong>No reputation yet</strong>
           <p>
-            Reputation is written only when an escrow job for this agent completes. Fleet Permit2
-            hires do not add score — complete escrow (marketplace hire) does.
+            Reputation is written only when an escrow job for this agent completes. Score stays on a
+            0–100 scale (capped). Fleet Permit2 hires do not raise it — completed escrow does.
           </p>
         </div>
       ) : (
@@ -37,7 +37,7 @@ export function AgentReputationPanel({ score, events, history }: AgentReputation
           {history.map((event) => (
             <li key={event.id}>
               <div>
-                <strong>+{event.score}</strong>
+                <strong>Settled</strong>
                 <span>{formatUtcDateTime(event.created_at)}</span>
               </div>
               <code title={event.escrow_job_id}>{event.escrow_job_id}</code>

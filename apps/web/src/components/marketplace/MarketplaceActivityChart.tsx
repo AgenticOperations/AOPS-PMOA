@@ -103,7 +103,7 @@ export function MarketplaceActivityChart({ activity }: MarketplaceActivityChartP
       <div className="amkt-chart-stats">
         <div>
           <span>Reputation</span>
-          <strong>{activity.reputationScore}</strong>
+          <strong>{Math.min(100, Math.max(0, activity.reputationScore))}</strong>
         </div>
         <div>
           <span>Completed jobs</span>

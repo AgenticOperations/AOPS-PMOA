@@ -84,7 +84,7 @@ export type AgentRosterItem = Pick<
   readonly last_activity_at: string | null;
   /** ERC-8004 identity token id when registered on-chain. */
   readonly identity_token_id: string | null;
-  /** Cumulative reputation score from settled feedback events. */
+  /** Reputation on a 0–100 scale from settled feedback events (capped). */
   readonly reputation_score: number;
   readonly reputation_events: number;
 };

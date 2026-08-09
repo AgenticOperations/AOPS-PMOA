@@ -139,7 +139,7 @@ What a human can do in the product today — the console index behind the money 
 | Nav / surface | Plain English |
 |---|---|
 | **Home** (`overview`) | Kickstart: connect checklist + copyable agent prompt (`/llms.txt` + invite). Not a place to paste raw MCP JSON forever. |
-| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (policy bind, Publish tab, wallet). Roster + detail show **payment-gated reputation** (sum of +100 per settled escrow). Chat agents must ask for display `agent_name` before redeem. |
+| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (policy bind, Publish tab, wallet). Roster + detail show **payment-gated reputation** on a **0–100** scale (capped). Chat agents must ask for display `agent_name` before redeem. |
 | **Controls** | Policy authoring / binding — allow, deny, observe, require approval, rate limits. |
 | **Fleet Run** | Guided multi-agent research run (checklist → real payments → brief + receipts). |
 | **Operations** | Runtime / operation visibility for non-payment actions. |
@@ -586,7 +586,7 @@ Fleet org live job (Orchestrator → DataFetcher, 0.02 USDC):
 
 ### 9b. Reputation only after paid completion
 
-ERC-8004 alone does **not** require the rater to have paid. We only write feedback from a **settled escrow completion** hook.
+ERC-8004 alone does **not** require the rater to have paid. We only write feedback from a **settled escrow completion** hook. The platform reputation score is kept on a **0–100** scale (aggregate capped).
 
 | Step | Proof |
 |---|---|
