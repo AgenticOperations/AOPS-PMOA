@@ -78,6 +78,7 @@ export default async function AgentDetailPage({ params, searchParams }: AgentDet
         connections={detail.connections}
         mcpEndpoint={mcpEndpoint}
         onchainIdentity={onchainIdentity}
+        reputationHistory={detail.reputationHistory ?? []}
         walletRefs={detail.walletRefs}
         teams={teams.filter((team) => team.archived_at === null)}
         orgId={org.id}

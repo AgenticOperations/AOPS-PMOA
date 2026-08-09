@@ -5,6 +5,7 @@ import { readWebEnv } from '../env';
 import type {
   AgentDetailBundle,
   AgentActivityFeed,
+  AgentReputationEventRecord,
   AgentRosterItem,
   AgentRosterPage,
   ConnectionRecord,
@@ -270,6 +271,7 @@ export async function getAgentDetail(orgId: string, agentId: string): Promise<Ag
     readonly connections: ConnectionRecord[];
     readonly wallet_refs: WalletRefRecord[];
     readonly activity: AgentDetailBundle['activity'];
+    readonly reputation_history?: readonly AgentReputationEventRecord[];
   }>(`/v1/orgs/${orgId}/agents/${agentId}`);
 
   return {
@@ -277,6 +279,7 @@ export async function getAgentDetail(orgId: string, agentId: string): Promise<Ag
     connections: body.connections,
     walletRefs: body.wallet_refs,
     activity: body.activity,
+    reputationHistory: body.reputation_history ?? [],
   };
 }
 

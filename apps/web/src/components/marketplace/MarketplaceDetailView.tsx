@@ -6,6 +6,7 @@ import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
 import { MarketplaceActivityChart } from './MarketplaceActivityChart';
 import { MarketplaceChainChip, MarketplaceListingMark } from './MarketplaceMarks';
 import { MarketplaceHirePanel } from './MarketplaceHirePanel';
+import { REPUTATION_HINT } from '@/components/agents/ReputationDisplay';
 
 type HireClient = { readonly id: string; readonly name: string };
 
@@ -149,10 +150,13 @@ export function MarketplaceDetailView({
           </div>
         </div>
 
-        <div className="amkt-detail-score">
+        <div className="amkt-detail-score" title={REPUTATION_HINT}>
           <span>Reputation</span>
           <strong>{activity.reputationScore}</strong>
-          <small>{activity.completedJobs} completed · {formatUsdc(activity.settledUsdc)} settled</small>
+          <small>
+            {activity.reputationEvents} settled job{activity.reputationEvents === 1 ? '' : 's'} ·{' '}
+            {activity.completedJobs} completed · {formatUsdc(activity.settledUsdc)} settled
+          </small>
         </div>
       </header>
 

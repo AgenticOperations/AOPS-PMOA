@@ -12,6 +12,7 @@ import { TableShell } from '@/components/ui/table-shell';
 import { createAgentAction } from '../../../actions/identity-spine';
 import { createJoinInviteAction } from '../../../actions/agent-join';
 import { FleetAgentsSetupCard } from '@/components/agents/FleetAgentsSetupCard';
+import { ReputationDisplay } from '@/components/agents/ReputationDisplay';
 import { getOrgBySlug, listAgentsPage, listTeams } from '@/lib/server/identity-spine-client';
 import type { AgentStatus } from '@/lib/identity-spine-types';
 
@@ -158,6 +159,7 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
                     <TableHead>Agent</TableHead>
                     <TableHead>Team</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Reputation</TableHead>
                     <TableHead>Credential</TableHead>
                     <TableHead>Policy coverage</TableHead>
                     <TableHead>Last activity</TableHead>
@@ -180,6 +182,12 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
                         </TableCell>
                         <TableCell data-label="Team">{agent.team.name}</TableCell>
                         <TableCell data-label="Status"><StatusBadge label={formatStatus(agent.status)} status={agent.status} /></TableCell>
+                        <TableCell data-label="Reputation">
+                          <ReputationDisplay
+                            events={agent.reputation_events ?? 0}
+                            score={agent.reputation_score ?? 0}
+                          />
+                        </TableCell>
                         <TableCell data-label="Credential"><StatusBadge label={formatConnectionHealth(agent.connection_health)} status={agent.connection_health} /></TableCell>
                         <TableCell data-label="Policy coverage">{agent.policy_coverage === 0 ? 'No policies' : `${agent.policy_coverage} active`}</TableCell>
                         <TableCell className="registry-time-cell" data-label="Last activity">{formatLastActivity(agent.last_activity_at)}</TableCell>

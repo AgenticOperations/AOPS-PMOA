@@ -4,6 +4,7 @@ import { DelegationsPanel } from '@/components/payments/DelegationsPanel';
 import { EmpowerWorkbench } from '@/components/payments/EmpowerWorkbench';
 import { OrgCeilingForm } from '@/components/payments/OrgCeilingForm';
 import { TreasuryAgentAccess } from '@/components/payments/TreasuryAgentAccess';
+import { TrustGraduationSection } from '@/components/payments/TrustGraduationSection';
 import { TreasuryWorkbench } from '@/components/payments/TreasuryChrome';
 import { DelegateToAgent } from '@/components/wallet/DelegateToAgent';
 import { DelegationList } from '@/components/wallet/DelegationList';
@@ -11,9 +12,11 @@ import { WalletProvider } from '@/components/wallet/WalletProvider';
 import { setAgentPaymentAccessAction } from '@/app/actions/payments';
 import { getOrgBySlug, listAgents } from '@/lib/server/identity-spine-client';
 import {
+  getTrustEvidence,
   listAgentPaymentAccounts,
   listAgentWalletFunding,
   listDelegations,
+  listEscrowCounterparties,
   listEscrowLivenessRisks,
   listOrgCeilings,
   listPaymentCapabilities,
@@ -53,6 +56,7 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
     delegations,
     ceilings,
     agentWallets,
+    counterparties,
   ] = await Promise.all([
     listAgents(org.id),
     listAgentPaymentAccounts(org.id),
@@ -61,7 +65,31 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
     listDelegations(org.id).catch(() => []),
     listOrgCeilings(org.id).catch(() => []),
     listAgentWalletFunding(org.id).catch(() => []),
+    listEscrowCounterparties(org.id).catch(() => []),
   ]);
+
+  const trustTargets = (
+    await Promise.all(
+      counterparties.map(async (counterparty) => {
+        try {
+          const evidence = await getTrustEvidence(org.id, counterparty.chain, counterparty.providerAddress);
+          return {
+            chain: counterparty.chain,
+            address: counterparty.providerAddress,
+            evidence: {
+              completedCount: evidence.completedCount,
+              rejectedCount: evidence.rejectedCount,
+              expiredCount: evidence.expiredCount,
+              settledUsdc: evidence.settledUsdc,
+            },
+            trusted: evidence.trusted,
+          };
+        } catch {
+          return null;
+        }
+      }),
+    )
+  ).filter((target): target is NonNullable<typeof target> => target !== null);
 
   const agentOptions = agents.map((agent) => ({ id: agent.id, name: agent.name }));
 
@@ -84,15 +112,22 @@ export default async function PaymentsEmpowerPage({ params, searchParams }: Empo
         <EmpowerWorkbench
           initialTab={initialTab}
           access={(
-            <TreasuryAgentAccess
-              accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
-              accounts={agentAccounts.accounts}
-              agents={agents}
-              atRiskEscrowJobs={atRiskEscrowJobs}
-              capabilities={capabilities}
-              embedded
-              orgSlug={org.slug}
-            />
+            <>
+              <TreasuryAgentAccess
+                accessAction={setAgentPaymentAccessAction.bind(null, org.id, org.slug)}
+                accounts={agentAccounts.accounts}
+                agents={agents}
+                atRiskEscrowJobs={atRiskEscrowJobs}
+                capabilities={capabilities}
+                embedded
+                orgSlug={org.slug}
+              />
+              <TrustGraduationSection
+                orgId={org.id}
+                orgSlug={org.slug}
+                targets={trustTargets}
+              />
+            </>
           )}
           caps={<OrgCeilingForm ceilings={ceilings} orgSlug={org.slug} />}
           delegations={(

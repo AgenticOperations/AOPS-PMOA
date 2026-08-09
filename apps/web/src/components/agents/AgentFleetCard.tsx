@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { AgentRosterItem } from '@/lib/identity-spine-types';
 import { AGENT_ROBOT_SRC, agentTint } from './agent-visual';
+import { formatReputationScore, REPUTATION_HINT } from './ReputationDisplay';
 
 type AgentFleetCardProps = {
   readonly agent: AgentRosterItem;
@@ -25,7 +26,8 @@ export function AgentFleetCard({ agent, orgSlug, index = 0 }: AgentFleetCardProp
     : agent.name;
   const tokenId = agent.identity_token_id ?? null;
   const publishedId = tokenId !== null ? `#${tokenId}` : shortAgentId(agent.id);
-  const reputation = agent.reputation_score ?? 0;
+  const reputationScore = agent.reputation_score ?? 0;
+  const reputationEvents = agent.reputation_events ?? 0;
 
   return (
     <Link
@@ -65,7 +67,9 @@ export function AgentFleetCard({ agent, orgSlug, index = 0 }: AgentFleetCardProp
           </div>
           <div>
             <dt>Rep</dt>
-            <dd>{reputation}</dd>
+            <dd title={REPUTATION_HINT}>
+              {formatReputationScore(reputationScore, reputationEvents)}
+            </dd>
           </div>
         </dl>
       </div>

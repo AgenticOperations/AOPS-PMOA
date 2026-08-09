@@ -8,7 +8,7 @@ import { DataTablePager } from '@/components/ui/data-table-pager';
 import { Sheet, SheetBody, SheetCloseButton, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
-import { TreasuryPageHeader, TreasurySectionNav } from './TreasuryChrome';
+import { TreasuryPageHeader } from './TreasuryChrome';
 import { CHAIN_LABELS, formatMoney, formatOptionalRail, formatRail, titleCase } from '@/lib/payments-format';
 import { formatUtcDateTime } from '@/lib/date-format';
 import type { AuditEventRecord } from '@/lib/audit-types';
@@ -187,7 +187,6 @@ export function TreasuryActivity(props: TreasuryActivityProps) {
 
   return (
     <div className="treasury-workbench treasury-activity-workbench">
-      <TreasurySectionNav active="activity" orgSlug={props.orgSlug} />
       <TreasuryPageHeader description="Payments, routing, reservations, escrow jobs, and audit." eyebrow="Treasury / activity" title="Activity" />
 
       <nav aria-label="Evidence type" className="treasury-evidence-tabs">{tabs.map((tab) => <Link aria-current={props.activeTab === tab.key ? 'page' : undefined} className={props.activeTab === tab.key ? 'is-active' : undefined} href={`/app/${props.orgSlug}/payments/activity${tab.key === 'payments' ? '' : `?tab=${tab.key}`}`} key={tab.key}>{tab.label}</Link>)}</nav>

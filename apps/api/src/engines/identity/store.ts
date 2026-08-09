@@ -253,6 +253,25 @@ export type AgentDetail = AgentRecord & {
   readonly children: Array<{ readonly id: string; readonly name: string; readonly status: AgentStatus }>;
   readonly connection_health: ConnectionHealth;
   readonly wallet_refs_count: number;
+  /** Cumulative score from settled escrow completions (+100 each). */
+  readonly reputation_score: number;
+  readonly reputation_events: number;
+};
+
+export type AgentReputationEventRecord = {
+  readonly id: string;
+  readonly score: number;
+  readonly escrow_job_id: string;
+  readonly feedback_tx_hash: string | null;
+  readonly created_at: string;
+};
+
+export type AgentDetailBundle = {
+  readonly agent: AgentDetail;
+  readonly connections: ConnectionRecord[];
+  readonly wallet_refs: WalletRefRecord[];
+  readonly activity: AgentActivityItem[];
+  readonly reputation_history: readonly AgentReputationEventRecord[];
 };
 
 export type AgentActivityItem = {
@@ -298,13 +317,6 @@ export type AgentActivityFeed = {
     readonly active_connection_count: number;
   };
   readonly events: AgentActivityFeedItem[];
-};
-
-export type AgentDetailBundle = {
-  readonly agent: AgentDetail;
-  readonly connections: ConnectionRecord[];
-  readonly wallet_refs: WalletRefRecord[];
-  readonly activity: AgentActivityItem[];
 };
 
 export type ConnectionSecretResult = {
@@ -1776,6 +1788,8 @@ export async function getAgentDetail(
       readonly parent_name: string | null;
       readonly connection_health: ConnectionHealth;
       readonly wallet_refs_count: string;
+      readonly reputation_score: string;
+      readonly reputation_events: string;
     }
   >(
     `SELECT
@@ -1783,6 +1797,8 @@ export async function getAgentDetail(
        t.name AS team_name,
        p.name AS parent_name,
        COALESCE(w.active_wallet_refs, 0)::text AS wallet_refs_count,
+       COALESCE(r.reputation_score, '0') AS reputation_score,
+       COALESCE(r.reputation_events, '0') AS reputation_events,
        CASE
          WHEN c.total_connections IS NULL THEN 'not_connected'
          WHEN COALESCE(c.active_recent, 0) > 0 THEN 'healthy'
@@ -1819,6 +1835,12 @@ export async function getAgentDetail(
        WHERE org_id = $1 AND status = 'attached'
        GROUP BY agent_id
      ) w ON w.agent_id = a.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(score), 0)::text AS reputation_score,
+              COUNT(*)::text AS reputation_events
+         FROM agent_reputation_events
+        WHERE agent_id = a.id
+     ) r ON true
      WHERE a.org_id = $1 AND a.id = $2`,
     [orgId, agentId],
   );
@@ -1836,6 +1858,20 @@ export async function getAgentDetail(
 
   const connections = await listConnections(pool, orgId, agentId);
   const walletRefs = await listWalletRefs(pool, orgId, agentId);
+  const reputationHistory = await pool.query<{
+    readonly id: string;
+    readonly score: number;
+    readonly escrow_job_id: string;
+    readonly feedback_tx_hash: string | null;
+    readonly created_at: Date;
+  }>(
+    `SELECT id, score, escrow_job_id, feedback_tx_hash, created_at
+       FROM agent_reputation_events
+      WHERE org_id = $1 AND agent_id = $2
+      ORDER BY created_at DESC
+      LIMIT 25`,
+    [orgId, agentId],
+  );
   const activity = await pool.query<AgentActivityRow>(
     `SELECT
         ae.id,
@@ -1895,9 +1931,18 @@ export async function getAgentDetail(
       children: children.rows,
       connection_health: row.connection_health,
       wallet_refs_count: Number(row.wallet_refs_count),
+      reputation_score: Number(row.reputation_score),
+      reputation_events: Number(row.reputation_events),
     },
     connections,
     wallet_refs: walletRefs,
+    reputation_history: reputationHistory.rows.map((event) => ({
+      id: event.id,
+      score: event.score,
+      escrow_job_id: event.escrow_job_id,
+      feedback_tx_hash: event.feedback_tx_hash,
+      created_at: event.created_at.toISOString(),
+    })),
     activity: activity.rows.map((event) => ({
       id: event.id,
       eventType: event.event_type,

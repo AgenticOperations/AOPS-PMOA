@@ -3,12 +3,7 @@ import Link from 'next/link';
 
 type TreasurySection = 'fund' | 'empower' | 'activity' | 'networks' | 'liquidity';
 
-const primarySections: readonly { readonly key: TreasurySection; readonly label: string; readonly href: string }[] = [
-  { key: 'fund', label: 'Fund', href: '/funding' },
-  { key: 'empower', label: 'Empower', href: '/empower' },
-  { key: 'activity', label: 'Activity', href: '/activity' },
-];
-
+/** Advanced-only — Fund / Empower / Activity live in the left sidebar. */
 const advancedSections: readonly { readonly key: TreasurySection; readonly label: string; readonly href: string }[] = [
   { key: 'networks', label: 'Networks', href: '/sources' },
   { key: 'liquidity', label: 'Liquidity', href: '/liquidity' },
@@ -17,17 +12,16 @@ const advancedSections: readonly { readonly key: TreasurySection; readonly label
 export function TreasurySectionNav({
   active,
   orgSlug,
-  showAdvanced = false,
 }: {
   readonly active: TreasurySection;
   readonly orgSlug: string;
+  /** @deprecated Primary Fund/Empower/Activity tabs removed — sidebar owns those. */
   readonly showAdvanced?: boolean;
 }) {
   const base = `/app/${orgSlug}/payments`;
-  const items = showAdvanced ? [...primarySections, ...advancedSections] : primarySections;
   return (
-    <nav aria-label="Treasury sections" className="treasury-subnav">
-      {items.map((section) => (
+    <nav aria-label="Treasury advanced" className="treasury-subnav">
+      {advancedSections.map((section) => (
         <Link
           aria-current={active === section.key ? 'page' : undefined}
           className={active === section.key ? 'is-active' : undefined}
@@ -75,9 +69,8 @@ export function TreasuryInfoCallout({ children }: { readonly children: ReactNode
 }
 
 /**
- * Shared Fund / Empower / Activity chrome — home-like header + one optional
- * info line. Sidebar already carries Fund/Empower/Activity; page subnav stays
- * as a light local mirror only.
+ * Shared Fund / Empower / Activity chrome — header + optional info line.
+ * Sidebar owns Fund / Empower / Activity; no duplicate primary subnav here.
  */
 export function TreasuryWorkbench({
   actions,
@@ -100,7 +93,7 @@ export function TreasuryWorkbench({
 }) {
   return (
     <div className="treasury-workbench">
-      <TreasurySectionNav active={active} orgSlug={orgSlug} showAdvanced={showAdvancedNav} />
+      {showAdvancedNav ? <TreasurySectionNav active={active} orgSlug={orgSlug} /> : null}
       <TreasuryPageHeader
         {...(actions === undefined ? {} : { actions })}
         {...(description === undefined ? {} : { description })}

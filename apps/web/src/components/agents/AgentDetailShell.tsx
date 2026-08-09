@@ -6,6 +6,7 @@ import type {
   ActivityItem,
   AgentActivityFeed,
   AgentDetail,
+  AgentReputationEventRecord,
   ConnectionRecord,
   TeamRecord,
   WalletRefRecord,
@@ -18,6 +19,8 @@ import { ConnectionPanel } from './ConnectionPanel';
 import { AgentActivityWorkspace } from './AgentActivityWorkspace';
 import { WalletRefsPanel } from './WalletRefsPanel';
 import { AgentPublishPanel, type AgentOnchainIdentityView, type PublishIdentityFormState } from './AgentPublishPanel';
+import { AgentReputationPanel } from './AgentReputationPanel';
+import { ReputationDisplay } from './ReputationDisplay';
 import { formatUtcDateTime } from '@/lib/date-format';
 import {
   Sheet,
@@ -83,6 +86,7 @@ export function AgentDetailShell({
   blockedOperations = [],
   templateRepoUrl = 'https://github.com/circlefin/arc-nanopayments',
   onchainIdentity = null,
+  reputationHistory = [],
   actions,
 }: {
   readonly orgId: string;
@@ -102,6 +106,7 @@ export function AgentDetailShell({
   readonly blockedOperations?: BlockedOperationRecord[] | undefined;
   readonly templateRepoUrl?: string | undefined;
   readonly onchainIdentity?: AgentOnchainIdentityView | undefined;
+  readonly reputationHistory?: readonly AgentReputationEventRecord[] | undefined;
   readonly actions?: {
     readonly pause?: (() => Promise<void>) | undefined;
     readonly activate?: (() => Promise<void>) | undefined;
@@ -175,6 +180,16 @@ export function AgentDetailShell({
           <div><strong>{agent.name}</strong><code>{agent.id} · {agent.default_environment ?? 'environment not set'}</code></div>
         </div>
         <div className="agent-identity-stat"><span>Status</span><strong><i className={`agent-status-badge is-${agent.status === 'active' ? 'active' : agent.status === 'paused' ? 'warning' : 'danger'}`}>{formatStatus(agent.status)}</i></strong></div>
+        <div className="agent-identity-stat">
+          <span>Reputation</span>
+          <strong>
+            <ReputationDisplay
+              compact
+              events={agent.reputation_events ?? 0}
+              score={agent.reputation_score ?? 0}
+            />
+          </strong>
+        </div>
         <div className="agent-identity-stat"><span>Credentials</span><strong>{connections.filter((connection) => connection.status === 'active').length} active</strong></div>
         <div className="agent-identity-stat"><span>Last activity</span><strong>{feed.live.latest_event_at === null ? 'No activity' : formatUtcDateTime(feed.live.latest_event_at)}</strong></div>
       </section>
@@ -193,6 +208,11 @@ export function AgentDetailShell({
 
       {activeTab === 'overview' ? (
         <div className="agent-detail-canvas">
+          <AgentReputationPanel
+            events={agent.reputation_events ?? 0}
+            history={reputationHistory}
+            score={agent.reputation_score ?? 0}
+          />
           <section className="agent-detail-section" aria-labelledby="overview-title">
             <div className="agent-section-heading">
               <div>

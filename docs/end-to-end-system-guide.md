@@ -139,13 +139,13 @@ What a human can do in the product today — the console index behind the money 
 | Nav / surface | Plain English |
 |---|---|
 | **Home** (`overview`) | Kickstart: connect checklist + copyable agent prompt (`/llms.txt` + invite). Not a place to paste raw MCP JSON forever. |
-| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (policy bind, Publish tab, wallet). Chat agents must ask for display `agent_name` before redeem. |
+| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (policy bind, Publish tab, wallet). Roster + detail show **payment-gated reputation** (sum of +100 per settled escrow). Chat agents must ask for display `agent_name` before redeem. |
 | **Controls** | Policy authoring / binding — allow, deny, observe, require approval, rate limits. |
 | **Fleet Run** | Guided multi-agent research run (checklist → real payments → brief + receipts). |
 | **Operations** | Runtime / operation visibility for non-payment actions. |
 | **Approvals** | Human inbox when policy says `require approval` (e.g. Base hire). Approve → agent `approval_consume` → retry. |
 | **Fund** | Treasury + allocate USDC into per-agent DCW wallets (ceilings / gas reserve). |
-| **Empower** | Payment access toggles, caps, budgets, Permit2 delegations / destination allowlists. |
+| **Empower** | Payment access toggles, caps, budgets, Permit2 delegations / destination allowlists. **Access tab** also hosts escrow → Permit2 **trust graduation** (review counterparty escrow record → set ceiling → Trust / Revoke). |
 | **Activity** | Payment and governance trail (decision ids, rails, explorer hashes). |
 | **Marketplace** (`/marketplace`) | Org-governed discovery: curated demo sellers + **published** agents (`public_endpoint_url`). Hire via x402 (after payTo authorize) or ERC-8183 escrow. Not a clone of agents.circle.com. |
 | **Chat** (`/chat`) | NLP operator chat — product Q&A, marketplace recommend, Fleet Run goals. |

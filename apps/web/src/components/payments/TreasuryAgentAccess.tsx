@@ -9,7 +9,7 @@ import { Sheet, SheetBody, SheetCloseButton, SheetDescription, SheetHeader, Shee
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import { activityEscrowHref } from '@/components/ui/LinkedActionMessage';
-import { TreasuryPageHeader, TreasurySectionNav } from './TreasuryChrome';
+import { TreasuryPageHeader } from './TreasuryChrome';
 import { EscrowLivenessBanner, type EscrowLivenessRiskSummary } from './EscrowLivenessBanner';
 import { PRIMARY_RAILS, accountState, formatMoney, formatRail, railIsSettlementVerified } from '@/lib/payments-format';
 import { AgentAvatar } from '@/components/agents/AgentAvatar';
@@ -127,7 +127,6 @@ export function TreasuryAgentAccess({
 
   return (
     <div className={embedded ? 'treasury-access-embedded' : 'treasury-workbench treasury-access-workbench'}>
-      {embedded ? null : <TreasurySectionNav active="empower" orgSlug={orgSlug} />}
       <EscrowLivenessBanner atRisk={atRiskEscrowJobs} orgSlug={orgSlug} />
       {embedded ? (
         <div className="treasury-embedded-toolbar">

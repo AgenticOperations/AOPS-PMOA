@@ -124,6 +124,16 @@ export type AgentDetail = {
   readonly children: Array<{ readonly id: string; readonly name: string; readonly status: AgentStatus }>;
   readonly connection_health: ConnectionHealth;
   readonly wallet_refs_count: number;
+  readonly reputation_score?: number;
+  readonly reputation_events?: number;
+};
+
+export type AgentReputationEventRecord = {
+  readonly id: string;
+  readonly score: number;
+  readonly escrow_job_id: string;
+  readonly feedback_tx_hash: string | null;
+  readonly created_at: string;
 };
 
 export type ActivityItem = {
@@ -175,4 +185,5 @@ export type AgentDetailBundle = {
   readonly walletRefs: WalletRefRecord[];
   readonly activity: ActivityItem[];
   readonly activityFeed?: AgentActivityFeed;
+  readonly reputationHistory?: readonly AgentReputationEventRecord[];
 };

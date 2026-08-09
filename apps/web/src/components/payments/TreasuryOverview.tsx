@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { IconAlertTriangle, IconArrowRight } from '@tabler/icons-react';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { ChainMark } from './ChainMark';
-import { TreasuryPageHeader, TreasurySectionNav } from './TreasuryChrome';
+import { TreasuryPageHeader } from './TreasuryChrome';
 import { CHAIN_LABELS, PRIMARY_RAILS, walletUsdc } from '@/lib/payments-format';
 import type { AgentRosterItem } from '@/lib/identity-spine-types';
 import type {
@@ -118,7 +118,6 @@ export function TreasuryOverview({
 
   return (
     <div className="treasury-workbench">
-      <TreasurySectionNav active="fund" orgSlug={orgSlug} />
       <TreasuryPageHeader
         description="A calm operational view of funded liquidity, executable rails, delegated access, and exceptions."
         eyebrow="Treasury / command view"

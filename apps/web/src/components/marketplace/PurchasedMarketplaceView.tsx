@@ -78,6 +78,7 @@ export function PurchasedMarketplaceView({
                 <TableHead>Chain</TableHead>
                 <TableHead>Spend</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead title="Completed escrow earns the seller +100 reputation">Reputation</TableHead>
                 <TableHead>Hired</TableHead>
               </TableRow>
             </TableHeader>
@@ -112,6 +113,11 @@ export function PurchasedMarketplaceView({
                     <TableCell>{formatMoney(job.budgetUsdc)}</TableCell>
                     <TableCell>
                       <StatusBadge label={titleCase(job.state)} status={outcomeTone(job.state)} />
+                    </TableCell>
+                    <TableCell>
+                      {job.state === 'completed'
+                        ? <span title="Seller agent gained +100 reputation from this settled escrow">+100 earned</span>
+                        : <span className="reputation-history-muted">—</span>}
                     </TableCell>
                     <TableCell>
                       <time dateTime={job.createdAt}>{formatUtcDateTime(job.createdAt)}</time>

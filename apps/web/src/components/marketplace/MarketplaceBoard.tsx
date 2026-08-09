@@ -11,6 +11,7 @@ type MarketplaceBoardProps = {
   readonly listings: readonly PublicMarketplaceListing[];
   readonly activityById: Readonly<Record<string, {
     readonly reputationScore: number;
+    readonly reputationEvents?: number | undefined;
     readonly settledUsdc: string;
     readonly series: readonly { readonly day: string; readonly settledUsdc: string; readonly completedJobs: number }[];
   }>>;
@@ -253,7 +254,7 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                 <th scope="col">Agent</th>
                 <th scope="col">Rails</th>
                 <th scope="col">Chain</th>
-                <th className="is-num" scope="col">Reputation</th>
+                <th className="is-num" scope="col" title="Cumulative score from settled escrow (+100 each)">Reputation</th>
                 <th className="is-num" scope="col">Settled</th>
                 <th scope="col">Activity</th>
               </tr>
@@ -292,7 +293,12 @@ export function MarketplaceBoard({ listings, activityById }: MarketplaceBoardPro
                       </div>
                     </td>
                     <td><MarketplaceChainChip chain={listing.chain} /></td>
-                    <td className="amkt-num">{activity?.reputationScore ?? 0}</td>
+                    <td className="amkt-num" title="Cumulative score from settled escrow (+100 each)">
+                      {activity?.reputationScore ?? 0}
+                      {(activity?.reputationEvents ?? 0) > 0
+                        ? <small className="amkt-rep-events"> · {activity?.reputationEvents}</small>
+                        : null}
+                    </td>
                     <td className="amkt-num">{formatUsdc(activity?.settledUsdc ?? '0')}</td>
                     <td><MarketplaceSparkline height={28} tone={tone} values={spark} width={88} /></td>
                   </tr>

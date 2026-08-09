@@ -22,11 +22,12 @@ async function loadBoard() {
         }
       }),
     );
-    const activityById: Record<string, Pick<MarketplaceListingActivity, 'reputationScore' | 'settledUsdc' | 'series'>> = {};
+    const activityById: Record<string, Pick<MarketplaceListingActivity, 'reputationScore' | 'reputationEvents' | 'settledUsdc' | 'series'>> = {};
     for (const [id, activity] of activityEntries) {
       if (activity === null) continue;
       activityById[id] = {
         reputationScore: activity.reputationScore,
+        reputationEvents: activity.reputationEvents,
         settledUsdc: activity.settledUsdc,
         series: activity.series,
       };

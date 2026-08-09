@@ -131,12 +131,7 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       {
         label: 'Runtime',
         items: [
-          {
-            href: `${base}/fleet-run`,
-            icon: <IconMessageChatbot aria-hidden="true" className="nav-icon" {...iconProps} />,
-            label: 'Fleet Run',
-            tour: 'nav-fleet-run',
-          },
+          
           {
             href: `${base}/operations`,
             icon: <IconActivity aria-hidden="true" className="nav-icon" {...iconProps} />,
