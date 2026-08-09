@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useActionState, useEffect, useMemo, useState } from 'react';
 import { IconArrowRight } from '@tabler/icons-react';
 import {
   Sheet,
@@ -118,6 +118,34 @@ export function OperationsWorkbench({
   const [agentFilter, setAgentFilter] = useState('all');
   const [actionFilter, setActionFilter] = useState('all');
   const [decisionFilter, setDecisionFilter] = useState('all');
+
+  const [, submitImportTool, importPending] = useActionState(
+    async (_prev: string | null, formData: FormData) => {
+      if (!importAction) return 'error';
+      try {
+        await importAction(formData);
+        setCreateMode(null);
+        return 'ok';
+      } catch {
+        return 'error';
+      }
+    },
+    null,
+  );
+
+  const [, submitCreateLimit, createLimitPending] = useActionState(
+    async (_prev: string | null, formData: FormData) => {
+      if (!rateLimitAction) return 'error';
+      try {
+        await rateLimitAction(formData);
+        setCreateMode(null);
+        return 'ok';
+      } catch {
+        return 'error';
+      }
+    },
+    null,
+  );
 
   const filteredDecisions = useMemo(
     () =>
@@ -420,7 +448,7 @@ export function OperationsWorkbench({
         </SheetHeader>
         <SheetBody>
           {createMode === 'tool' ? (
-            <form action={importAction} className="operations-form">
+            <form action={submitImportTool} className="operations-form">
               <label><span>Tool name</span><input name="name" placeholder="browser.search" required /></label>
               <label><span>Display name</span><input name="displayName" placeholder="Browser search" /></label>
               <div className="operations-form-grid">
@@ -428,11 +456,13 @@ export function OperationsWorkbench({
                 <label><span>Risk</span><select defaultValue="medium" name="riskLevel"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
               </div>
               <label><span>Description</span><textarea name="description" placeholder="Managed search tool" rows={3} /></label>
-              <button className="console-primary-button" type="submit">Import tool</button>
+              <button className="console-primary-button" disabled={importPending || importAction === undefined} type="submit">
+                {importPending ? 'Importing…' : 'Import tool'}
+              </button>
             </form>
           ) : null}
           {createMode === 'rate-limit' ? (
-            <form action={rateLimitAction} className="operations-form">
+            <form action={submitCreateLimit} className="operations-form">
               <label><span>Agent</span><select name="targetId" required>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
               <label><span>Action</span><select defaultValue="runtime.http.request" name="action">{actionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               <label><span>Bucket</span><input name="bucket" placeholder="default" /></label>
@@ -440,7 +470,9 @@ export function OperationsWorkbench({
                 <label><span>Limit</span><input defaultValue="20" min="1" name="limit" required type="number" /></label>
                 <label><span>Window seconds</span><input defaultValue="60" min="1" name="windowSeconds" required type="number" /></label>
               </div>
-              <button className="console-primary-button" type="submit">Create limit</button>
+              <button className="console-primary-button" disabled={createLimitPending || rateLimitAction === undefined} type="submit">
+                {createLimitPending ? 'Creating…' : 'Create limit'}
+              </button>
             </form>
           ) : null}
         </SheetBody>

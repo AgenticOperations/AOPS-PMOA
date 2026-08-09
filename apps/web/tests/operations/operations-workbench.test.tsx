@@ -1,8 +1,31 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { OperationsWorkbench } from '../../src/components/operations/OperationsWorkbench.js';
 
 describe('OperationsWorkbench', () => {
+  it('closes the create-limit drawer after a successful submit', async () => {
+    const rateLimitAction = vi.fn(async () => {});
+    render(
+      <OperationsWorkbench
+        agents={[{ id: 'agt_research', name: 'Research agent' }]}
+        decisions={[]}
+        rateLimits={[]}
+        rateLimitAction={rateLimitAction}
+        tools={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Rate limits' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Create limit' })[0]!);
+    expect(screen.getByRole('heading', { name: 'Create rate limit' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('dialog').querySelector('button[type="submit"]')!);
+    await waitFor(() => {
+      expect(rateLimitAction).toHaveBeenCalled();
+      expect(screen.queryByRole('heading', { name: 'Create rate limit' })).not.toBeInTheDocument();
+    });
+  });
+
   it('refreshes the open rate-limit editor when persisted status changes', () => {
     const rateLimit = {
       id: 'oprl_1',
