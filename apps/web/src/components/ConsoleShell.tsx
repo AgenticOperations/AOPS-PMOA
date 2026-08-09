@@ -6,6 +6,8 @@ import { ConsoleSidebarNav } from './ConsoleSidebarNav';
 import { ConsoleMobileNavigation } from './ConsoleMobileNavigation';
 import { ConsoleHeaderBreadcrumb, type ConsoleSection } from './ConsoleHeaderBreadcrumb';
 import { ThemeToggle } from './ThemeToggle';
+import { PlatformTour } from './platform-tour/PlatformTour';
+import { TourReplayButton } from './platform-tour/TourReplayButton';
 import type { Org } from '@/lib/identity-spine-types';
 
 type ConsoleShellProps = {
@@ -27,16 +29,18 @@ export function ConsoleShell({ active, children, org }: ConsoleShellProps) {
             <ConsoleHeaderBreadcrumb active={active} />
           </div>
           <div className="app-header-actions">
-            <Link className="console-hire-cta" href="/marketplace">
+            <Link className="console-hire-cta" data-tour="hire-cta" href="/marketplace">
               <IconShoppingBag aria-hidden="true" size={16} stroke={1.8} />
               <span>Hire from marketplace</span>
             </Link>
+            <TourReplayButton />
             <CommandPalette orgSlug={org.slug} />
             <ThemeToggle />
           </div>
         </header>
         <div className="workspace">{children}</div>
       </section>
+      <PlatformTour orgSlug={org.slug} />
     </main>
   );
 }

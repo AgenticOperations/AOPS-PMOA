@@ -19691,3 +19691,389 @@ html[data-theme="dark"] .chain-mark[src*="/landing/chains/arc.png"] {
 .aops-changelog-footer a:hover {
   color: var(--aops-ink);
 }
+
+/* ========================================================================== */
+/* PLATFORM STORY TOUR — token-only contrast (matches console sheets)         */
+/* ========================================================================== */
+/*
+  Contrast contract:
+  - Overlay/veil: same muted scrim as sheets
+  - Surfaces: --bg-panel (card) / --bg-soft (nested)
+  - Titles & icons: --text-primary
+  - Supporting copy: --text-muted
+  - Borders: --border-subtle
+  - Primary CTA: --console-action on --bg-panel text (same as console buttons)
+  - No hardcoded light/dark hex overrides
+*/
+
+.aops-tour-veil,
+.aops-tour-welcome-backdrop {
+  background: rgb(15 23 42 / 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+html[data-theme='dark'] .aops-tour-veil,
+html[data-theme='dark'] .aops-tour-welcome-backdrop {
+  background: rgb(0 0 0 / 0.64);
+}
+
+.aops-tour-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  pointer-events: none;
+}
+
+.driver-active .driver-active-element,
+.aops-tour-spotlight {
+  position: relative;
+  z-index: 10001 !important;
+  filter: none !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  background-color: var(--bg-panel);
+  color: var(--text-primary);
+  box-shadow:
+    0 0 0 2px var(--accent-blue),
+    0 12px 32px rgb(0 0 0 / 0.22);
+}
+
+.aops-tour-replay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.55rem;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.aops-tour-replay:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-soft);
+}
+
+.aops-tour-welcome {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+}
+
+.aops-tour-welcome-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  pointer-events: auto;
+}
+
+.aops-tour-welcome-card,
+.aops-tour-popover.driver-popover {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border: 1px solid var(--border-subtle);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.04),
+    0 8px 24px rgb(0 0 0 / 0.10),
+    0 32px 80px rgb(0 0 0 / 0.14);
+}
+
+html[data-theme='dark'] .aops-tour-welcome-card,
+html[data-theme='dark'] .aops-tour-popover.driver-popover {
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.04),
+    0 18px 50px rgb(0 0 0 / 0.45);
+}
+
+.aops-tour-welcome-card {
+  position: relative;
+  z-index: 1;
+  width: min(34rem, 100%);
+  padding: 1.55rem 1.55rem 1.25rem;
+  border-radius: 1rem;
+  animation: aops-tour-rise 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes aops-tour-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.aops-tour-welcome-close,
+.aops-tour-popover .driver-popover-close-btn {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.55rem;
+  background: var(--bg-soft);
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+  text-shadow: none;
+  cursor: pointer;
+}
+
+.aops-tour-welcome-close {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+}
+
+.aops-tour-welcome-close:hover,
+.aops-tour-popover .driver-popover-close-btn:hover,
+.aops-tour-popover .driver-popover-close-btn:focus {
+  background: var(--bg-soft-strong);
+  border-color: var(--border-strong);
+  color: var(--text-primary) !important;
+}
+
+.aops-tour-welcome-close svg {
+  color: inherit;
+  stroke: currentColor;
+}
+
+.aops-tour-welcome-eyebrow {
+  margin: 0 0 0.35rem;
+  color: var(--accent-ink);
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.aops-tour-welcome-card h2,
+.aops-tour-popover .driver-popover-title,
+.aops-tour-path-card strong {
+  color: var(--text-primary);
+}
+
+.aops-tour-welcome-card h2 {
+  margin: 0;
+  padding-right: 2.4rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.aops-tour-welcome-copy,
+.aops-tour-path-card span,
+.aops-tour-popover .driver-popover-description,
+.aops-tour-popover .driver-popover-progress-text,
+.aops-tour-skip,
+.aops-tour-text-btn {
+  color: var(--text-muted);
+}
+
+.aops-tour-welcome-copy {
+  margin: 0.55rem 0 1.15rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.aops-tour-path-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.aops-tour-path-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.75rem;
+  row-gap: 0.15rem;
+  align-items: start;
+  width: 100%;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.8rem;
+  background: var(--bg-soft);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.aops-tour-path-card > svg {
+  grid-row: 1 / span 2;
+  margin-top: 0.15rem;
+  color: var(--accent-blue);
+}
+
+.aops-tour-path-card strong {
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.aops-tour-path-card span {
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.aops-tour-path-card:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in oklch, var(--accent-tint) 55%, var(--bg-soft));
+  transform: translateY(-1px);
+}
+
+.aops-tour-welcome-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.95rem;
+}
+
+.aops-tour-text-btn,
+.aops-tour-skip {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.aops-tour-text-btn {
+  font-size: 0.84rem;
+}
+
+.aops-tour-text-btn:hover,
+.aops-tour-skip:hover {
+  color: var(--text-primary);
+}
+
+.aops-tour-popover.driver-popover {
+  max-width: 22rem;
+  padding: 0.95rem 1rem 0.85rem;
+  border-radius: 0.95rem;
+  font-family: inherit;
+}
+
+.aops-tour-popover .driver-popover-title {
+  margin: 0;
+  padding-right: 1.75rem;
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.aops-tour-popover .driver-popover-description {
+  margin: 0.4rem 0 0;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.aops-tour-popover .driver-popover-progress-text {
+  font-size: 0.72rem;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+}
+
+.aops-tour-popover .driver-popover-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.aops-tour-popover .driver-popover-navigation-btns {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.aops-tour-popover button {
+  font: inherit;
+}
+
+.aops-tour-popover .driver-popover-prev-btn {
+  height: 2rem;
+  padding: 0 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-shadow: none;
+}
+
+.aops-tour-popover .driver-popover-prev-btn:hover {
+  background: var(--bg-soft-strong);
+  border-color: var(--border-strong);
+}
+
+.aops-tour-popover .driver-popover-next-btn {
+  height: 2rem;
+  padding: 0 0.8rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--console-action);
+  background: var(--console-action);
+  color: var(--bg-panel);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-shadow: none;
+}
+
+.aops-tour-popover .driver-popover-next-btn:hover {
+  background: var(--console-action-hover);
+  border-color: var(--console-action-hover);
+}
+
+.aops-tour-popover .driver-popover-close-btn {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+}
+
+.aops-tour-popover .driver-popover-arrow-side-left,
+.aops-tour-popover .driver-popover-arrow-side-right,
+.aops-tour-popover .driver-popover-arrow-side-top,
+.aops-tour-popover .driver-popover-arrow-side-bottom {
+  border-color: var(--bg-panel);
+}
+
+.aops-tour-skip {
+  margin-right: auto;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aops-tour-welcome-card,
+  .aops-tour-path-card {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .aops-tour-replay span {
+    display: none;
+  }
+
+  .aops-tour-welcome-card {
+    padding: 1.25rem 1.1rem 1rem;
+  }
+}

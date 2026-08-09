@@ -94,7 +94,7 @@ Issue the credential from Agents → ${agentLabel} → Connections.`;
       : snippets.codexCommand;
 
   return (
-    <section aria-labelledby="home-connect-title" className="home-connect">
+    <section aria-labelledby="home-connect-title" className="home-connect" data-tour="home-connect">
       <div className="home-connect-bar">
         <div className="home-connect-bar-lead">
           <span aria-hidden="true" className="home-connect-info-mark">i</span>

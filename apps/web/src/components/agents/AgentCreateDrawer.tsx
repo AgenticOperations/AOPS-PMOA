@@ -62,7 +62,12 @@ export function AgentCreateDrawer({
 
   return (
     <>
-      <button className="console-primary-button" onClick={() => handleOpenChange(true)} type="button">
+      <button
+        className="console-primary-button"
+        data-tour="add-agent"
+        onClick={() => handleOpenChange(true)}
+        type="button"
+      >
         <IconPlus aria-hidden="true" size={16} stroke={2} />
         Add agent
       </button>

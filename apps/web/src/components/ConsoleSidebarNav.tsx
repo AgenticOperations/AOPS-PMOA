@@ -50,8 +50,12 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer();
     if (!collapsible || sidebarCollapsed) return;
+    if (typeof document !== 'undefined' && document.documentElement.classList.contains('aops-tour-running')) {
+      return;
+    }
 
     collapseTimerRef.current = setTimeout(() => {
+      if (document.documentElement.classList.contains('aops-tour-running')) return;
       setSidebarCollapsed(true);
     }, SIDEBAR_IDLE_TIMEOUT_MS);
   }, [clearCollapseTimer, collapsible, sidebarCollapsed]);
@@ -60,6 +64,18 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
     scheduleCollapse();
     return clearCollapseTimer;
   }, [clearCollapseTimer, scheduleCollapse]);
+
+  useEffect(() => {
+    function keepExpandedForTour() {
+      if (!document.documentElement.classList.contains('aops-tour-running')) return;
+      clearCollapseTimer();
+      setSidebarCollapsed(false);
+    }
+    keepExpandedForTour();
+    const observer = new MutationObserver(keepExpandedForTour);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, [clearCollapseTimer]);
 
   const registerActivity = useCallback(() => {
     if (!collapsible) return;
@@ -91,6 +107,7 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
             href: `${base}/overview`,
             icon: <IconLayoutDashboard aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Home',
+            tour: 'nav-home',
           },
         ],
       },
@@ -101,11 +118,13 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
             href: `${base}/agents`,
             icon: <IconRobot aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Agents',
+            tour: 'nav-agents',
           },
           {
             href: `${base}/controls`,
             icon: <IconShieldCheck aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Controls',
+            tour: 'nav-controls',
           },
         ],
       },
@@ -116,16 +135,19 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
             href: `${base}/fleet-run`,
             icon: <IconMessageChatbot aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Fleet Run',
+            tour: 'nav-fleet-run',
           },
           {
             href: `${base}/operations`,
             icon: <IconActivity aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Operations',
+            tour: 'nav-operations',
           },
           {
             href: `${base}/approvals`,
             icon: <IconChecks aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Approvals',
+            tour: 'nav-approvals',
           },
         ],
       },
@@ -138,16 +160,19 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       href: `${base}/payments/funding`,
       icon: <IconDatabaseDollar aria-hidden="true" className="nav-icon" {...iconProps} />,
       label: 'Fund',
+      tour: 'nav-fund',
     },
     {
       href: `${base}/payments/empower`,
       icon: <IconKey aria-hidden="true" className="nav-icon" {...iconProps} />,
       label: 'Empower',
+      tour: 'nav-empower',
     },
     {
       href: `${base}/payments/activity`,
       icon: <IconListDetails aria-hidden="true" className="nav-icon" {...iconProps} />,
       label: 'Activity',
+      tour: 'nav-activity',
     },
   ];
 
@@ -188,6 +213,7 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       aria-label="Workspace navigation"
       className={cn('app-sidebar-body', className)}
       data-collapsed={collapsible && sidebarCollapsed}
+      data-tour="nav-sidebar"
       onClick={handleSidebarClick}
       onFocusCapture={registerActivity}
       onKeyDownCapture={registerActivity}
@@ -223,6 +249,7 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
                 <Link
                   aria-current={isActive(item.href) ? 'page' : undefined}
                   className={cn('sidebar-nav-link', isActive(item.href) && 'nav-active')}
+                  data-tour={item.tour}
                   href={item.href}
                   key={item.href}
                   title={item.label}
@@ -242,6 +269,7 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
               <Link
                 aria-current={isActive(item.href) ? 'page' : undefined}
                 className={cn('sidebar-nav-link', isActive(item.href) && 'nav-active')}
+                data-tour={item.tour}
                 href={item.href}
                 key={item.href}
                 title={item.label}
