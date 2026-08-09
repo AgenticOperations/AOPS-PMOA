@@ -256,7 +256,7 @@ describe('TreasuryAgentAccess', () => {
     expect(screen.getByRole('checkbox', { name: /Gateway · Arc/ })).toBeDisabled();
   });
 
-  it('points operators to Marketplace and Activity instead of hiring on Empower', () => {
+  it('points operators to Purchases and Activity instead of hiring on Empower', () => {
     render(
       <TreasuryAgentAccess
         accessAction={async () => {}}
@@ -268,13 +268,13 @@ describe('TreasuryAgentAccess', () => {
       />,
     );
 
-    expect(screen.getByRole('link', { name: /marketplace/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /^Purchases$/i })).toHaveAttribute(
       'href',
       '/app/sample-qa-workspace/marketplace',
     );
-    expect(screen.getByRole('link', { name: /activity/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /^Activity$/i })).toHaveAttribute(
       'href',
-      '/app/sample-qa-workspace/payments/activity?tab=escrow',
+      '/app/sample-qa-workspace/activity?tab=escrow',
     );
     expect(screen.queryByText(/external escrow agents/i)).not.toBeInTheDocument();
   });

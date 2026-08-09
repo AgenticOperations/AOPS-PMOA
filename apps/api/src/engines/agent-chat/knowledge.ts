@@ -4,16 +4,16 @@ AgentOps is a control plane for agentic payments and operations on Arc (and Base
 
 What it does:
 - Host and manage agents in an org (Agents page).
-- Empower agents with payment access, budgets, rails, and wallets (Empower).
+- Grant payment access, budgets, rails, wallets, and draw allowances on each agent Overview → Spend.
 - Enforce policies and approvals (Controls / Policy).
-- Fund the org treasury so agents can pay (Fund / Treasury).
+- Fund the org treasury and set org ceilings (Fund).
 - Discover and hire marketplace services and published agents (Marketplace).
 - Track payment activity and receipts (Activity).
 - MCP tools for developer agents (payment_x402, payment_intra_fleet, etc.) so Cursor/Claude can buy under org policy without holding BUYER_PRIVATE_KEY.
 - Chat with agent: natural-language co-pilot that can answer questions, recommend marketplace listings, create agents, guide policies/funding, and run multi-agent fleets with live payment graphs.
 
 Typical flows:
-1) Create agents → Empower wallets/rails → Fund treasury → Attach policies → Run goals or MCP buys.
+1) Create agents → Grant Spend on agent Overview → Fund treasury → Attach policies → Run goals or MCP buys.
 2) Publish a seller (e.g. arc-nanopayments template) → register identity → appear on marketplace.
 3) Fleet research path: Orchestrator + DataFetcher + Analyst + Writer + SeniorReviewer (Base), with A2A USDC payments when sellers are live.
 

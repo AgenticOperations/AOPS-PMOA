@@ -1,7 +1,11 @@
 import { redirect } from 'next/navigation';
 import { PurchasedMarketplaceView } from '@/components/marketplace/PurchasedMarketplaceView';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
-import { listEscrowJobs, listMarketplaceListings } from '@/lib/server/payments-client';
+import {
+  listEscrowJobs,
+  listMarketplaceListings,
+  listPaymentEvents,
+} from '@/lib/server/payments-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,9 +30,10 @@ export default async function MarketplacePurchasesPage({ params, searchParams }:
     redirect(`/marketplace/${encodeURIComponent(query.listing)}`);
   }
 
-  const [jobs, listings] = await Promise.all([
+  const [jobs, listings, paymentEvents] = await Promise.all([
     listEscrowJobs(org.id).catch(() => []),
     listMarketplaceListings(org.id).catch(() => []),
+    listPaymentEvents(org.id, 100).catch(() => []),
   ]);
 
   return (
@@ -36,6 +41,7 @@ export default async function MarketplacePurchasesPage({ params, searchParams }:
       jobs={jobs}
       listings={listings}
       orgSlug={org.slug}
+      paymentEvents={paymentEvents}
     />
   );
 }

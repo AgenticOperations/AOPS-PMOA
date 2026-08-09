@@ -6927,6 +6927,14 @@ html[data-theme="dark"] .sidebar-brand-logo {
   min-width: 0;
 }
 
+.purchases-header-trail {
+  margin: 0;
+  max-width: 22rem;
+  text-align: right;
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+
 .registry-eyebrow {
   margin: 0 0 6px;
   color: var(--accent-ink);
@@ -7323,6 +7331,11 @@ html[data-theme="dark"] .sidebar-brand-logo {
     align-items: flex-start;
     flex-direction: column;
     margin-bottom: 20px;
+  }
+
+  .purchases-header-trail {
+    max-width: none;
+    text-align: left;
   }
 
   .registry-page-header h1 {
@@ -9376,10 +9389,147 @@ html[data-theme="dark"] .sidebar-brand-logo {
   margin-top: 31px;
 }
 
+.agent-overview-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
+  gap: 28px 40px;
+  align-items: start;
+  margin-top: 31px;
+}
+
+.agent-overview-primary,
+.agent-overview-aside {
+  min-width: 0;
+  display: grid;
+  gap: 28px;
+}
+
+.agent-overview-aside .agent-detail-section {
+  padding-bottom: 4px;
+}
+
+.agent-overview-identity > div {
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.agent-overview-identity-desc dd {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.agent-aside-muted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.agent-reputation-compact .reputation-history-list {
+  margin-top: 4px;
+}
+
 .agent-detail-section,
 .agent-record-section,
 .agent-history-canvas {
   min-width: 0;
+}
+
+.agent-spend-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.agent-spend-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.agent-spend-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-spend-metrics {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.agent-spend-metrics > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+
+.agent-spend-metrics dt {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.agent-spend-metrics dd {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 560;
+}
+
+.agent-spend-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-spend-progress-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.agent-spend-progress-track i {
+  display: block;
+  height: 100%;
+  background: var(--accent-blue);
+}
+
+.agent-spend-progress p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.agent-spend-allowances {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.agent-spend-allowances-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-spend-allowances-label h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 550;
+}
+
+.agent-allowance-drawer {
+  display: grid;
+  gap: 14px;
 }
 
 .agent-section-heading {
@@ -10020,8 +10170,13 @@ html[data-theme="dark"] .sidebar-brand-logo {
 }
 
 @media (max-width: 1050px) {
-  .agent-detail-canvas {
+  .agent-detail-canvas,
+  .agent-overview-layout {
     grid-template-columns: 1fr;
+  }
+
+  .agent-spend-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .agent-identity-band {
@@ -15737,6 +15892,21 @@ html[data-theme="dark"] a.home-connect-toggle {
   margin-top: 28px;
   padding-top: 20px;
   border-top: 1px solid var(--border-subtle);
+}
+
+.agent-overview-primary .trust-graduation-section {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.agent-overview-primary .trust-graduation-heading h2 {
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.agent-overview-primary .trust-graduation-heading p {
+  font-size: 0.8125rem;
 }
 
 .trust-graduation-heading {

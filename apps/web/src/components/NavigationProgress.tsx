@@ -9,15 +9,20 @@
  * Strategy (App Router has no router event bus):
  *   • document-level capture click listener → start bar on same-origin
  *     in-app navigations (ignore modified clicks / new tabs).
- *   • usePathname() → route settled; complete and hide the bar.
+ *   • history pushState/replaceState + popstate + usePathname → route
+ *     committed; complete and hide (pathname alone can lag while the bar
+ *     looks frozen at the soft cap).
  *   • safety timeout → hide if navigation never settles.
  */
 
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef } from 'react';
 
-const CRAWL_TARGET = 85;
-const SAFETY_MS = 10_000;
+const SOFT_CAP = 98;
+const SAFETY_MS = 8_000;
+const FINISH_WIDTH_MS = 120;
+const FINISH_HOLD_MS = 80;
+const FADE_MS = 160;
 
 export function NavigationProgress() {
   const pathname = usePathname();
@@ -29,6 +34,8 @@ export function NavigationProgress() {
   const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPathname = useRef(pathname);
   const active = useRef(false);
+  const finishing = useRef(false);
+  const startedAtPath = useRef(pathname);
 
   function clearTimers() {
     if (rafRef.current !== null) {
@@ -66,6 +73,7 @@ export function NavigationProgress() {
 
   function hideTrack() {
     active.current = false;
+    finishing.current = false;
     clearTimers();
     if (!trackRef.current || !barRef.current) return;
     trackRef.current.style.opacity = '0';
@@ -76,23 +84,31 @@ export function NavigationProgress() {
 
   function runAnimation() {
     const step = () => {
-      if (!active.current) return;
+      if (!active.current || finishing.current) return;
       const current = getWidth();
-      if (current >= CRAWL_TARGET) return;
-      const delta = (CRAWL_TARGET - current) * 0.04;
-      setWidth(Math.min(CRAWL_TARGET, current + Math.max(delta, 0.3)));
+      if (current >= SOFT_CAP) return;
+
+      // Fast early, then a continuous trickle so the bar never looks frozen
+      // near the end while RSC navigation is still in flight.
+      let delta: number;
+      if (current < 40) delta = 2.4;
+      else if (current < 70) delta = 1.1;
+      else if (current < 90) delta = 0.35;
+      else delta = 0.08;
+
+      setWidth(Math.min(SOFT_CAP, current + delta));
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
   }
 
   function finishAnimation() {
-    if (!active.current) return;
+    if (!active.current || finishing.current) return;
+    finishing.current = true;
     clearTimers();
 
     if (barRef.current) {
-      // Animate only the finish + fade, not every rAF tick.
-      barRef.current.style.transition = 'width 180ms ease-out, opacity 280ms ease';
+      barRef.current.style.transition = `width ${FINISH_WIDTH_MS}ms ease-out, opacity ${FADE_MS}ms ease`;
       barRef.current.style.width = '100%';
       barRef.current.style.opacity = '1';
     }
@@ -103,20 +119,25 @@ export function NavigationProgress() {
       if (trackRef.current) trackRef.current.style.opacity = '0';
       hideTimer.current = setTimeout(() => {
         hideTrack();
-      }, 300);
-    }, 180);
+      }, FADE_MS + 20);
+    }, FINISH_WIDTH_MS + FINISH_HOLD_MS);
   }
 
   function startAnimation() {
+    if (finishing.current) {
+      hideTrack();
+    }
     clearTimers();
     active.current = true;
+    finishing.current = false;
+    startedAtPath.current = window.location.pathname;
     setWidth(0);
     showTrack();
 
     startTimer.current = setTimeout(() => {
       startTimer.current = null;
-      if (!active.current) return;
-      setWidth(8);
+      if (!active.current || finishing.current) return;
+      setWidth(12);
       runAnimation();
     }, 16);
 
@@ -166,7 +187,37 @@ export function NavigationProgress() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Finish when the route settles.
+  // Finish as soon as the URL commits (often earlier than usePathname).
+  useEffect(() => {
+    const { pushState, replaceState } = window.history;
+
+    function onUrlCommit() {
+      if (!active.current || finishing.current) return;
+      if (window.location.pathname === startedAtPath.current) return;
+      finishAnimation();
+    }
+
+    function wrap(method: typeof pushState) {
+      return function patched(this: History, ...args: Parameters<typeof pushState>) {
+        const result = method.apply(this, args);
+        queueMicrotask(onUrlCommit);
+        return result;
+      };
+    }
+
+    window.history.pushState = wrap(pushState);
+    window.history.replaceState = wrap(replaceState);
+    window.addEventListener('popstate', onUrlCommit);
+
+    return () => {
+      window.history.pushState = pushState;
+      window.history.replaceState = replaceState;
+      window.removeEventListener('popstate', onUrlCommit);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Finish when the route settles (backup if history hooks miss).
   useEffect(() => {
     if (pathname === prevPathname.current) return;
     prevPathname.current = pathname;

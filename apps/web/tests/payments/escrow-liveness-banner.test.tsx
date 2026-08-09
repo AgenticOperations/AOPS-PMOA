@@ -26,7 +26,7 @@ describe('EscrowLivenessBanner', () => {
     render(<EscrowLivenessBanner atRisk={[jobExpiringIn2h]} orgSlug="demo" />);
     expect(screen.getByRole('link', { name: /escrow_5/i })).toHaveAttribute(
       'href',
-      '/app/demo/payments/activity?tab=escrow',
+      '/app/demo/activity?tab=escrow',
     );
   });
 

@@ -1217,7 +1217,7 @@ export function registerPaymentRoutes(app: FastifyInstance, deps: RegisterPaymen
         throw new IdentityError(
           'provider_wallet_missing',
           400,
-          'Published provider agent has no active wallet on this chain. Provision payment access in Empower first.',
+          'Published provider agent has no active wallet on this chain. Grant payment access on the agent Overview → Spend first.',
         );
       }
       providerAddress = wallet.address;

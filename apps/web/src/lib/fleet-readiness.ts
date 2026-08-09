@@ -6,7 +6,7 @@ function agentsListHref(orgSlug: string): string {
 }
 
 function empowerAccessHref(orgSlug: string): string {
-  return `/app/${orgSlug}/payments/empower?tab=access`;
+  return `/app/${orgSlug}/agents`;
 }
 
 function fundHref(orgSlug: string): string {
@@ -91,8 +91,8 @@ export function fleetFixLinks(orgSlug: string, readiness: FleetReadiness): reado
   if (readiness.needsWalletNames.length > 0 || readiness.missingNames.length > 0) {
     links.push({
       href: empowerAccessHref(orgSlug),
-      label: 'Empower wallets',
-      detail: 'Enable payment access so each fleet agent gets an active chain wallet',
+      label: 'Grant spend on agents',
+      detail: 'Open each fleet agent → Overview → Spend to enable payment access and wallets',
     });
   }
   links.push({
@@ -115,8 +115,8 @@ export function fleetErrorFixLinks(orgSlug: string, message: string, code: strin
     });
     links.push({
       href: empowerAccessHref(orgSlug),
-      label: 'Empower',
-      detail: 'After create, enable payment access so wallets become active',
+      label: 'Agent Spend',
+      detail: 'After create, grant payment access on each agent Overview',
     });
     links.push({
       href: '/chat',
@@ -149,8 +149,8 @@ export function fleetErrorFixLinks(orgSlug: string, message: string, code: strin
     });
     links.push({
       href: empowerAccessHref(orgSlug),
-      label: 'Empower',
-      detail: 'Payment access and wallets',
+      label: 'Agent Spend',
+      detail: 'Payment access and draw allowances on each agent',
     });
   }
 

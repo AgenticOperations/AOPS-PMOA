@@ -8,14 +8,13 @@ import {
   IconActivity,
   IconChecks,
   IconDatabaseDollar,
-  IconKey,
   IconLayoutDashboard,
   IconListDetails,
   IconLogout,
-  IconMessageChatbot,
   IconRobot,
   IconSettings,
   IconShieldCheck,
+  IconShoppingBag,
 } from '@tabler/icons-react';
 import type { Org } from '@/lib/identity-spine-types';
 import { cn } from '@/lib/utils';
@@ -121,6 +120,12 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
             tour: 'nav-agents',
           },
           {
+            href: `${base}/marketplace`,
+            icon: <IconShoppingBag aria-hidden="true" className="nav-icon" {...iconProps} />,
+            label: 'Purchases',
+            tour: 'nav-purchases',
+          },
+          {
             href: `${base}/controls`,
             icon: <IconShieldCheck aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Controls',
@@ -131,7 +136,6 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       {
         label: 'Runtime',
         items: [
-          
           {
             href: `${base}/operations`,
             icon: <IconActivity aria-hidden="true" className="nav-icon" {...iconProps} />,
@@ -143,6 +147,12 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
             icon: <IconChecks aria-hidden="true" className="nav-icon" {...iconProps} />,
             label: 'Approvals',
             tour: 'nav-approvals',
+          },
+          {
+            href: `${base}/activity`,
+            icon: <IconListDetails aria-hidden="true" className="nav-icon" {...iconProps} />,
+            label: 'Activity',
+            tour: 'nav-activity',
           },
         ],
       },
@@ -157,18 +167,6 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       label: 'Fund',
       tour: 'nav-fund',
     },
-    {
-      href: `${base}/payments/empower`,
-      icon: <IconKey aria-hidden="true" className="nav-icon" {...iconProps} />,
-      label: 'Empower',
-      tour: 'nav-empower',
-    },
-    {
-      href: `${base}/payments/activity`,
-      icon: <IconListDetails aria-hidden="true" className="nav-icon" {...iconProps} />,
-      label: 'Activity',
-      tour: 'nav-activity',
-    },
   ];
 
   const isActive = (href: string) => {
@@ -180,11 +178,8 @@ export function ConsoleSidebarNav({ className, collapsible = true, onNavigate, o
       return pathname === href
         || pathname === `${base}/payments`
         || pathname.startsWith(`${base}/payments/sources`)
-        || pathname.startsWith(`${base}/payments/liquidity`);
-    }
-
-    if (href === `${base}/payments/empower`) {
-      return pathname === href
+        || pathname.startsWith(`${base}/payments/liquidity`)
+        || pathname.startsWith(`${base}/payments/empower`)
         || pathname.startsWith(`${base}/payments/agent-access`)
         || pathname.startsWith(`${base}/payments/delegations`);
     }

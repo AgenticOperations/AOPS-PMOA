@@ -82,7 +82,7 @@ export function agentsListHref(orgSlug: string): string {
 }
 
 export function empowerAccessHref(orgSlug: string): string {
-  return `/app/${orgSlug}/payments/empower?tab=access`;
+  return `/app/${orgSlug}/agents`;
 }
 
 export function fundHref(orgSlug: string): string {
@@ -90,5 +90,5 @@ export function fundHref(orgSlug: string): string {
 }
 
 export function activityEscrowHref(orgSlug: string): string {
-  return `/app/${orgSlug}/payments/activity?tab=escrow`;
+  return `/app/${orgSlug}/activity?tab=escrow`;
 }

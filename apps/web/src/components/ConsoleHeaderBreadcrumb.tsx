@@ -8,6 +8,7 @@ const LABELS = {
   marketplace: 'Purchases',
   controls: 'Controls',
   operations: 'Operations',
+  activity: 'Activity',
   payments: 'Treasury',
   approvals: 'Approvals',
   settings: 'Settings',
@@ -20,6 +21,7 @@ export function resolveConsoleSection(pathname: string): ConsoleSection {
   if (pathname.includes('/agents')) return 'agents';
   if (pathname.includes('/controls')) return 'controls';
   if (pathname.includes('/operations')) return 'operations';
+  if (pathname.includes('/activity')) return 'activity';
   if (pathname.includes('/payments')) return 'payments';
   if (pathname.includes('/approvals')) return 'approvals';
   if (pathname.includes('/settings')) return 'settings';

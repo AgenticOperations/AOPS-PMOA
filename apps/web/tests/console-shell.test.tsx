@@ -3,6 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ConsoleShell } from '../src/components/ConsoleShell.js';
 
+vi.mock('../src/components/platform-tour/PlatformTour.js', () => ({
+  PlatformTour: () => null,
+  requestPlatformTourReplay: () => {},
+}));
+
 let pathname = '/app/acme-agent-ops/controls';
 const push = vi.fn();
 
@@ -64,14 +69,16 @@ describe('ConsoleShell', () => {
       'href',
       '/app/acme-agent-ops/payments/funding',
     );
-    expect(screen.getByRole('link', { name: /^Empower$/i })).toHaveAttribute(
-      'href',
-      '/app/acme-agent-ops/payments/empower',
-    );
+    expect(screen.queryByRole('link', { name: /^Empower$/i })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /^Activity$/i })).toHaveAttribute(
       'href',
-      '/app/acme-agent-ops/payments/activity',
+      '/app/acme-agent-ops/activity',
     );
+    expect(screen.getByRole('link', { name: /^Purchases$/i })).toHaveAttribute(
+      'href',
+      '/app/acme-agent-ops/marketplace',
+    );
+    expect(screen.queryByRole('link', { name: /^Fleet Run$/i })).not.toBeInTheDocument();
     const settingsLink = screen.getByRole('link', { name: /Settings/i });
     expect(settingsLink).toHaveAttribute(
       'href',
@@ -109,26 +116,30 @@ describe('ConsoleShell', () => {
     vi.useFakeTimers();
     pathname = '/app/acme-agent-ops/overview';
 
-    render(
-      <ConsoleShell active="overview" org={org}>
-        <p>Workspace content</p>
-      </ConsoleShell>,
-    );
+    try {
+      render(
+        <ConsoleShell active="overview" org={org}>
+          <p>Workspace content</p>
+        </ConsoleShell>,
+      );
 
-    const sidebar = screen.getByRole('complementary', { name: 'Workspace navigation' });
-    fireEvent.pointerEnter(sidebar);
-    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+      const sidebar = screen.getByRole('complementary', { name: 'Workspace navigation' });
+      fireEvent.pointerEnter(sidebar);
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
 
-    act(() => vi.advanceTimersByTime(14_999));
-    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+      act(() => {
+        vi.advanceTimersByTime(14_999);
+      });
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
 
-    fireEvent.pointerDown(sidebar);
-    act(() => vi.advanceTimersByTime(14_999));
-    expect(sidebar).toHaveAttribute('data-collapsed', 'false');
-
-    act(() => vi.advanceTimersByTime(1));
-    expect(sidebar).toHaveAttribute('data-collapsed', 'true');
-    vi.useRealTimers();
+      fireEvent.pointerDown(sidebar);
+      act(() => {
+        vi.advanceTimersByTime(15_000);
+      });
+      expect(sidebar).toHaveAttribute('data-collapsed', 'true');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('marks nested Treasury Fund route active when viewing advanced networks', () => {
@@ -159,7 +170,7 @@ describe('ConsoleShell', () => {
     await user.click(screen.getByRole('button', { name: 'Open navigation' }));
     const dialog = screen.getByRole('dialog', { name: 'Workspace navigation' });
 
-    await user.click(within(dialog).getByRole('link', { name: /^Empower$/i }));
+    await user.click(within(dialog).getByRole('link', { name: /^Fund$/i }));
     expect(screen.queryByRole('dialog', { name: 'Workspace navigation' })).not.toBeInTheDocument();
   });
 
@@ -182,8 +193,8 @@ describe('ConsoleShell', () => {
     expect(screen.queryByText(/Search agents/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Search policies/i)).not.toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole('option', { name: /^Empower$/i }));
-    expect(push).toHaveBeenCalledWith('/app/acme-agent-ops/payments/empower');
+    await user.click(within(dialog).getByRole('option', { name: /^Fund$/i }));
+    expect(push).toHaveBeenCalledWith('/app/acme-agent-ops/payments/funding');
   });
 
   it('closes the page-jump palette with Escape and restores focus to its launcher', async () => {

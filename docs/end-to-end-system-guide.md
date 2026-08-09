@@ -139,16 +139,15 @@ What a human can do in the product today — the console index behind the money 
 | Nav / surface | Plain English |
 |---|---|
 | **Home** (`overview`) | Kickstart: connect checklist + copyable agent prompt (`/llms.txt` + invite). Not a place to paste raw MCP JSON forever. |
-| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (policy bind, Publish tab, wallet). Roster + detail show **payment-gated reputation** on a **0–100** scale (capped). Chat agents must ask for display `agent_name` before redeem. |
-| **Controls** | Policy authoring / binding — allow, deny, observe, require approval, rate limits. |
-| **Fleet Run** | Guided multi-agent research run (checklist → real payments → brief + receipts). |
-| **Operations** | Runtime / operation visibility for non-payment actions. |
-| **Approvals** | Human inbox when policy says `require approval` (e.g. Base hire). Approve → agent `approval_consume` → retry. |
-| **Fund** | Treasury + allocate USDC into per-agent DCW wallets (ceilings / gas reserve). |
-| **Empower** | Payment access toggles, caps, budgets, Permit2 delegations / destination allowlists. **Access tab** also hosts escrow → Permit2 **trust graduation** (review counterparty escrow record → set ceiling → Trust / Revoke). |
-| **Activity** | Payment and governance trail (decision ids, rails, explorer hashes). |
+| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (**Spend** + **Escrow → Permit2 trust** on Overview; policy bind; Publish tab; wallet). Roster + detail show **payment-gated reputation** on a **0–100** scale (capped). Chat agents must ask for display `agent_name` before redeem. Per-agent runtime / configuration history stays on the agent page. |
+| **Purchases** (`marketplace`) | Org escrow hire history (sidebar Identity). Overlaps Activity → Escrow for the payment trail. |
+| **Controls** | Policy authoring / binding — allow, deny, observe, require approval, rate limits. Policy **change log** also appears under Activity → Policy. |
+| **Operations** | Tools, rate limits, and runtime decision tools. Historical decisions also under Activity → Decisions. |
+| **Approvals** | Human inbox when policy says `require approval` (e.g. Base hire). Approve → agent `approval_consume` → retry. Resolved history also under Activity → Approvals. |
+| **Activity** (`/activity`) | Org-wide hub (Runtime sidebar): payments, routing, reservations, provider jobs, escrow, audit, decisions, approvals, policy changes — with filters. Legacy `/payments/activity` redirects here. |
+| **Fund** | Org ceilings (top), treasury deposit, balances. Per-agent budgets, draw allowances, and escrow → Permit2 trust live on each **agent Overview**. |
 | **Marketplace** (`/marketplace`) | Org-governed discovery: curated demo sellers + **published** agents (`public_endpoint_url`). Hire via x402 (after payTo authorize) or ERC-8183 escrow. Not a clone of agents.circle.com. |
-| **Chat** (`/chat`) | NLP operator chat — product Q&A, marketplace recommend, Fleet Run goals. |
+| **Chat** (`/chat`) | NLP operator chat — product Q&A, marketplace recommend, multi-agent research goals (replaces the old console Fleet Run page; `/app/{org}/fleet-run` redirects here). |
 | **Landing** | Human mode (marketing / sign-in) vs Agent mode (`/?audience=agent`) structured cold-start pointing at `/llms.txt`. |
 
 ### Agent entry (shipped)
@@ -361,9 +360,9 @@ Easy human surface: type a goal in natural language; AgentOps drives real org ac
 | “Recommend marketplace services” | Listing cards → open hire |
 | “Create 3 agents for research” | Propose → **confirm** → create agents |
 | Fund / policy questions | Answers + deep links into console |
-| Research / fleet goal | **Fleet Run**: checklist → real payments → brief + receipts |
+| Research / fleet goal | **Chat with agent** (`/chat`): multi-agent goals, payments, brief + receipts |
 
-**Where:** [`/chat`](../apps/web/src/app/chat/page.tsx). Also console **Fleet Run** (`/app/{org}/fleet-run`) — see [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) Part B.
+**Where:** [`/chat`](../apps/web/src/app/chat/page.tsx). Legacy console `/app/{org}/fleet-run` redirects to Chat — see [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) Part B.
 
 #### C. Optional later (Mode B — only if you want to *sell* work)
 
@@ -795,4 +794,4 @@ Master acceptance table: [`docs/spike-results.md` § Acceptance artifacts](spike
 
 ---
 
-*Last updated 2026-08-09 (mother-doc preamble, §2a extraction, §3a feature map, §7.3 join/publish status corrected). When you add a new live proof, append it to `docs/spike-results.md` first, then mirror the explorer link here.*
+*Last updated 2026-08-10 (Activity hub at `/activity`, Purchases in sidebar, Fleet Run console page retired → `/chat`). When you add a new live proof, append it to `docs/spike-results.md` first, then mirror the explorer link here.*

@@ -44,7 +44,6 @@ export function DelegationList({ orgSlug, delegations }: Props) {
         <thead>
           <tr>
             <th>Source</th>
-            <th>Agent</th>
             <th>Chain</th>
             <th>Cap</th>
             <th>Left</th>
@@ -60,7 +59,6 @@ export function DelegationList({ orgSlug, delegations }: Props) {
                   ? 'Treasury'
                   : shortAddress(delegation.payerAddress)}
               </td>
-              <td>{delegation.payeeAgentId ?? shortAddress(delegation.payeeAddress)}</td>
               <td>{delegation.chain}</td>
               <td>{delegation.ceilingUsdc}</td>
               <td>{delegation.remainingUsdc}</td>

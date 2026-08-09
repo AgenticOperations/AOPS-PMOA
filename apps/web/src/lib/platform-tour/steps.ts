@@ -17,7 +17,7 @@ const ALL_STEPS: readonly PlatformTourStep[] = [
     id: 'agents',
     title: 'Agents are identities',
     description:
-      'Every agent lives here — create one, then give it credentials, policies, and (optionally) a public endpoint.',
+      'Every agent lives here — create one, then grant Spend on Overview (payment access, budgets, draw allowances), plus credentials and policies.',
     element: '[data-tour="nav-agents"]',
     side: 'right',
   },
@@ -42,17 +42,8 @@ const ALL_STEPS: readonly PlatformTourStep[] = [
     id: 'fund',
     title: 'Fund the treasury',
     description:
-      'Deposit USDC to the org treasury — or skip deposit and use your own wallet path into Empower.',
+      'Deposit USDC and set org ceilings on Fund. Per-agent budgets and draw allowances live on each agent’s Overview → Spend.',
     element: '[data-tour="nav-fund"]',
-    side: 'right',
-    paths: ['publish', 'explore'],
-  },
-  {
-    id: 'empower',
-    title: 'Empower spend rails',
-    description:
-      'Grant agents access, ceilings, and delegations so they can pay under policy — not with unbounded wallets.',
-    element: '[data-tour="nav-empower"]',
     side: 'right',
     paths: ['publish', 'explore'],
   },
@@ -76,7 +67,7 @@ const ALL_STEPS: readonly PlatformTourStep[] = [
     id: 'done',
     title: 'You’re free to explore',
     description:
-      'Create → policy → credential → fund → publish → hire. Replay this story anytime from the header. Nothing is required.',
+      'Create → policy → credential → fund → grant spend on agent → publish → hire. Replay anytime from the header.',
     element: '[data-tour="nav-home"]',
     side: 'right',
   },

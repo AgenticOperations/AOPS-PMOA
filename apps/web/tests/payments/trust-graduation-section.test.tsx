@@ -14,6 +14,14 @@ describe('TrustGraduationSection', () => {
     expect(screen.getByRole('link', { name: /marketplace/i })).toBeTruthy();
   });
 
+  it('scopes empty-state copy to the paying agent when provided', () => {
+    render(
+      <TrustGraduationSection agentName="Writer" orgId="org_1" orgSlug="demo" targets={[]} />,
+    );
+    expect(screen.getByText('Writer')).toBeTruthy();
+    expect(screen.getByText(/as the paying agent/i)).toBeTruthy();
+  });
+
   it('renders a trust panel for each counterparty', () => {
     render(
       <TrustGraduationSection

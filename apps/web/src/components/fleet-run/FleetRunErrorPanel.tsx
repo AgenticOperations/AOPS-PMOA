@@ -22,6 +22,8 @@ function linksForError(orgSlug: string, message: string, code: string | null): r
     links.push({ match: 'Agents', href: `${agentsListHref(orgSlug)}?setup=fleet` });
   }
   if (lower.includes('empower') || lower.includes('wallet') || lower.includes('payment access')) {
+    links.push({ match: 'Spend', href: empowerAccessHref(orgSlug) });
+    links.push({ match: 'Agents', href: empowerAccessHref(orgSlug) });
     links.push({ match: 'Empower', href: empowerAccessHref(orgSlug) });
   }
   if (lower.includes('fund') || lower.includes('treasury')) {

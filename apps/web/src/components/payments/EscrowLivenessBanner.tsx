@@ -35,12 +35,12 @@ export function EscrowLivenessBanner({ atRisk, orgSlug }: Props) {
         If the evaluator window closes without a decision, the provider that delivered the work is
         the one who loses — <code>claimRefund</code> pays the budget back to the client, not the
         provider. Review on{' '}
-        <a href={`/app/${orgSlug}/payments/activity?tab=escrow`}>Activity → Escrow</a>.
+        <a href={`/app/${orgSlug}/activity?tab=escrow`}>Activity → Escrow</a>.
       </p>
       <ul>
         {atRisk.map((risk) => (
           <li key={risk.escrowJobId}>
-            <a href={`/app/${orgSlug}/payments/activity?tab=escrow`}>{risk.escrowJobId}</a>
+            <a href={`/app/${orgSlug}/activity?tab=escrow`}>{risk.escrowJobId}</a>
             {' — '}
             {timeRemaining(risk.expiresAt)}
           </li>

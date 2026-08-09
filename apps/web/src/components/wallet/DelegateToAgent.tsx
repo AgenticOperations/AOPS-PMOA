@@ -26,6 +26,8 @@ type Props = {
   readonly orgSlug: string;
   readonly agents: readonly Agent[];
   readonly agentWallets: readonly AgentWallet[];
+  /** When set, agent picker is hidden and this payee is used. */
+  readonly lockedAgentId?: string;
 };
 
 type Step = 'idle' | 'approving' | 'signing' | 'recording' | 'done';
@@ -34,7 +36,7 @@ type Step = 'idle' | 'approving' | 'signing' | 'recording' | 'done';
  * Non-custodial Permit2 grant from the operator wallet.
  * Spender = agent wallet on the selected chain — only those agents are listed.
  */
-export function DelegateToAgent({ orgSlug, agents, agentWallets }: Props) {
+export function DelegateToAgent({ orgSlug, agents, agentWallets, lockedAgentId }: Props) {
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
@@ -54,10 +56,14 @@ export function DelegateToAgent({ orgSlug, agents, agentWallets }: Props) {
       && wallet.status === 'active',
   ));
 
-  const [preferredAgentId, setPreferredAgentId] = useState('');
-  const agentId = eligible.some((agent) => agent.id === preferredAgentId)
-    ? preferredAgentId
-    : eligible[0]?.id ?? '';
+  const [preferredAgentId, setPreferredAgentId] = useState(lockedAgentId ?? '');
+  const agentId = lockedAgentId !== undefined && lockedAgentId.length > 0
+    ? (eligible.some((agent) => agent.id === lockedAgentId) ? lockedAgentId : '')
+    : eligible.some((agent) => agent.id === preferredAgentId)
+      ? preferredAgentId
+      : eligible[0]?.id ?? '';
+  const locked = lockedAgentId !== undefined && lockedAgentId.length > 0;
+  const lockedName = agents.find((agent) => agent.id === lockedAgentId)?.name;
 
   const targetChainId = CHAIN_ID_BY_KEY[chainKey];
   const token = USDC_ADDRESS[chainKey];
@@ -185,26 +191,38 @@ export function DelegateToAgent({ orgSlug, agents, agentWallets }: Props) {
       </div>
 
       <div className="delegation-form-grid">
-        <label className="treasury-field-stack">
-          <span className="treasury-field-label">Agent</span>
-          <select
-            className={FIELD_CLASS}
-            disabled={eligible.length === 0}
-            onChange={(event) => setPreferredAgentId(event.target.value)}
-            value={agentId}
-          >
-            {eligible.length === 0
-              ? <option value="">No wallet on this chain</option>
-              : eligible.map((agent) => (
-                <option key={agent.id} value={agent.id}>{agent.name}</option>
-              ))}
-          </select>
-          {eligible.length === 0 ? (
-            <span className="delegation-form-meta is-warn">
-              Grant Access on {CHAIN_LABELS[chainKey]} first — Permit2 names that wallet as spender.
-            </span>
-          ) : null}
-        </label>
+        {locked ? (
+          <div className="treasury-field-stack">
+            <span className="treasury-field-label">Agent</span>
+            <span className="delegation-form-meta">{lockedName ?? lockedAgentId}</span>
+            {agentId === '' ? (
+              <span className="delegation-form-meta is-warn">
+                No active wallet on {CHAIN_LABELS[chainKey]} yet. Grant payment access for this chain first.
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <label className="treasury-field-stack">
+            <span className="treasury-field-label">Agent</span>
+            <select
+              className={FIELD_CLASS}
+              disabled={eligible.length === 0}
+              onChange={(event) => setPreferredAgentId(event.target.value)}
+              value={agentId}
+            >
+              {eligible.length === 0
+                ? <option value="">No wallet on this chain</option>
+                : eligible.map((agent) => (
+                  <option key={agent.id} value={agent.id}>{agent.name}</option>
+                ))}
+            </select>
+            {eligible.length === 0 ? (
+              <span className="delegation-form-meta is-warn">
+                Grant payment access on {CHAIN_LABELS[chainKey]} first — Permit2 names that wallet as spender.
+              </span>
+            ) : null}
+          </label>
+        )}
 
         <label className="treasury-field-stack">
           <span className="treasury-field-label">Chain</span>

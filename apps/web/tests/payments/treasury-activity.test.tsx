@@ -52,5 +52,9 @@ describe('TreasuryActivity', () => {
     );
 
     expect(screen.getByText('No payments yet')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Decisions' })).toHaveAttribute(
+      'href',
+      '/app/sample-qa-workspace/activity?tab=decisions',
+    );
   });
 });

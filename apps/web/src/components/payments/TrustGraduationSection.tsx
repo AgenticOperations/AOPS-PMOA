@@ -15,15 +15,24 @@ type TrustGraduationSectionProps = {
   readonly orgId: string;
   readonly orgSlug: string;
   readonly targets: readonly TrustGraduationTarget[];
+  /** When set, empty-state copy points at this agent as the escrow payer. */
+  readonly agentName?: string;
 };
 
 /**
- * Escrow → Permit2 graduation for external counterparties this org has hired.
- * Mounted on Empower (Access). Promotion is always a human act with an explicit ceiling.
+ * Escrow → Permit2 graduation for external counterparties this agent hired.
+ * Mounted on agent Overview. Promotion is always a human act with an explicit ceiling.
  */
-export function TrustGraduationSection({ orgId, orgSlug, targets }: TrustGraduationSectionProps) {
+export function TrustGraduationSection({
+  orgId,
+  orgSlug,
+  targets,
+  agentName,
+}: TrustGraduationSectionProps) {
+  const scoped = agentName !== undefined && agentName.length > 0;
+
   return (
-    <section aria-labelledby="trust-graduation-title" className="trust-graduation-section">
+    <section aria-labelledby="trust-graduation-title" className="trust-graduation-section agent-detail-section">
       <div className="trust-graduation-heading">
         <div>
           <h2 id="trust-graduation-title">Escrow → Permit2 trust</h2>
@@ -40,11 +49,24 @@ export function TrustGraduationSection({ orgId, orgSlug, targets }: TrustGraduat
         <div className="treasury-empty-state">
           <strong>No escrow counterparties yet</strong>
           <p>
-            Hire an external agent via{' '}
-            <Link className="action-nav-link" href={`/app/${orgSlug}/marketplace`}>
-              Marketplace
-            </Link>{' '}
-            with escrow. Completed jobs appear here so you can trust them onto Permit2.
+            {scoped ? (
+              <>
+                Hire an external agent from{' '}
+                <Link className="action-nav-link" href={`/app/${orgSlug}/marketplace`}>
+                  Marketplace
+                </Link>{' '}
+                using <strong>{agentName}</strong> as the paying agent. Completed jobs appear here so you can
+                trust them onto Permit2.
+              </>
+            ) : (
+              <>
+                Hire an external agent via{' '}
+                <Link className="action-nav-link" href={`/app/${orgSlug}/marketplace`}>
+                  Marketplace
+                </Link>{' '}
+                with escrow. Completed jobs appear here so you can trust them onto Permit2.
+              </>
+            )}
           </p>
         </div>
       ) : (

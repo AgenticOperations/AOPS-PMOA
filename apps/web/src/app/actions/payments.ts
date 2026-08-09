@@ -45,7 +45,7 @@ function friendlyMarketplaceHireError(error: unknown, fallback: string): string 
     || message.includes('escrow_client_wallet_not_found')
     || message.includes('provider_wallet_missing')
   ) {
-    return 'Paying agent has no active wallet on this chain. Enable payment access in Empower, wait until the wallet is active, then retry.';
+    return 'Paying agent has no active wallet on this chain. Grant payment access on the agent Overview → Spend, wait until the wallet is active, then retry.';
   }
   if (
     code === 'escrow_client_wallet_unfunded'
@@ -112,6 +112,7 @@ function paymentsPath(orgSlug: string): string {
  */
 function revalidatePayments(orgSlug: string): void {
   revalidatePath(paymentsPath(orgSlug), 'layout');
+  revalidatePath(`/app/${orgSlug}/agents`, 'layout');
 }
 
 function stringField(formData: FormData, key: string): string {
@@ -390,7 +391,7 @@ export async function hireMarketplaceEscrowAction(
       description: formData.get('description')?.toString().trim() || undefined,
     });
     revalidatePath(`/app/${orgSlug}/marketplace`, 'page');
-    revalidatePath(`/app/${orgSlug}/payments/activity`, 'page');
+    revalidatePath(`/app/${orgSlug}/activity`, 'page');
     revalidatePath('/marketplace', 'layout');
     revalidatePayments(orgSlug);
     return {

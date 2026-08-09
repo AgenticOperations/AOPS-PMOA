@@ -257,7 +257,7 @@ export function AgenticChatWorkspace({ orgId, orgSlug }: AgenticChatWorkspacePro
               <button className="fleet-run-secondary" disabled={busy} onClick={reset} type="button">
                 New chat
               </button>
-              <Link className="achat-text-link" href={`/app/${orgSlug}/payments/activity`}>
+              <Link className="achat-text-link" href={`/app/${orgSlug}/activity`}>
                 Activity
               </Link>
               <Link className="achat-text-link" href="/marketplace">

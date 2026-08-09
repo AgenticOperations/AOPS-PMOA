@@ -65,7 +65,7 @@ export function FundingHierarchy({ treasuryWallets, agentWallets, orgSlug }: Pro
   const [treasuryChain, setTreasuryChain] = useState<PaymentChain | ''>(fundedChains[0]?.chain ?? '');
   const activeTreasury = fundedChains.find((wallet) => wallet.chain === treasuryChain) ?? fundedChains[0];
   const agentGroups = useMemo(() => groupAgentWallets(agentWallets), [agentWallets]);
-  const walletPathHref = `/app/${orgSlug}/payments/empower?tab=delegations&source=wallet&from=fund`;
+  const walletPathHref = `/app/${orgSlug}/agents`;
 
   return (
     <div className="fund-surface">
@@ -88,7 +88,7 @@ export function FundingHierarchy({ treasuryWallets, agentWallets, orgSlug }: Pro
             role="tab"
           >
             <span className="fund-path-title">Your wallet</span>
-            <span className="fund-path-sub">Skip deposit → Empower</span>
+            <span className="fund-path-sub">Open agent → Spend</span>
           </Link>
         </div>
       </section>

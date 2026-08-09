@@ -1,8 +1,12 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentDetailShell, type AgentDetailTab } from '../../src/components/agents/AgentDetailShell.js';
 import type { AgentDetail } from '../../src/lib/identity-spine-types.js';
+
+vi.mock('@/app/actions/mcp-verification', () => ({
+  verifyHostedMcpAction: vi.fn(async () => ({ ok: true })),
+}));
 
 const baseAgent: AgentDetail = {
   id: 'agt_research',
@@ -246,7 +250,7 @@ describe('AgentDetailShell', () => {
     expect(screen.getByText('Approve paid market data')).toBeInTheDocument();
     expect(screen.getByText('Direct')).toBeInTheDocument();
     expect(screen.getByText('Workspace')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Attach policy' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Attach policy' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Attach policy' }));
     expect(screen.getByRole('option', { name: 'Limit risky tools · v1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
@@ -257,5 +261,59 @@ describe('AgentDetailShell', () => {
     expect(screen.getByText('Recent blocks')).toBeInTheDocument();
     expect(screen.getByText('policy_denied')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Credentials' })).not.toBeInTheDocument();
+  });
+
+  it('keeps Attach policy clickable and explains when nothing is assignable', () => {
+    render(
+      <AgentDetailShell
+        activeTab="access"
+        agent={baseAgent}
+        availablePolicies={[
+          {
+            id: 'pol_weather',
+            version: 1,
+            name: 'Deny weather API',
+            description: 'Already attached',
+            category: 'operational',
+            status: 'active',
+            binding_target_types: ['agent'],
+            bindings: [],
+            bindings_count: 1,
+            created_at: '2026-07-07T00:00:00.000Z',
+          },
+        ]}
+        connections={[]}
+        mcpEndpoint="https://mcp.agentops.test/mcp"
+        orgId="org_acme"
+        orgSlug="acme-agent-ops"
+        policies={[
+          {
+            id: 'pol_weather',
+            version: 1,
+            name: 'Deny weather API',
+            description: 'Already attached',
+            category: 'operational',
+            binding: {
+              id: 'pbind_weather',
+              scope: 'direct',
+              target_id: 'agt_research',
+              target_type: 'agent',
+              target_label: 'Research agent',
+            },
+          },
+        ]}
+        activity={[]}
+        actions={{ bindPolicy: async () => {} }}
+      />,
+    );
+
+    const attach = screen.getByRole('button', { name: 'Attach policy' });
+    expect(attach).toBeEnabled();
+    fireEvent.click(attach);
+    expect(screen.getByText('Nothing to attach')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Controls' })).toHaveAttribute(
+      'href',
+      '/app/acme-agent-ops/controls',
+    );
   });
 });

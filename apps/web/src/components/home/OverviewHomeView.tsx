@@ -214,7 +214,7 @@ function OverviewHomeContent({
             <div>
               <h2 id="overview-activity-title">Recent activity</h2>
             </div>
-            <Link className="canonical-overview-text-action" href={`/app/${org.slug}/operations`}>
+            <Link className="canonical-overview-text-action" href={`/app/${org.slug}/activity`}>
               Evidence <IconArrowRight aria-hidden="true" size={12} stroke={1.8} />
             </Link>
           </div>
@@ -273,7 +273,7 @@ function buildAttentionItems(input: {
     items.push({
       title: `${count} liquidity ${count === 1 ? 'job' : 'jobs'} failed`,
       copy: 'Review provider jobs in Treasury → Activity.',
-      href: `/app/${input.orgSlug}/payments/activity?tab=jobs`,
+      href: `/app/${input.orgSlug}/activity?tab=jobs`,
       tone: 'danger',
     });
   }

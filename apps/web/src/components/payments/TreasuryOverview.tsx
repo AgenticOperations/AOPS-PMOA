@@ -102,7 +102,7 @@ export function TreasuryOverview({
   if (activeAccounts.length === 0) {
     needsAttention.push({
       description: 'No agent currently has payment access enabled.',
-      href: `${base}/agent-access`,
+      href: `/app/${orgSlug}/agents`,
       title: 'Payment access is off',
       tone: 'warning',
     });
@@ -110,7 +110,7 @@ export function TreasuryOverview({
   if (nearBudget !== undefined) {
     needsAttention.push({
       description: `${agentNames.get(nearBudget.agent_id) ?? nearBudget.agent_id} has used ${money(nearBudget.spent_usdc)} of a ${money(nearBudget.budget_usdc)} budget.`,
-      href: `${base}/agent-access`,
+      href: `/app/${orgSlug}/agents/${nearBudget.agent_id}`,
       title: 'Agent is near budget',
       tone: 'warning',
     });

@@ -62,8 +62,8 @@ function guideLinksForMessage(orgSlug: string, clientAgentId: string | undefined
   if (lower.includes('activity')) {
     links.push({ match: 'Activity', href: activityEscrowHref(orgSlug) });
   }
-  if (lower.includes('empower')) {
-    links.push({ match: 'Empower', href: empowerAccessHref(orgSlug) });
+  if (lower.includes('empower') || lower.includes('payment access') || lower.includes('overview → spend') || lower.includes('overview -> spend')) {
+    links.push({ match: 'Spend', href: empowerAccessHref(orgSlug) });
   }
   if (lower.includes('create an agent') || (lower.includes('agents') && lower.includes('create'))) {
     links.push({ match: 'Agents', href: agentsListHref(orgSlug) });

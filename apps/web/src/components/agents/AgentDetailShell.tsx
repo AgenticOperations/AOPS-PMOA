@@ -30,6 +30,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { AgentSpendPanel } from './AgentSpendPanel';
+import { TrustGraduationSection, type TrustGraduationTarget } from '@/components/payments/TrustGraduationSection';
+import type { AgentPaymentAccountRecord, CircleChainCapabilityRecord } from '@/lib/payments-types';
+import type { DelegationSummary } from '@/lib/server/payments-client';
 
 export type AgentDetailTab = 'overview' | 'access' | 'credentials' | 'publish' | 'activity';
 
@@ -38,7 +42,7 @@ const agentDetailTabs: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
-  { id: 'overview', label: 'Overview', description: 'Identity, status, and editable metadata.' },
+  { id: 'overview', label: 'Overview', description: 'Spend, identity, status, and editable metadata.' },
   { id: 'access', label: 'Policies & access', description: 'Effective policy bindings and runtime operation controls.' },
   { id: 'credentials', label: 'Credentials & wallets', description: 'Agent credentials and external wallet references.' },
   { id: 'publish', label: 'Publish', description: 'Arc nanopayments template, public URL, ERC-8004 identity.' },
@@ -68,6 +72,23 @@ function blockedOperationLabel(operation: BlockedOperationRecord): string {
   return `Blocked ${operation.tool_name ?? operation.resource_label ?? operation.action}`;
 }
 
+/** Active policies that the API (or statement targets) allow binding to an agent. */
+function canBindPolicyToAgent(policy: PolicyVersion): boolean {
+  if (policy.status !== 'active') return false;
+  const targets = policy.binding_target_types;
+  if (Array.isArray(targets) && targets.includes('agent')) return true;
+  // Fallback when binding_target_types is missing/empty but statements declare agent targets.
+  if (!Array.isArray(targets) || targets.length === 0) {
+    const statements = policy.statements ?? [];
+    if (statements.length === 0) return true;
+    return statements.some((statement) => {
+      const types = statement.target?.types;
+      return types === undefined || types.length === 0 || types.includes('agent');
+    });
+  }
+  return false;
+}
+
 export function AgentDetailShell({
   orgId,
   orgSlug,
@@ -87,6 +108,12 @@ export function AgentDetailShell({
   templateRepoUrl = 'https://github.com/circlefin/arc-nanopayments',
   onchainIdentity = null,
   reputationHistory = [],
+  paymentAccount = null,
+  paymentCapabilities = [],
+  agentDelegations = [],
+  agentWalletFunding = [],
+  paymentAccessAction,
+  trustTargets = [],
   actions,
 }: {
   readonly orgId: string;
@@ -107,6 +134,16 @@ export function AgentDetailShell({
   readonly templateRepoUrl?: string | undefined;
   readonly onchainIdentity?: AgentOnchainIdentityView | undefined;
   readonly reputationHistory?: readonly AgentReputationEventRecord[] | undefined;
+  readonly paymentAccount?: AgentPaymentAccountRecord | null | undefined;
+  readonly paymentCapabilities?: readonly CircleChainCapabilityRecord[] | undefined;
+  readonly agentDelegations?: readonly DelegationSummary[] | undefined;
+  readonly agentWalletFunding?: readonly {
+    readonly agentId: string;
+    readonly chain: string;
+    readonly status: string;
+  }[] | undefined;
+  readonly paymentAccessAction?: ((formData: FormData) => Promise<void>) | undefined;
+  readonly trustTargets?: readonly TrustGraduationTarget[] | undefined;
   readonly actions?: {
     readonly pause?: (() => Promise<void>) | undefined;
     readonly activate?: (() => Promise<void>) | undefined;
@@ -161,8 +198,15 @@ export function AgentDetailShell({
   const inheritedPolicies = policies.filter((policy) => policy.binding.scope !== 'direct');
   const directPolicyIds = new Set(directPolicies.map((policy) => policy.id));
   const assignablePolicies = availablePolicies.filter(
-    (policy) => policy.status === 'active' && policy.binding_target_types.includes('agent') && !directPolicyIds.has(policy.id),
+    (policy) => canBindPolicyToAgent(policy) && !directPolicyIds.has(policy.id),
   );
+  const activeLibraryCount = availablePolicies.filter((policy) => policy.status === 'active').length;
+  const canOpenAttach = actions?.bindPolicy !== undefined;
+  const attachEmptyReason = assignablePolicies.length > 0
+    ? null
+    : activeLibraryCount === 0
+      ? 'No active policies in this workspace yet. Create and activate one in Controls, then attach it here.'
+      : 'Every active agent-compatible policy is already attached to this agent. Create another policy in Controls, or remove one below first.';
 
   return (
     <div className="agent-detail-page">
@@ -207,44 +251,99 @@ export function AgentDetailShell({
       </nav>
 
       {activeTab === 'overview' ? (
-        <div className="agent-detail-canvas">
-          <AgentReputationPanel
-            events={agent.reputation_events ?? 0}
-            history={reputationHistory}
-            score={agent.reputation_score ?? 0}
-          />
-          <section className="agent-detail-section" aria-labelledby="overview-title">
-            <div className="agent-section-heading">
-              <div>
-                <h2 id="overview-title">Identity details</h2>
-                <p>Metadata used for policy targeting and operator context.</p>
-              </div>
-              <button className="agent-secondary-button" disabled={actions?.updateAgent === undefined} onClick={() => setDrawer('edit')} type="button">Edit agent</button>
-            </div>
+        <div className="agent-overview-layout">
+          <div className="agent-overview-primary">
+            <AgentSpendPanel
+              accessAction={paymentAccessAction ?? (async () => {
+                throw new Error('Payment access is unavailable.');
+              })}
+              account={paymentAccount}
+              agentId={agent.id}
+              agentName={agent.name}
+              agentWallets={agentWalletFunding}
+              capabilities={paymentCapabilities}
+              canEdit={paymentAccessAction !== undefined}
+              delegations={agentDelegations}
+              orgSlug={orgSlug}
+            />
+            <TrustGraduationSection
+              agentName={agent.name}
+              orgId={orgId}
+              orgSlug={orgSlug}
+              targets={trustTargets}
+            />
+          </div>
 
-            <dl className="agent-definition-list">
-              <div><dt>Agent ID</dt><dd><code>{agent.id}</code></dd></div>
-              <div><dt>Team</dt><dd>{agent.team.name}</dd></div>
-              <div><dt>Parent agent</dt><dd>{agent.parent?.name ?? 'None'}</dd></div>
-              <div><dt>Child agents</dt><dd>{agent.children.length === 0 ? 'None' : String(agent.children.length)}</dd></div>
-              <div><dt>Environment</dt><dd>{agent.default_environment ?? 'Not set'}</dd></div>
-              <div><dt>Labels</dt><dd>{agent.labels.length === 0 ? 'None' : agent.labels.join(', ')}</dd></div>
-              <div><dt>Description</dt><dd>{agent.description.length > 0 ? agent.description : 'Not set'}</dd></div>
-            </dl>
-          </section>
-
-          <section className="agent-detail-section" aria-labelledby="agent-lifecycle-title">
-            <div className="agent-section-heading">
-              <div>
-                <h2 id="agent-lifecycle-title">Lifecycle</h2>
-                <p>Identity controls with explicit confirmation.</p>
+          <aside className="agent-overview-aside" aria-label="Agent details">
+            <section className="agent-detail-section" aria-labelledby="overview-title">
+              <div className="agent-section-heading">
+                <div>
+                  <h2 id="overview-title">Identity</h2>
+                </div>
+                <button
+                  className="agent-secondary-button"
+                  disabled={actions?.updateAgent === undefined}
+                  onClick={() => setDrawer('edit')}
+                  type="button"
+                >
+                  Edit
+                </button>
               </div>
-            </div>
-            <div className="agent-lifecycle-list">
-              <div><div><strong>{agent.status === 'paused' ? 'Activate runtime access' : 'Pause runtime access'}</strong><span>{agent.status === 'paused' ? 'Restore managed calls for active credentials.' : 'Credentials remain recorded, but managed calls stop.'}</span></div><button className="agent-secondary-button" onClick={() => setDrawer('lifecycle')} type="button">{agent.status === 'paused' ? 'Activate' : 'Pause'}</button></div>
-              <div><div><strong>Deactivate agent</strong><span>Permanently disable this identity and its active runtime access.</span></div><button className="agent-danger-button" disabled={agent.status === 'deactivated'} onClick={() => setDrawer('lifecycle')} type="button">{agent.status === 'deactivated' ? 'Deactivated' : 'Deactivate'}</button></div>
-            </div>
-          </section>
+              <dl className="agent-definition-list agent-overview-identity">
+                <div><dt>Team</dt><dd>{agent.team.name}</dd></div>
+                <div><dt>Environment</dt><dd>{agent.default_environment ?? 'Not set'}</dd></div>
+                <div><dt>Parent</dt><dd>{agent.parent?.name ?? 'None'}</dd></div>
+                <div><dt>Children</dt><dd>{agent.children.length === 0 ? 'None' : String(agent.children.length)}</dd></div>
+                <div><dt>Labels</dt><dd>{agent.labels.length === 0 ? 'None' : agent.labels.join(', ')}</dd></div>
+                {agent.description.length > 0 ? (
+                  <div className="agent-overview-identity-desc">
+                    <dt>Description</dt>
+                    <dd>{agent.description}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </section>
+
+            <AgentReputationPanel
+              compact
+              events={agent.reputation_events ?? 0}
+              history={reputationHistory}
+              score={agent.reputation_score ?? 0}
+            />
+
+            <section className="agent-detail-section" aria-labelledby="agent-lifecycle-title">
+              <div className="agent-section-heading">
+                <div>
+                  <h2 id="agent-lifecycle-title">Lifecycle</h2>
+                </div>
+              </div>
+              <div className="agent-lifecycle-list">
+                <div>
+                  <div>
+                    <strong>{agent.status === 'paused' ? 'Activate' : 'Pause'}</strong>
+                    <span>{agent.status === 'paused' ? 'Restore managed calls.' : 'Stop managed calls; credentials stay.'}</span>
+                  </div>
+                  <button className="agent-secondary-button" onClick={() => setDrawer('lifecycle')} type="button">
+                    {agent.status === 'paused' ? 'Activate' : 'Pause'}
+                  </button>
+                </div>
+                <div>
+                  <div>
+                    <strong>Deactivate</strong>
+                    <span>Permanently disable this identity.</span>
+                  </div>
+                  <button
+                    className="agent-danger-button"
+                    disabled={agent.status === 'deactivated'}
+                    onClick={() => setDrawer('lifecycle')}
+                    type="button"
+                  >
+                    {agent.status === 'deactivated' ? 'Deactivated' : 'Deactivate'}
+                  </button>
+                </div>
+              </div>
+            </section>
+          </aside>
         </div>
       ) : null}
 
@@ -256,7 +355,15 @@ export function AgentDetailShell({
                 <h2 id="agent-policies-title">Effective policies</h2>
                 <p>Direct assignments and inherited controls currently governing this identity.</p>
               </div>
-              <button className="agent-secondary-button" disabled={assignablePolicies.length === 0 || actions?.bindPolicy === undefined} onClick={() => setDrawer('policy')} type="button">Attach policy</button>
+              <button
+                className="agent-secondary-button"
+                disabled={!canOpenAttach}
+                onClick={() => setDrawer('policy')}
+                title={!canOpenAttach ? 'Policy attachment is unavailable.' : undefined}
+                type="button"
+              >
+                Attach policy
+              </button>
             </div>
             {directPolicies.length === 0 ? (
               <div className="soft-row">
@@ -317,15 +424,6 @@ export function AgentDetailShell({
                 <h2 id="operational-access-title">Operational access</h2>
                 <p>Effective action rules and the most recent blocked operations.</p>
               </div>
-            </div>
-            <div className="agent-access-crosslink">
-              <div>
-                <strong>Payment access lives in Treasury</strong>
-                <span>Budgets, allowed rails, and approval thresholds are managed from the Agent Access treasury view.</span>
-              </div>
-              <Link className="agent-secondary-button" href={`/app/${orgSlug}/payments/agent-access`}>
-                Open Treasury
-              </Link>
             </div>
             <div className="operational-access-grid">
               <div>
@@ -458,9 +556,34 @@ export function AgentDetailShell({
         </SheetHeader>
         <form action={bindFormAction} className="focus-form">
           <SheetBody className="operations-form">
-            <label><span>Policy</span><select name="policySelection" disabled={assignablePolicies.length === 0}>{assignablePolicies.length === 0 ? <option value="">No unassigned agent policies</option> : assignablePolicies.map((policy) => <option key={`${policy.id}:${policy.version}`} value={`${policy.id}:${policy.version}`}>{policy.name} · v{policy.version}</option>)}</select></label>
+            {assignablePolicies.length === 0 ? (
+              <div className="soft-row">
+                <strong>Nothing to attach</strong>
+                <span>{attachEmptyReason}</span>
+                <Link className="action-nav-link" href={`/app/${orgSlug}/controls`}>
+                  Open Controls
+                </Link>
+              </div>
+            ) : (
+              <label>
+                <span>Policy</span>
+                <select name="policySelection" required>
+                  {assignablePolicies.map((policy) => (
+                    <option key={`${policy.id}:${policy.version}`} value={`${policy.id}:${policy.version}`}>
+                      {policy.name} · v{policy.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {bindState.error !== undefined ? <p className="form-error" role="alert">{bindState.error}</p> : null}
-            <button className="agent-primary-button agent-inline-submit" disabled={bindPending || assignablePolicies.length === 0 || actions?.bindPolicy === undefined} type="submit">{bindPending ? 'Attaching...' : 'Attach policy'}</button>
+            <button
+              className="agent-primary-button agent-inline-submit"
+              disabled={bindPending || assignablePolicies.length === 0 || actions?.bindPolicy === undefined}
+              type="submit"
+            >
+              {bindPending ? 'Attaching...' : 'Attach policy'}
+            </button>
           </SheetBody>
         </form>
       </Sheet>

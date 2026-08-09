@@ -55,10 +55,10 @@ export async function ensureFleetAgentsAction(
     revalidatePath('/chat');
     revalidatePath(`/app/${orgSlug}/fleet-run`);
     revalidatePath(`/app/${orgSlug}/agents`);
-    revalidatePath(`/app/${orgSlug}/payments/empower`);
+    revalidatePath(`/app/${orgSlug}/payments/funding`);
 
     const waitNote =
-      'Wallets provision via the Circle worker — open Empower, wait until wallets show active, then return here.';
+      'Wallets provision via the Circle worker — open each agent Overview → Spend, wait until wallets show active, then return here.';
     if (created.length === 0) {
       return {
         ok: true,

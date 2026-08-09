@@ -62,7 +62,7 @@ export async function resolveFleetAgents(
     throw new IdentityError(
       'fleet_agents_missing',
       409,
-      `Fleet roster incomplete (${missing.join(', ')}). Create them in Agents, then enable wallets in Empower.`,
+      `Fleet roster incomplete (${missing.join(', ')}). Create them in Agents, then grant payment access on each agent Overview → Spend.`,
     );
   }
 

@@ -331,7 +331,7 @@ export async function handleAgentChatTurn(
         reply: `${reply}${fund.low ? `\n\n${fund.reply}` : ''}`,
         links: [
           appLink(orgSlug, '/agents', 'Agents'),
-          appLink(orgSlug, '/payments/empower', 'Empower'),
+          appLink(orgSlug, '/agents', 'Agents'),
           appLink(orgSlug, '/controls', 'Controls'),
           ...(fund.low ? fund.links : []),
         ],
@@ -381,7 +381,7 @@ export async function handleAgentChatTurn(
           ...empty(),
           reply,
           links: [
-            appLink(orgSlug, '/payments/activity', 'Activity'),
+            appLink(orgSlug, '/activity', 'Activity'),
             appLink(orgSlug, '/agents', 'Agents'),
             { label: 'Marketplace', href: '/marketplace' },
           ],
@@ -400,7 +400,7 @@ export async function handleAgentChatTurn(
             : errMsg,
           links: [
             appLink(orgSlug, '/agents', 'Agents'),
-            appLink(orgSlug, '/payments/empower', 'Empower'),
+            appLink(orgSlug, '/agents', 'Agents'),
             appLink(orgSlug, '/payments/fund', 'Fund'),
           ],
           confirms: needsAgents
@@ -443,7 +443,7 @@ export async function handleAgentChatTurn(
       ...empty(),
       reply:
         'Policies cap what agents may spend and when approvals are required. Set them in Controls after agents exist — start with per-request caps and approval thresholds.',
-      links: [appLink(orgSlug, '/controls', 'Controls'), appLink(orgSlug, '/payments/empower', 'Empower')],
+      links: [appLink(orgSlug, '/controls', 'Controls'), appLink(orgSlug, '/agents', 'Agents')],
     };
   }
 
@@ -502,7 +502,7 @@ export async function handleAgentChatTurn(
       return {
         ...empty(),
         reply: `To run that goal I'll use a ${agents.length}-agent fleet. Missing from your org:\n\n${list}\n\nShall I create them (and empower payment access)?`,
-        links: [appLink(orgSlug, '/agents', 'Agents'), appLink(orgSlug, '/payments/empower', 'Empower')],
+        links: [appLink(orgSlug, '/agents', 'Agents'), appLink(orgSlug, '/payments/funding', 'Fund')],
         confirms: [{ id: 'create_agents', kind: 'create_agents', label: 'Create agents' }],
         graph: graphFromAgents(agents, 'pending'),
         pending: pendingNext,
@@ -521,7 +521,7 @@ export async function handleAgentChatTurn(
       links: [
         appLink(orgSlug, '/controls', 'Controls'),
         ...(fund.low ? fund.links : []),
-        appLink(orgSlug, '/payments/activity', 'Activity'),
+        appLink(orgSlug, '/activity', 'Activity'),
       ],
       confirms: [{ id: 'run_fleet', kind: 'run_fleet', label: 'Run fleet' }],
       graph: graphFromAgents(agents, 'ready'),

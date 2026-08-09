@@ -1,7 +1,6 @@
 'use client';
 
 import { useActionState, useEffect, useState } from 'react';
-import type { ConnectionActionState } from '@/app/actions/identity-spine';
 import type { ConnectionRecord } from '@/lib/identity-spine-types';
 import { formatUtcDateTime } from '@/lib/date-format';
 import { formatConnectionKind, formatStatus } from './format';
@@ -18,6 +17,14 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 
+type ConnectionActionState = {
+  readonly error?: string;
+  readonly message?: string;
+  readonly secret?: {
+    readonly connectionName: string;
+    readonly secret: string;
+  };
+};
 type ConnectionPanelProps = {
   readonly orgId: string;
   readonly orgSlug: string;

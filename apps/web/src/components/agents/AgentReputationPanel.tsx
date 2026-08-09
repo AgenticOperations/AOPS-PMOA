@@ -6,6 +6,8 @@ type AgentReputationPanelProps = {
   readonly score: number;
   readonly events: number;
   readonly history: readonly AgentReputationEventRecord[];
+  /** Overview aside: score + short history, less chrome. */
+  readonly compact?: boolean;
 };
 
 const ARC_TX = 'https://testnet.arcscan.app/tx/';
@@ -13,28 +15,46 @@ const ARC_TX = 'https://testnet.arcscan.app/tx/';
 /**
  * Operator view of payment-gated reputation earned from settled escrow jobs.
  */
-export function AgentReputationPanel({ score, events, history }: AgentReputationPanelProps) {
+export function AgentReputationPanel({
+  score,
+  events,
+  history,
+  compact = false,
+}: AgentReputationPanelProps) {
+  const visibleHistory = compact ? history.slice(0, 3) : history;
+
   return (
-    <section className="agent-detail-section" aria-labelledby="reputation-title">
+    <section
+      className={compact ? 'agent-detail-section agent-reputation-compact' : 'agent-detail-section'}
+      aria-labelledby="reputation-title"
+    >
       <div className="agent-section-heading">
         <div>
           <h2 id="reputation-title">Reputation</h2>
-          <p>{REPUTATION_HINT}</p>
+          {compact ? null : <p>{REPUTATION_HINT}</p>}
         </div>
-        <ReputationDisplay className="reputation-display is-large" events={events} score={score} />
+        <ReputationDisplay
+          className={compact ? 'reputation-display' : 'reputation-display is-large'}
+          events={events}
+          score={score}
+        />
       </div>
 
       {history.length === 0 ? (
-        <div className="treasury-empty-state">
-          <strong>No reputation yet</strong>
-          <p>
-            Reputation is written only when an escrow job for this agent completes. Score stays on a
-            0–100 scale (capped). Fleet Permit2 hires do not raise it — completed escrow does.
-          </p>
-        </div>
+        compact ? (
+          <p className="agent-aside-muted">No settled escrow yet.</p>
+        ) : (
+          <div className="treasury-empty-state">
+            <strong>No reputation yet</strong>
+            <p>
+              Reputation is written only when an escrow job for this agent completes. Score stays on a
+              0–100 scale (capped). Fleet Permit2 hires do not raise it — completed escrow does.
+            </p>
+          </div>
+        )
       ) : (
         <ul className="reputation-history-list">
-          {history.map((event) => (
+          {visibleHistory.map((event) => (
             <li key={event.id}>
               <div>
                 <strong>Settled</strong>
