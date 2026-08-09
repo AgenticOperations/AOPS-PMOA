@@ -79,7 +79,7 @@ export function MarketplaceActivityChart({ activity }: MarketplaceActivityChartP
           <p className="amkt-eyebrow">On-chain activity</p>
           <h2>Settlement pulse</h2>
           <p className="amkt-chart-sub">
-            Real settled volume from Permit2 fleet hires and escrow — hover a day to open txs.
+            Real settled volume from Permit2 fleet hires and escrow — hover a day, then click a tx.
           </p>
         </div>
         <div className="amkt-chart-ranges" role="group" aria-label="Range">
@@ -119,89 +119,93 @@ export function MarketplaceActivityChart({ activity }: MarketplaceActivityChartP
         </div>
       </div>
 
-      <div className="amkt-chart-canvas">
-        {!hasActivity ? (
-          <div className="amkt-chart-empty">
-            <p>No settled on-chain activity in this window yet.</p>
-            <p>Run live marketplace hires (Permit2 / x402 / escrow) to fill this chart.</p>
-          </div>
-        ) : (
-          <svg
-            aria-label="Settlement activity chart"
-            className="amkt-chart-svg"
-            role="img"
-            viewBox={`0 0 ${width} ${height}`}
-            onMouseLeave={() => setActiveDay(null)}
-          >
-            <path className="amkt-chart-area" d={area} />
-            <path className="amkt-chart-line" d={path} fill="none" />
-            {points.map((point) => (
-              <g key={point.day}>
-                <circle
-                  className={activeDay === point.day ? 'amkt-chart-dot is-active' : 'amkt-chart-dot'}
-                  cx={point.x}
-                  cy={point.y}
-                  r={activeDay === point.day ? 4.5 : 3}
-                />
-                <rect
-                  fill="transparent"
-                  height={height}
-                  onFocus={() => setActiveDay(point.day)}
-                  onMouseEnter={() => setActiveDay(point.day)}
-                  onClick={() => setActiveDay(point.day)}
-                  tabIndex={0}
-                  width={Math.max(24, (width - padX * 2) / Math.max(points.length, 1))}
-                  x={point.x - Math.max(12, (width - padX * 2) / Math.max(points.length, 1) / 2)}
-                  y={0}
-                >
-                  <title>{`${point.day}: ${formatUsdc(point.settledUsdc)} · ${point.completedJobs} jobs`}</title>
-                </rect>
-              </g>
-            ))}
-            {activePoint !== null ? (
-              <line
-                className="amkt-chart-guide"
-                x1={activePoint.x}
-                x2={activePoint.x}
-                y1={padTop}
-                y2={height - padBottom}
-              />
-            ) : null}
-          </svg>
-        )}
-      </div>
-
-      {activePoint !== null ? (
-        <div className="amkt-chart-hover" role="status">
-          <div className="amkt-chart-hover-head">
-            <strong>{activePoint.day}</strong>
-            <span>{formatUsdc(activePoint.settledUsdc)} · {activePoint.completedJobs} jobs</span>
-          </div>
-          {activeEvents.length === 0 ? (
-            <p className="amkt-chart-hover-empty">No navigable txs recorded for this day.</p>
+      <div
+        className="amkt-chart-inspect"
+        onMouseLeave={() => setActiveDay(null)}
+      >
+        <div className="amkt-chart-canvas">
+          {!hasActivity ? (
+            <div className="amkt-chart-empty">
+              <p>No settled on-chain activity in this window yet.</p>
+              <p>Run live marketplace hires (Permit2 / x402 / escrow) to fill this chart.</p>
+            </div>
           ) : (
-            <ul className="amkt-chart-hover-list">
-              {activeEvents.map((event) => (
-                <li key={event.id}>
-                  <div>
-                    <strong>{event.label}</strong>
-                    <span>{formatUsdc(event.amountUsdc)} · {event.kind.replace('_', ' ')} · {event.chain}</span>
-                  </div>
-                  {event.explorerUrl !== null && event.txHash !== null ? (
-                    <a href={event.explorerUrl} rel="noreferrer" target="_blank">
-                      {shortTx(event.txHash)}
-                    </a>
-                  ) : (
-                    <span className="amkt-chart-hover-muted">No tx hash</span>
-                  )}
-                </li>
+            <svg
+              aria-label="Settlement activity chart"
+              className="amkt-chart-svg"
+              role="img"
+              viewBox={`0 0 ${width} ${height}`}
+            >
+              <path className="amkt-chart-area" d={area} />
+              <path className="amkt-chart-line" d={path} fill="none" />
+              {points.map((point) => (
+                <g key={point.day}>
+                  <circle
+                    className={activeDay === point.day ? 'amkt-chart-dot is-active' : 'amkt-chart-dot'}
+                    cx={point.x}
+                    cy={point.y}
+                    r={activeDay === point.day ? 4.5 : 3}
+                  />
+                  <rect
+                    fill="transparent"
+                    height={height}
+                    onFocus={() => setActiveDay(point.day)}
+                    onMouseEnter={() => setActiveDay(point.day)}
+                    onClick={() => setActiveDay(point.day)}
+                    tabIndex={0}
+                    width={Math.max(24, (width - padX * 2) / Math.max(points.length, 1))}
+                    x={point.x - Math.max(12, (width - padX * 2) / Math.max(points.length, 1) / 2)}
+                    y={0}
+                  >
+                    <title>{`${point.day}: ${formatUsdc(point.settledUsdc)} · ${point.completedJobs} jobs`}</title>
+                  </rect>
+                </g>
               ))}
-            </ul>
+              {activePoint !== null ? (
+                <line
+                  className="amkt-chart-guide"
+                  x1={activePoint.x}
+                  x2={activePoint.x}
+                  y1={padTop}
+                  y2={height - padBottom}
+                />
+              ) : null}
+            </svg>
           )}
         </div>
-      ) : events.length > 0 ? (
-        <p className="amkt-chart-hint">Hover or focus a point to inspect on-chain hires.</p>
-      ) : null}
+
+        {activePoint !== null ? (
+          <div className="amkt-chart-hover" role="status">
+            <div className="amkt-chart-hover-head">
+              <strong>{activePoint.day}</strong>
+              <span>{formatUsdc(activePoint.settledUsdc)} · {activePoint.completedJobs} jobs</span>
+            </div>
+            {activeEvents.length === 0 ? (
+              <p className="amkt-chart-hover-empty">No navigable txs recorded for this day.</p>
+            ) : (
+              <ul className="amkt-chart-hover-list">
+                {activeEvents.map((event) => (
+                  <li key={event.id}>
+                    <div>
+                      <strong>{event.label}</strong>
+                      <span>{formatUsdc(event.amountUsdc)} · {event.kind.replace('_', ' ')} · {event.chain}</span>
+                    </div>
+                    {event.explorerUrl !== null && event.txHash !== null ? (
+                      <a href={event.explorerUrl} rel="noreferrer" target="_blank">
+                        {shortTx(event.txHash)}
+                      </a>
+                    ) : (
+                      <span className="amkt-chart-hover-muted">No tx hash</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : events.length > 0 ? (
+          <p className="amkt-chart-hint">Hover or focus a point to inspect on-chain hires.</p>
+        ) : null}
+      </div>
     </section>
   );
 }
