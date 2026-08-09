@@ -16,8 +16,12 @@ version of the same five steps.
 Obtain an MCP URL + bearer credential via one of:
 
 - **Phase 0:** operator console (Agents → Connections → new credential)
-- **Phase 1:** `POST {API}/v1/agent-join/invite/redeem` with an invite token
-- **Phase 3:** `POST {API}/v1/agent-join/open` only if `GET .../open/status` says enabled
+- **Phase 1:** `POST {API}/v1/agent-join/invite/redeem` with
+  `{ "token": "<invite>", "agent_name": "<name>" }`. **Before calling redeem in a
+  chat session, ask the human** what display name to use (console + marketplace).
+  Do not silently invent `joined-agent-…` names when a human is present.
+- **Phase 3:** `POST {API}/v1/agent-join/open` only if `GET .../open/status` says
+  enabled — same rule: ask for `agent_name` first, then include it in the body.
 
 Join paths start with **payment access disabled**. Every MCP request then carries
 `Authorization: Bearer <credential>`. The credential identifies which agent you

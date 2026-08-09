@@ -3,17 +3,20 @@ created: 2026-08-09
 updated: 2026-08-09
 project: agentOps
 ecosystem: [circle, arc]
-tags: [end-to-end, guide, circle, proofs, bugs, policy]
+tags: [end-to-end, guide, circle, proofs, bugs, policy, mother-doc]
 status: living guide — grounded in spike-results + as-built code
 ---
 
 # AgentOps (AOPS-PMOA) — End-to-End System Guide
 
+**Mother document** for the platform: what we built, who owns which layer (us vs Circle), how a human and an agent each enter, how money moves under policy, and what is proven on testnet with explorer links. Other writeups (hackathon submission, demo script, pitch, agent `/llms.txt`) should be **derived from this**, not invented beside it.
+
 This is the deep, human-readable map of **what the product does**, **the Human vs Agent entry paths (NLP chat + MCP / llms.txt)**, **which Circle / Arc pieces it uses**, **how money actually moves under a real policy pack**, and **what we proved on-chain** (with explorer links). It also records the **real bugs and wrong turns** we hit, so nobody relearns them the hard way.
 
 Primary evidence source: [`docs/spike-results.md`](spike-results.md)  
 Demo script: [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md)  
-Why we built it this way: [`docs/handover.md`](handover.md)
+Why we built it this way: [`docs/handover.md`](handover.md)  
+Positioning vs Circle SDKs: [`docs/arc-agentops-addon.md`](arc-agentops-addon.md)
 
 > **Testnet only.** Nothing here claims mainnet payment execution.
 
@@ -23,7 +26,9 @@ Why we built it this way: [`docs/handover.md`](handover.md)
 
 1. [One-sentence product](#1-one-sentence-product)
 2. [How to read this doc](#2-how-to-read-this-doc)
+2a. [How to extract a hackathon / pitch writeup](#2a-how-to-extract-a-hackathon--pitch-writeup)
 3. [The four services](#3-the-four-services)
+3a. [Platform feature map](#3a-platform-feature-map)
 4. [Circle infrastructure map](#4-circle-infrastructure-map)
 5. [Chains and money model](#5-chains-and-money-model)
 6. [Two payment lanes](#6-two-payment-lanes)
@@ -76,6 +81,30 @@ Every bold explorer link is independently checkable. Prefer those over “our te
 
 ---
 
+## 2a. How to extract a hackathon / pitch writeup
+
+Do **not** paste this whole guide into a submission. Pull these slices:
+
+| Submission section | Take from here |
+|---|---|
+| **Problem** | Agents that can spend need org policy, budgets, approvals, and audit — Circle already has wallets / x402 / Gateway |
+| **What we built** | §1 one-liner + §3a feature map + ownership split in §4.4 |
+| **Circle infra used** | §4 tables (DCW, Gateway, x402, `signTypedData`, worker) — name products, not slogans |
+| **Demo path (human)** | §7.1 bootstrap → Fleet Run / chat → Approvals → Activity |
+| **Demo path (agent)** | §7.0–7.2 invite redeem or Mode A paste → MCP → onboard → governed pay |
+| **Money story** | §6 lanes + §8 fleet steps with explorer links |
+| **Trust story** | §9 escrow → reputation → Permit2 graduation |
+| **Honest limits** | §12 (especially: no claim of Lane 1 to a real third-party merchant yet) |
+| **Ops reality** | §11 traps (entity secret, Base ETH indexing) — judges notice depth |
+
+**One-paragraph spine you can reuse:**
+
+> AgentOps is the org control plane and hosted MCP on top of Circle Developer-Controlled Wallets, Gateway, and x402. Operators set policy and fund per-agent wallets; Claude/Cursor sessions act only through MCP. Intra-fleet spend uses Permit2; external paid HTTP uses x402; first-hire uses our guarded ERC-8183 escrow with payment-gated ERC-8004 reputation. Everything below is testnet-proven with explorer links in §8–§10.
+
+Camera script: [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md).
+
+---
+
 ## 3. The four services
 
 | Service | Port | Job in plain English |
@@ -88,6 +117,52 @@ Every bold explorer link is independently checkable. Prefer those over “our te
 Local setup: `./setup.sh` or `npm run start:local`. Details: root [`README.md`](../README.md).
 
 **Redis** is only a ~25s treasury balance cache. Sessions, jobs, and rate limits are **Postgres**. As-built detail: [`docs/current-architecture-and-userflow.md`](current-architecture-and-userflow.md).
+
+Hosted MCP deploy notes: [`docs/deployment/hosted-mcp.md`](deployment/hosted-mcp.md) (local default `http://127.0.0.1:8070/mcp`; production HTTPS `/mcp` with bearer preserved).
+
+---
+
+## 3a. Platform feature map
+
+What a human can do in the product today — the console index behind the money story.
+
+### Auth and tenancy
+
+| Piece | What it is |
+|---|---|
+| **Google sign-in** | Web BFF OAuth → opaque session in Postgres (`auth_sessions`). Operators are humans, not agents. |
+| **Organization** | Multi-tenant: each org has its own agents, policies, treasury wallets, credentials, and marketplace view. URL space is `/app/{orgSlug}/…`. Switch workspace from the sidebar. |
+| **Circle App Kit** | **Not** something we reimplemented. Circle keeps App Kit / checkout / Agent Stack marketplace. We call Circle **Wallets + Gateway + x402** via the worker; operators use **our** console for governance. |
+
+### Console surfaces (`/app/{orgSlug}/…`)
+
+| Nav / surface | Plain English |
+|---|---|
+| **Home** (`overview`) | Kickstart: connect checklist + copyable agent prompt (`/llms.txt` + invite). Not a place to paste raw MCP JSON forever. |
+| **Agents** | Create identity in console **or** create a join **invite token**; Connections (MCP URL + bearer); agent detail (policy bind, Publish tab, wallet). Chat agents must ask for display `agent_name` before redeem. |
+| **Controls** | Policy authoring / binding — allow, deny, observe, require approval, rate limits. |
+| **Fleet Run** | Guided multi-agent research run (checklist → real payments → brief + receipts). |
+| **Operations** | Runtime / operation visibility for non-payment actions. |
+| **Approvals** | Human inbox when policy says `require approval` (e.g. Base hire). Approve → agent `approval_consume` → retry. |
+| **Fund** | Treasury + allocate USDC into per-agent DCW wallets (ceilings / gas reserve). |
+| **Empower** | Payment access toggles, caps, budgets, Permit2 delegations / destination allowlists. |
+| **Activity** | Payment and governance trail (decision ids, rails, explorer hashes). |
+| **Marketplace** (`/marketplace`) | Org-governed discovery: curated demo sellers + **published** agents (`public_endpoint_url`). Hire via x402 (after payTo authorize) or ERC-8183 escrow. Not a clone of agents.circle.com. |
+| **Chat** (`/chat`) | NLP operator chat — product Q&A, marketplace recommend, Fleet Run goals. |
+| **Landing** | Human mode (marketing / sign-in) vs Agent mode (`/?audience=agent`) structured cold-start pointing at `/llms.txt`. |
+
+### Agent entry (shipped)
+
+| Phase | Status | See |
+|---|---|---|
+| **0** Mode A — human issues MCP credential | ✅ primary | §7.1 |
+| **1** Invite token redeem → MCP credential (payment off) | ✅ | §7.0 |
+| **2** `agentops.publish` + ERC-8004 register (wallet / payment access required for register) | ✅ | §7.2 / Publish tab |
+| **3** Open join (env-gated, rate-limited) | ✅ code; off unless enabled | §7.0 |
+
+### What we deliberately do **not** own
+
+Wallets MPC keys, x402 facilitator, Gateway batch settlement, Circle App Kit UI, Agent Stack OTP Agent Wallets (fallback only). Those stay Circle’s — §4.
 
 ---
 
@@ -248,11 +323,11 @@ Both paths hit the **same** API, policies, wallets, and evidence.
 | Phase | What it does | Payment on join? | How |
 |---|---|---|---|
 | **0** | Human issues MCP credential (Mode A) | No until you enable | Console Connections |
-| **1** | Invite / sandbox join | **Disabled** | Operator `POST /v1/orgs/:orgId/agent-join/invites` → agent `POST /v1/agent-join/invite/redeem` |
+| **1** | Invite / sandbox join | **Disabled** | Operator `POST /v1/orgs/:orgId/agent-join/invites` → agent asks human for display `agent_name`, then `POST /v1/agent-join/invite/redeem` |
 | **2** | MCP publish + ERC-8004 | Unchanged | Authenticated `agentops.publish` / `agentops.identity_register` (wallet required for register) |
-| **3** | Open cold register | **Disabled** | Env `AGENT_OPEN_JOIN_ENABLED=true` + `AGENT_OPEN_JOIN_ORG_ID`; `POST /v1/agent-join/open` with rate caps |
+| **3** | Open cold register | **Disabled** | Env `AGENT_OPEN_JOIN_ENABLED=true` + `AGENT_OPEN_JOIN_ORG_ID`; agent asks for `agent_name`, then `POST /v1/agent-join/open` with rate caps |
 
-Join never grants spend. A human still enables payment access / funds the Arc wallet before ERC-8004 register or payments succeed.
+Join never grants spend. A human still enables payment access / funds the Arc wallet before ERC-8004 register or payments succeed. Chat agents must ask for `agent_name` at redeem/open only (not again at publish); scripts may omit it and receive a generated slug.
 
 ---
 
@@ -347,10 +422,16 @@ Local MCP URL default: `http://127.0.0.1:8070/mcp`.
 
 | Landing toggle | Means |
 |---|---|
-| **Human** | Operator UI path — you set boundaries and mint credentials |
-| **Agent** | Docs path for the IDE/LLM — how to use MCP **after** you mint credentials |
+| **Human** | Operator UI path — you set boundaries, fund, approve, create invites, mint credentials |
+| **Agent** | Structured cold-start for the IDE/LLM (`/?audience=agent` → `/llms.txt` / `/skill.md`) |
 
-Future ideas (invite join, MCP publish / ERC-8004 self-list) are **not** shipped. Do not claim them from Agent mode today.
+**Shipped on the Agent path (do claim these):**
+
+- Follow `/llms.txt` → redeem invite (**Phase 1**) or open join when enabled (**Phase 3**), asking the human for `agent_name` first
+- Or use a human-pasted MCP credential (**Phase 0**)
+- After MCP connect: `onboard`, policy/payment tools, `agentops.publish`, and `identity_register` when payment access + Arc wallet exist (**Phase 2**)
+
+Agent mode still **does not mint secrets by itself** — credentials come from Phase 0 / 1 / 3, never from the landing page alone.
 
 ---
 
@@ -681,6 +762,9 @@ Issuing an attestation reduces available Gateway balance immediately. Failed min
 | Reputation → allocation | ✅ | spike §K.4 steps 9–11 |
 | Escrow → Permit2 graduation | ✅ | [drawdown](https://testnet.arcscan.app/tx/0xef084b9e1dff76fafed5a28715e07f0f6bcced77349aeba964b0a93640722e04) |
 | MCP onboard + paid fixture path | ✅ | ADK + [x402 evidence](qa/2026-07-13-x402-paid-http-evidence.md) |
+| Invite redeem → MCP credential (payment off) | ✅ shipped | §7.0 · API `POST /v1/agent-join/invite/redeem` |
+| MCP publish + ERC-8004 register path | ✅ shipped | Publish tab / `agentops.publish` · register needs wallet |
+| Open join | ✅ code; ⬜ off by default | Env-gated §7.0 |
 | Base external ETH indexing bug | ✅ characterized | §11.1 |
 | **Lane 1 x402 to a real third-party merchant** | ⬜ **Do not claim** | Only fixture / simulation attempts on record |
 
@@ -696,8 +780,9 @@ Master acceptance table: [`docs/spike-results.md` § Acceptance artifacts](spike
 | [`docs/spike-results.md`](spike-results.md) | Raw evidence log (every hash) |
 | [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) | Camera / judge demo script |
 | [`docs/handover.md`](handover.md) | Plain-English “why” |
-| [`docs/arc-agentops-addon.md`](arc-agentops-addon.md) | Positioning vs Circle SDKs |
-| [`docs/current-architecture-and-userflow.md`](current-architecture-and-userflow.md) | As-built internals |
+| [`docs/arc-agentops-addon.md`](arc-agentops-addon.md) | Positioning vs Circle SDKs + marketplace notes |
+| [`docs/deployment/hosted-mcp.md`](deployment/hosted-mcp.md) | Hosted MCP HTTPS contract |
+| [`docs/current-architecture-and-userflow.md`](current-architecture-and-userflow.md) | As-built internals (auth → org → runtime) |
 | [`docs/batch-settlement-binding.md`](batch-settlement-binding.md) | Permit2 commitment / drawdown |
 | [`docs/change-manifest.md`](change-manifest.md) | Sequenced build plan |
 | [`docs/decisions.md`](decisions.md) | Locked decisions |
@@ -710,4 +795,4 @@ Master acceptance table: [`docs/spike-results.md` § Acceptance artifacts](spike
 
 ---
 
-*Last updated 2026-08-09. When you add a new live proof, append it to `docs/spike-results.md` first, then mirror the explorer link here.*
+*Last updated 2026-08-09 (mother-doc preamble, §2a extraction, §3a feature map, §7.3 join/publish status corrected). When you add a new live proof, append it to `docs/spike-results.md` first, then mirror the explorer link here.*

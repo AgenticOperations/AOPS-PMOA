@@ -18,13 +18,17 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
    until a human funds/enables it):
    - **Phase 0 (operator paste):** A human issues MCP URL + bearer from the
      console (Agents → Connections) and pastes them into your MCP config.
-   - **Phase 1 (invite):** If you were given an invite token, redeem it:
+   - **Phase 1 (invite):** If you were given an invite token:
+     **Before redeeming, ask the human** what display name to use for this
+     agent (console identity and marketplace listing). Do not invent a cute
+     default or silently omit the name in a chat session. Then redeem:
      `POST {API}/v1/agent-join/invite/redeem` with JSON
-     `{ "token": "<invite>", "agent_name": "<optional>" }` → response
+     `{ "token": "<invite>", "agent_name": "<human-chosen name>" }` → response
      `join.mcp_url` + `join.credential`.
    - **Phase 3 (open join):** Only if the deployment enabled open join
-     (`GET {API}/v1/agent-join/open/status` → `open_join.enabled`). Then
-     `POST {API}/v1/agent-join/open` with optional `{ "agent_name": "..." }`.
+     (`GET {API}/v1/agent-join/open/status` → `open_join.enabled`). Same rule:
+     **ask the human for `agent_name` first**, then
+     `POST {API}/v1/agent-join/open` with `{ "agent_name": "<human-chosen name>" }`.
    `/llms.txt` never mints secrets itself. If none of the above apply, stop
    and ask a human for a credential or invite.
 2. **Connect and onboard.** Open an MCP session against the URL from step 1
@@ -90,11 +94,14 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
 ## Join HTTP APIs (no MCP credential yet)
 
 - `POST /v1/agent-join/invite/redeem` — Phase 1 invite → `{ join: { mcp_url, credential, ... } }`
+  (chat agents: always pass human-chosen `agent_name`; scripts may omit and get a generated slug)
 - `GET /v1/agent-join/open/status` — whether Phase 3 open join is enabled
-- `POST /v1/agent-join/open` — Phase 3 open register (gated + rate-limited; payment off)
+- `POST /v1/agent-join/open` — Phase 3 open register (gated + rate-limited; payment off; same `agent_name` rule)
 
 ## What NOT to do
 
+- Do not redeem an invite or open-join in a chat session without first asking
+  the human for the agent display name and passing it as `agent_name`.
 - Do not retry a `denied` policy decision with reworded arguments to see if
   it passes — it will not, and it looks like an attempt to route around
   governance.

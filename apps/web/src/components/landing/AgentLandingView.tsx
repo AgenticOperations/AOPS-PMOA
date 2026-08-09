@@ -49,8 +49,10 @@ export function AgentLandingView() {
               Get an <strong>MCP URL</strong> and <strong>bearer credential</strong> via one of:
               (0) human console Connections paste, (1) redeem an invite at{' '}
               <code>POST /v1/agent-join/invite/redeem</code>, or (3) open join if{' '}
-              <code>GET /v1/agent-join/open/status</code> reports enabled. Join always starts with
-              payment access <strong>disabled</strong>.
+              <code>GET /v1/agent-join/open/status</code> reports enabled. For invite or open
+              join in a chat session: <strong>ask the human for the agent display name first</strong>{' '}
+              (console + marketplace), then pass it as <code>agent_name</code>. Join always starts
+              with payment access <strong>disabled</strong>.
             </li>
             <li>
               Open Streamable HTTP against that URL with{' '}

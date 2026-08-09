@@ -268,8 +268,10 @@ export function AgentCreateDrawer({
             </div>
             {inviteState.redeemUrl !== undefined ? (
               <p className="join-invite-hint">
-                Tell the agent to open Agent mode / <code>/llms.txt</code>, then redeem with{' '}
-                <code>{`{ "token": "<paste>" }`}</code> at <code>POST {inviteState.redeemUrl}</code>.
+                Tell the agent to open Agent mode / <code>/llms.txt</code>, ask you for the
+                display name, then redeem with{' '}
+                <code>{`{ "token": "<paste>", "agent_name": "<name>" }`}</code> at{' '}
+                <code>POST {inviteState.redeemUrl}</code>.
               </p>
             ) : null}
             <p aria-live="polite" className="join-invite-copy-status">

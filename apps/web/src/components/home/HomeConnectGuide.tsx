@@ -57,8 +57,9 @@ export function HomeConnectGuide({
         'Connect to agentOps as an autonomous agent.',
         `1. Open ${agentLandingUrl} (or fetch ${llmsUrl}) and follow it exactly.`,
         '2. Ask the human for a join invite token from Agents → Add agent → Invite with token.',
-        '3. Redeem the token, then call agentops.onboard with the returned MCP credential.',
-        '4. Do not invent tools — use the onboard contract.',
+        '3. Before redeeming, ask the human what display name to use for this agent (console + marketplace). Do not invent a name.',
+        '4. Redeem with { "token": "<invite>", "agent_name": "<chosen name>" }, then call agentops.onboard with the returned MCP credential.',
+        '5. Do not invent tools — use the onboard contract.',
       ].join('\n'),
     [agentLandingUrl, llmsUrl],
   );
