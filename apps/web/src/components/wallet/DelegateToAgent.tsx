@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useAccount, useChainId, useConnect, useDisconnect, useReadContract, useSignTypedData, useSwitchChain, useWriteContract } from 'wagmi';
 import { erc20Abi } from 'viem';
+import { formatDelegationFailureFromBody } from '@/lib/delegation-errors';
 import { FIELD_CLASS } from '@/lib/payments-format';
 import { CHAIN_ID_BY_KEY, PERMIT2_ADDRESS, USDC_ADDRESS, type SupportedChainKey } from '@/lib/wallet-chains';
 
@@ -150,11 +151,14 @@ export function DelegateToAgent({ orgSlug, agents, agentWallets, lockedAgentId }
           payee_agent_id: agentId,
         }),
       });
-      if (!recordRes.ok) throw new Error(await recordRes.text());
+      if (!recordRes.ok) {
+        throw new Error(formatDelegationFailureFromBody(await recordRes.text()));
+      }
 
       setStep('done');
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Delegation failed.');
+      const raw = caught instanceof Error ? caught.message : 'Delegation failed.';
+      setError(formatDelegationFailureFromBody(raw));
       setStep('idle');
     }
   }

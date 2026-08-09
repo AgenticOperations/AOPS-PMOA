@@ -15,6 +15,7 @@ This is the deep, human-readable map of **what the product does**, **the Human v
 
 Primary evidence source: [`docs/spike-results.md`](spike-results.md)  
 Demo script: [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md)  
+Operator click-path (policies, fund, spend): [`docs/how-to-use-platform.md`](how-to-use-platform.md)  
 Why we built it this way: [`docs/handover.md`](handover.md)  
 Positioning vs Circle SDKs: [`docs/arc-agentops-addon.md`](arc-agentops-addon.md)
 
@@ -778,6 +779,7 @@ Master acceptance table: [`docs/spike-results.md` § Acceptance artifacts](spike
 | [`README.md`](../README.md) | Setup, ports, short E2E + proof links |
 | [`docs/spike-results.md`](spike-results.md) | Raw evidence log (every hash) |
 | [`demo/DEMO-RUNBOOK.md`](../demo/DEMO-RUNBOOK.md) | Camera / judge demo script |
+| [`docs/how-to-use-platform.md`](how-to-use-platform.md) | Operator how-to: baseline + fleet policies, funding, click-order |
 | [`docs/handover.md`](handover.md) | Plain-English “why” |
 | [`docs/arc-agentops-addon.md`](arc-agentops-addon.md) | Positioning vs Circle SDKs + marketplace notes |
 | [`docs/deployment/hosted-mcp.md`](deployment/hosted-mcp.md) | Hosted MCP HTTPS contract |

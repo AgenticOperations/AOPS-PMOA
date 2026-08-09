@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { formatDelegationFailure } from '@/lib/delegation-errors';
 import { FIELD_CLASS } from '@/lib/payments-format';
 import type { SupportedChainKey } from '@/lib/wallet-chains';
 
@@ -29,15 +30,6 @@ type Props = {
 };
 
 type Step = 'idle' | 'submitting' | 'done';
-
-const EXPECTED_REJECTIONS: Record<string, string> = {
-  agent_wallet_not_found:
-    'This agent has no wallet on the selected chain yet. Grant access first, then wait for provisioning.',
-  org_delegation_ceiling_exceeded:
-    'This cap would exceed the org ceiling. Raise it under Fund → Org ceiling, or revoke an unused delegation.',
-  treasury_insufficient_for_ceiling:
-    'Treasury does not hold enough USDC for this cap. Deposit on Fund, then try again.',
-};
 
 export function DelegateFromTreasury({ orgSlug, agents, agentWallets, lockedAgentId }: Props) {
   const [chainKey, setChainKey] = useState<SupportedChainKey>('arc');
@@ -77,9 +69,7 @@ export function DelegateFromTreasury({ orgSlug, agents, agentWallets, lockedAgen
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-        throw new Error(
-          EXPECTED_REJECTIONS[body.error ?? ''] ?? body.message ?? 'The delegation could not be created.',
-        );
+        throw new Error(formatDelegationFailure(body));
       }
       setStep('done');
     } catch (caught) {

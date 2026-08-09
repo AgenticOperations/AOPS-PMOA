@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { isGasIndexerInsufficientMessage } from '@/lib/delegation-errors';
 import { getOrgBySlug } from '@/lib/server/identity-spine-client';
 import {
   createTreasuryDelegation,
@@ -9,6 +10,14 @@ import {
 type RouteContext = {
   readonly params: Promise<{ readonly orgSlug: string }>;
 };
+
+function delegationFailurePayload(error: unknown): { readonly error: string; readonly message: string } {
+  const message = error instanceof Error ? error.message : 'The delegation could not be recorded.';
+  if (isGasIndexerInsufficientMessage(message)) {
+    return { error: 'delegation_gas_indexer_pending', message };
+  }
+  return { error: 'delegation_record_failed', message };
+}
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const { orgSlug } = await params;
@@ -21,17 +30,17 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // Flattening it to a 500 would tell the operator something broke when
     // in fact the system did exactly what they configured it to do.
     if (error instanceof PaymentsApiError) {
+      if (isGasIndexerInsufficientMessage(error.message)) {
+        return NextResponse.json(
+          { error: 'delegation_gas_indexer_pending', message: error.message },
+          { status: 502 },
+        );
+      }
       return NextResponse.json(
         { error: error.code, message: error.message },
         { status: error.status },
       );
     }
-    return NextResponse.json(
-      {
-        error: 'delegation_record_failed',
-        message: error instanceof Error ? error.message : 'The delegation could not be recorded.',
-      },
-      { status: 500 },
-    );
+    return NextResponse.json(delegationFailurePayload(error), { status: 500 });
   }
 }
