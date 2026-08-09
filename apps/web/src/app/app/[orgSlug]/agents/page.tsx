@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import { createAgentAction } from '../../../actions/identity-spine';
+import { createJoinInviteAction } from '../../../actions/agent-join';
 import { FleetAgentsSetupCard } from '@/components/agents/FleetAgentsSetupCard';
 import { getOrgBySlug, listAgentsPage, listTeams } from '@/lib/server/identity-spine-client';
 import type { AgentStatus } from '@/lib/identity-spine-types';
@@ -119,11 +120,14 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
           <div>
             <p className="registry-eyebrow">Identity</p>
             <h1>Agents</h1>
-            <p className="registry-page-copy">Register identities and open one to manage credentials and policy.</p>
+            <p className="registry-page-copy">
+              Create agents in console or invite remote ones with a token. Open an agent to manage credentials,
+              policy, and publish.
+            </p>
           </div>
           <AgentCreateDrawer
             action={createAgentAction.bind(null, org.id, org.slug)}
-            templateRepoUrl={process.env.NEXT_PUBLIC_AGENT_TEMPLATE_REPO_URL?.trim() || 'https://github.com/circlefin/arc-nanopayments'}
+            inviteAction={createJoinInviteAction.bind(null, org.id, org.slug)}
           />
         </header>
 

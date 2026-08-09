@@ -6,6 +6,9 @@
  * keeps them alive for Fleet Run / Hire desk. Ctrl+C to stop.
  *
  *   DEMO_ORG_ID=org_… node --env-file=apps/api/.env demo/start-fleet-sellers.mjs
+ *
+ * Stack mode (setup.sh): FLEET_SELLERS_OPTIONAL=1 keeps the process alive with a
+ * warning if the funded fleet org/agents are missing, so api/mcp/web still run.
  */
 import pg from 'pg';
 import { createHash, randomBytes } from 'node:crypto';
@@ -16,15 +19,25 @@ import { createSeniorReviewerAgent } from './agents/senior-reviewer/server.mjs';
 
 const AGENTOPS_API_BASE_URL = (process.env.AGENTOPS_API_BASE_URL ?? 'http://127.0.0.1:8080').replace(/\/+$/, '');
 const DATABASE_URL = process.env.DATABASE_URL;
-const ORG_ID = process.env.DEMO_ORG_ID?.trim() || 'org_9add7cd3-03eb-471f-85db-7024a9a0a5bd';
+const ORG_ID =
+  process.env.DEMO_ORG_ID?.trim() ||
+  process.env.AGENTOPS_ORG_ID?.trim() ||
+  'org_9add7cd3-03eb-471f-85db-7024a9a0a5bd';
 const ARC_RPC_URL = process.env.ARC_RPC_URL;
 const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org';
+const OPTIONAL = process.env.FLEET_SELLERS_OPTIONAL === '1' || process.env.FLEET_SELLERS_OPTIONAL === 'true';
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL required');
 if (!ARC_RPC_URL) throw new Error('ARC_RPC_URL required');
 
 function log(message) {
   console.log(`[start-fleet-sellers] ${message}`);
+}
+
+async function idleForever(reason) {
+  log(reason);
+  log('Idle (optional). Set DEMO_ORG_ID to a funded fleet org and restart to serve :4001–4004.');
+  await new Promise(() => {});
 }
 
 async function loadFleetAgents(pool) {
@@ -96,7 +109,19 @@ async function issueConnectionToken(sessionToken, agentId) {
 
 async function main() {
   const pool = new pg.Pool({ connectionString: DATABASE_URL, max: 2 });
-  const agents = await loadFleetAgents(pool);
+  let agents;
+  try {
+    agents = await loadFleetAgents(pool);
+  } catch (error) {
+    await pool.end();
+    const message = error instanceof Error ? error.message : String(error);
+    if (OPTIONAL) {
+      await idleForever(`Fleet sellers unavailable for org ${ORG_ID}: ${message}`);
+      return;
+    }
+    throw error;
+  }
+
   const sessionToken = await seedOperatorSession(pool);
   const analystToken = await issueConnectionToken(sessionToken, agents.Analyst);
 

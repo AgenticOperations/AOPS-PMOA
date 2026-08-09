@@ -22,10 +22,12 @@ Without arguments:
   - creates missing env files and asks for required external credentials
   - generates internal Circle worker encryption/authentication secrets
   - starts local Postgres and Redis, installs dependencies, and builds shared packages
-  - starts web (3005), Hosted MCP (8070), API (8080), and Circle worker (8090)
+  - starts web (3005), Hosted MCP (8070), API (8080), Circle worker (8090),
+    and fleet sellers (4001–4004) when DEMO_ORG_ID has a funded fleet
 
 --run-only:
-  validates the existing installation and env files, then starts the four application services.
+  validates the existing installation and env files, then starts the application services
+  (including fleet sellers when available).
   It does not create env files or install/build dependencies.
 EOF
 }
@@ -274,11 +276,15 @@ start_application() {
   port_available_for_app 8070
   port_available_for_app 8080
   port_available_for_app 8090
+  port_available_for_app 4001
+  port_available_for_app 4002
+  port_available_for_app 4003
+  port_available_for_app 4004
   mkdir -p "$LOG_DIR"
   rm -f "$LOG_DIR"/*.log "$RUNTIME_DIR"/*.pid
   trap shutdown INT TERM EXIT
 
-  log 'Starting API, Hosted MCP, Circle worker, and web console.'
+  log 'Starting API, Hosted MCP, Circle worker, web console, and fleet sellers.'
   start_service api npm run dev:api
   start_service mcp env -u AGENTOPS_MCP_CREDENTIAL NODE_ENV=development AGENTOPS_API_BASE_URL=http://localhost:8080 MCP_HOST=127.0.0.1 MCP_PORT=8070 MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp MCP_ALLOWED_HOSTS=127.0.0.1:8070,localhost:8070 MCP_ALLOWED_ORIGINS=http://localhost:3005,http://127.0.0.1:3005 npm run dev:mcp:http
   start_service circle-worker npm run dev:circle-worker
@@ -292,6 +298,24 @@ start_application() {
     fail "Startup readiness failed for $FAILED_SERVICE_NAME (status $FAILED_SERVICE_STATUS)."
   fi
 
+  # Fleet sellers need API + DB wallets for DEMO_ORG_ID. Optional idle if missing.
+  start_service fleet-sellers env FLEET_SELLERS_OPTIONAL=1 AGENTOPS_API_BASE_URL=http://127.0.0.1:8080 npm run dev:fleet-sellers
+
+  local fleet_ready=false
+  # Sellers bind all four ports together; one healthz is enough. Keep timeout short so
+  # optional idle mode does not delay the ready banner by minutes.
+  if wait_for_service_health 'Fleet DataFetcher' http://127.0.0.1:4001/healthz 20000; then
+    if wait_for_service_health 'Fleet Analyst' http://127.0.0.1:4002/healthz 5000 &&
+       wait_for_service_health 'Fleet Writer' http://127.0.0.1:4003/healthz 5000 &&
+       wait_for_service_health 'Fleet SeniorReviewer' http://127.0.0.1:4004/healthz 5000; then
+      fleet_ready=true
+    fi
+  fi
+  if [[ "$fleet_ready" != true ]]; then
+    log "Fleet sellers not ready on :4001–4004 yet (see $LOG_DIR/fleet-sellers.log)."
+    log 'Core stack is up. Set DEMO_ORG_ID to a funded fleet org in apps/api/.env and restart to enable sellers.'
+  fi
+
   cat <<EOF
 
 agentOps is ready:
@@ -300,9 +324,11 @@ agentOps is ready:
   Hosted MCP health: http://127.0.0.1:8070/healthz
   API:               http://localhost:8080
   Circle worker:     http://127.0.0.1:8090 (private)
+  Fleet sellers:     http://127.0.0.1:4001/data … :4004 (DataFetcher / Analyst / Writer / SeniorReviewer)
+                     status: $([[ "$fleet_ready" == true ]] && echo live || echo idle/unavailable — check DEMO_ORG_ID)
   Logs:              $LOG_DIR
 
-Press Ctrl+C to stop all four application services.
+Press Ctrl+C to stop all application services.
 EOF
 
   while true; do

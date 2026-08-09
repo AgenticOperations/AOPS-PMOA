@@ -1,8 +1,9 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 import { isRedirectError } from 'next/dist/client/components/redirect-error';
-import { IconPlus, IconPlugConnected, IconWorldWww } from '@tabler/icons-react';
+import { IconPlus, IconPlugConnected, IconTicket } from '@tabler/icons-react';
+import type { JoinInviteActionState } from '@/app/actions/agent-join';
 import {
   Sheet,
   SheetBody,
@@ -12,53 +13,110 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 
-export type AgentSetupMode = 'mcp' | 'publish';
+export type AgentSetupMode = 'mcp' | 'invite';
 
 type AgentCreateDrawerProps = {
   readonly action: (formData: FormData) => Promise<void>;
-  readonly templateRepoUrl?: string | undefined;
+  readonly inviteAction: (
+    prev: JoinInviteActionState,
+    formData: FormData,
+  ) => Promise<JoinInviteActionState>;
 };
 
 type AgentCreateState = {
   readonly error?: string;
 };
 
-const initialState: AgentCreateState = {};
-
-const DEFAULT_TEMPLATE_REPO = 'https://github.com/circlefin/arc-nanopayments';
+const initialCreateState: AgentCreateState = {};
+const initialInviteState: JoinInviteActionState = {};
 
 export function AgentCreateDrawer({
   action,
-  templateRepoUrl = DEFAULT_TEMPLATE_REPO,
+  inviteAction,
 }: AgentCreateDrawerProps) {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState<'mode' | 'details'>('mode');
+  const [step, setStep] = useState<'mode' | 'details' | 'invite-reveal'>('mode');
   const [setupMode, setSetupMode] = useState<AgentSetupMode | null>(null);
-  const [state, formAction, pending] = useActionState(async (_state: AgentCreateState, formData: FormData) => {
-    try {
-      await action(formData);
-      setOpen(false);
-      setStep('mode');
-      setSetupMode(null);
-      return initialState;
-    } catch (error) {
-      if (isRedirectError(error)) throw error;
-      return { error: error instanceof Error ? error.message : 'Agent creation failed.' };
+  const [copyStatus, setCopyStatus] = useState('');
+  const copyTimer = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
+
+  const [createState, createFormAction, createPending] = useActionState(
+    async (_state: AgentCreateState, formData: FormData) => {
+      try {
+        await action(formData);
+        setOpen(false);
+        resetDrawer();
+        return initialCreateState;
+      } catch (error) {
+        if (isRedirectError(error)) throw error;
+        return { error: error instanceof Error ? error.message : 'Agent creation failed.' };
+      }
+    },
+    initialCreateState,
+  );
+
+  const [inviteState, inviteFormAction, invitePending] = useActionState(inviteAction, initialInviteState);
+  const pending = createPending || invitePending;
+
+  useEffect(() => () => {
+    if (copyTimer.current !== null) globalThis.clearTimeout(copyTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (inviteState.token !== undefined && setupMode === 'invite') {
+      setStep('invite-reveal');
     }
-  }, initialState);
+  }, [inviteState.token, setupMode]);
+
+  function resetDrawer() {
+    setStep('mode');
+    setSetupMode(null);
+    setCopyStatus('');
+  }
 
   function handleOpenChange(next: boolean) {
+    if (pending) return;
     setOpen(next);
-    if (!next) {
-      setStep('mode');
-      setSetupMode(null);
-    }
+    if (!next) resetDrawer();
   }
 
   function chooseMode(mode: AgentSetupMode) {
     setSetupMode(mode);
     setStep('details');
   }
+
+  async function copyToken(value: string) {
+    try {
+      if (navigator.clipboard?.writeText === undefined) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(value);
+      if (copyTimer.current !== null) globalThis.clearTimeout(copyTimer.current);
+      setCopyStatus('');
+      copyTimer.current = globalThis.setTimeout(() => {
+        setCopyStatus('Copied');
+        copyTimer.current = null;
+      }, 25);
+    } catch {
+      setCopyStatus('Copy failed — select the token manually');
+    }
+  }
+
+  const title =
+    step === 'mode'
+      ? 'Add an agent'
+      : step === 'invite-reveal'
+        ? 'Invite token ready'
+        : setupMode === 'invite'
+          ? 'Invite a remote agent'
+          : 'Name the agent';
+
+  const description =
+    step === 'mode'
+      ? 'Create the identity here, or hand an invite token to Claude / Cursor. Publish stays on the agent detail page.'
+      : step === 'invite-reveal'
+        ? 'Copy once and give it to the agent. It is not shown in plaintext again. Payment stays off until you enable it.'
+        : setupMode === 'mcp'
+          ? 'Then issue a credential and connect Cursor or Claude via MCP. Publish later from the agent’s Publish tab if needed.'
+          : 'Creates a join token the agent redeems for MCP URL + credential.';
 
   return (
     <>
@@ -74,18 +132,10 @@ export function AgentCreateDrawer({
       <Sheet labelledBy="create-agent-title" onOpenChange={handleOpenChange} open={open} panelClassName="agent-action-sheet">
         <SheetHeader>
           <div>
-            <SheetTitle id="create-agent-title">
-              {step === 'mode' ? 'How will this agent connect?' : 'Name the agent'}
-            </SheetTitle>
-            <SheetDescription>
-              {step === 'mode'
-                ? 'Pick a path. Same agent identity, wallets, and policy either way.'
-                : setupMode === 'mcp'
-                  ? 'Then issue a credential and connect Cursor or Claude via MCP.'
-                  : 'Then publish a public URL from the Arc nanopayments template.'}
-            </SheetDescription>
+            <SheetTitle id="create-agent-title">{title}</SheetTitle>
+            <SheetDescription>{description}</SheetDescription>
           </div>
-          <SheetCloseButton onClick={() => handleOpenChange(false)} />
+          <SheetCloseButton disabled={pending} onClick={() => handleOpenChange(false)} />
         </SheetHeader>
 
         {step === 'mode' ? (
@@ -95,42 +145,33 @@ export function AgentCreateDrawer({
                 <span className="agent-setup-mode-icon" aria-hidden="true">
                   <IconPlugConnected size={22} stroke={1.6} />
                 </span>
-                <strong>Connect via MCP</strong>
-                <span>Use Cursor, Claude, or Codex with a hosted AgentOps credential. Policy gates every spend.</span>
+                <strong>Create in console</strong>
+                <span>Register the identity here, then issue an MCP credential for Cursor or Claude.</span>
               </button>
-              <button className="agent-setup-mode-card" onClick={() => chooseMode('publish')} type="button">
+              <button className="agent-setup-mode-card" onClick={() => chooseMode('invite')} type="button">
                 <span className="agent-setup-mode-icon" aria-hidden="true">
-                  <IconWorldWww size={22} stroke={1.6} />
+                  <IconTicket size={22} stroke={1.6} />
                 </span>
-                <strong>Publish Arc agent</strong>
-                <span>
-                  Fork{' '}
-                  <span className="agent-setup-mode-repo">arc-nanopayments</span>
-                  , host it, paste the URL, register ERC-8004 identity.
-                </span>
+                <strong>Invite with token</strong>
+                <span>Copy a one-time join token. The agent redeems it and joins under this org (payment off).</span>
               </button>
             </div>
-            <p className="agent-setup-mode-footnote">
-              AgentOps is the control plane + MCP on Arc primitives — not a Circle SDK replacement.
-              Template:{' '}
-              <a href={templateRepoUrl} rel="noreferrer" target="_blank">
-                {templateRepoUrl.replace(/^https?:\/\//, '')}
-              </a>
-            </p>
           </SheetBody>
-        ) : (
-          <form action={formAction} className="focus-form">
+        ) : null}
+
+        {step === 'details' && setupMode === 'mcp' ? (
+          <form action={createFormAction} className="focus-form">
             <SheetBody>
               <section className="agent-drawer-form-section">
                 <h3>Identity</h3>
-                <input name="setup_mode" type="hidden" value={setupMode ?? 'mcp'} />
+                <input name="setup_mode" type="hidden" value="mcp" />
                 <label className="focus-field">
                   <span>Agent name</span>
                   <input aria-label="Agent name" autoComplete="off" name="name" placeholder="Research agent" required />
-                  <small>Used across policies, approvals, and the publish listing.</small>
+                  <small>Used across policies, approvals, and credentials.</small>
                 </label>
               </section>
-              {state.error !== undefined ? <p className="form-error" role="alert">{state.error}</p> : null}
+              {createState.error !== undefined ? <p className="form-error" role="alert">{createState.error}</p> : null}
               <div className="agent-setup-detail-actions">
                 <button className="agent-secondary-button" disabled={pending} onClick={() => setStep('mode')} type="button">
                   Back
@@ -141,7 +182,70 @@ export function AgentCreateDrawer({
               </div>
             </SheetBody>
           </form>
-        )}
+        ) : null}
+
+        {step === 'details' && setupMode === 'invite' ? (
+          <form action={inviteFormAction} className="focus-form">
+            <SheetBody>
+              <section className="agent-drawer-form-section">
+                <h3>Invite</h3>
+                <label className="focus-field">
+                  <span>Label</span>
+                  <input name="label" placeholder="Sandbox cohort" type="text" />
+                  <small>Optional — helps you recognize this invite later.</small>
+                </label>
+                <label className="focus-field">
+                  <span>Max uses</span>
+                  <input defaultValue={1} max={10000} min={1} name="max_uses" type="number" />
+                </label>
+                <label className="focus-field">
+                  <span>Expires in hours</span>
+                  <input max={2160} min={1} name="expires_in_hours" placeholder="24 (optional)" type="number" />
+                </label>
+              </section>
+              {inviteState.error !== undefined ? <p className="form-error" role="alert">{inviteState.error}</p> : null}
+              <div className="agent-setup-detail-actions">
+                <button className="agent-secondary-button" disabled={pending} onClick={() => setStep('mode')} type="button">
+                  Back
+                </button>
+                <button className="agent-primary-button agent-inline-submit" disabled={pending} type="submit">
+                  {pending ? 'Creating…' : 'Create invite token'}
+                </button>
+              </div>
+            </SheetBody>
+          </form>
+        ) : null}
+
+        {step === 'invite-reveal' && inviteState.token !== undefined ? (
+          <SheetBody className="join-invite-reveal">
+            <p className="eyebrow">Shown once</p>
+            <label className="focus-field">
+              <span>Invite token</span>
+              <code className="mcp-setup-code">{inviteState.token}</code>
+            </label>
+            <div className="join-invite-reveal-actions">
+              <button
+                className="agent-primary-button"
+                onClick={() => void copyToken(inviteState.token!)}
+                type="button"
+              >
+                Copy token
+              </button>
+              <button className="agent-secondary-button" onClick={() => handleOpenChange(false)} type="button">
+                Done
+              </button>
+            </div>
+            {inviteState.redeemUrl !== undefined ? (
+              <p className="join-invite-hint">
+                Tell the agent to open Agent mode / <code>/llms.txt</code>, then redeem with{' '}
+                <code>{`{ "token": "<paste>" }`}</code> at <code>POST {inviteState.redeemUrl}</code>.
+              </p>
+            ) : null}
+            <p aria-live="polite" className="join-invite-copy-status">
+              {copyStatus}
+            </p>
+          </SheetBody>
+        ) : null}
       </Sheet>
     </>
   );

@@ -15,7 +15,7 @@ export type JoinInviteActionState = {
 };
 
 function joinInvitesPath(orgSlug: string): string {
-  return `/app/${orgSlug}/agents/join-invites`;
+  return `/app/${orgSlug}/agents`;
 }
 
 function stringField(formData: FormData, key: string): string {

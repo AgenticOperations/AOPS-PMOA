@@ -53,6 +53,9 @@ Remote agent  --->  hosted MCP :8070  ---+
                                           +--->  Fastify runtime API
 Local host    --->  standalone stdio MCP -+
 Template      --->  thin runtime-client  -+
+
+Fleet sellers (demo) :4001–4004  <---  Fleet Run / Hire / intra-fleet payments
+  DataFetcher · Analyst · Writer · SeniorReviewer
 ```
 
 | Workspace | Responsibility |
@@ -92,8 +95,8 @@ The setup command:
 4. Generates distinct base64 32-byte Circle profile and x402 result encryption keys plus a random internal worker token when absent.
 5. Starts local PostgreSQL and Redis only when the configured local ports are not already reachable.
 6. Installs the locked npm dependency graph, verifies the pinned Circle CLI, rejects high/critical npm advisories, and builds shared packages/migrations.
-7. Starts and health-checks web `3005`, hosted MCP `8070`, API `8080`, and Circle worker `8090`.
-8. Keeps all four application services supervised until you press `Ctrl+C`.
+7. Starts and health-checks web `3005`, hosted MCP `8070`, API `8080`, Circle worker `8090`, and fleet sellers `4001–4004` when `DEMO_ORG_ID` has a funded fleet.
+8. Keeps application services supervised until you press `Ctrl+C`.
 
 Service logs are written to `.runtime/logs/`. PostgreSQL and Redis data use named Docker volumes and remain available after the application services stop.
 
@@ -105,7 +108,7 @@ Open [http://localhost:3005](http://localhost:3005), sign in with Google, and cr
 ./startup.sh --run-only
 ```
 
-`startup.sh` is a compatibility entrypoint to the same bootstrap implementation. `--run-only` validates existing env files, dependencies, and infrastructure and starts the four application services. It does not create env files, prompt for credentials, run `npm install`, or rebuild packages.
+`startup.sh` is a compatibility entrypoint to the same bootstrap implementation. `--run-only` validates existing env files, dependencies, and infrastructure and starts the application services (including fleet sellers when available). It does not create env files, prompt for credentials, run `npm install`, or rebuild packages.
 
 The equivalent npm command is:
 
@@ -119,7 +122,7 @@ If any application port is already occupied, startup fails without killing the e
 
 Local secrets remain gitignored. The bootstrap validates these cross-service invariants:
 
-- API uses port `8080`; web uses `3005`; hosted MCP uses `8070`; the private Circle worker uses `8090`.
+- API uses port `8080`; web uses `3005`; hosted MCP uses `8070`; the private Circle worker uses `8090`; fleet sellers use `4001–4004` when `DEMO_ORG_ID` is set to a funded fleet org.
 - API and web use the same `APP_BASE_URL` and `SESSION_COOKIE_NAME`.
 - Google OAuth redirects through the web BFF callback.
 - `CIRCLE_WORKER_TOKEN` is at least 32 characters.
@@ -230,6 +233,7 @@ Lane 2 (agent-to-agent Permit2) and escrow / reputation are proven on-chain abov
 
 ```bash
 npm run dev:web             # Next.js; pass -- --port 3005 when run manually
+npm run dev:fleet-sellers   # Demo sellers :4001–4004 (needs DEMO_ORG_ID + funded fleet)
 npm run dev:api             # Fastify API
 npm run dev:circle-worker   # private Circle worker
 npm run dev:mcp             # standalone stdio MCP
@@ -254,6 +258,7 @@ The current Circle CLI/Solana dependency chain reports moderate npm advisories w
 | Hosted MCP | `http://127.0.0.1:8070/healthz` | public deployment service; `/mcp` requires an agent bearer credential |
 | Circle worker | `http://127.0.0.1:8090/healthz` | private network only |
 | Web | `http://127.0.0.1:3005/` | public deployment service |
+| Fleet sellers | `http://127.0.0.1:4001/healthz` … `:4004/healthz` | local demo paid HTTP (DataFetcher / Analyst / Writer / SeniorReviewer) |
 
 All `/internal/circle/*` routes require the worker bearer token. The worker owns decrypted temporary Circle CLI profiles; the web and public API must never receive profile encryption keys, OTPs, or decrypted provider state.
 

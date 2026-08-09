@@ -19,6 +19,7 @@
     "dev:web": "npm --workspace @agentops-pmoa/web run dev",
     "dev:mcp": "npm --workspace @agentops-pmoa/mcp run dev",
     "dev:mcp:http": "npm --workspace @agentops-pmoa/mcp run dev:http",
+    "dev:fleet-sellers": "node --env-file=apps/api/.env demo/start-fleet-sellers.mjs",
     "build:packages": "npm run build --workspace @agentops-pmoa/contracts --workspace @agentops-pmoa/config --workspace @agentops-pmoa/db --workspace @agentops-pmoa/runtime-client",
     "build:apps": "npm run build --workspace @agentops-pmoa/api --workspace @agentops-pmoa/web --workspace @agentops-pmoa/mcp",
     "build": "npm run build:packages && npm run build:apps",
