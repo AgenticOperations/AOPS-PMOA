@@ -1148,6 +1148,17 @@ input::placeholder {
   color: var(--text-on-accent);
 }
 
+.console-hire-cta-secondary {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.console-hire-cta-secondary:hover {
+  background: var(--bg-soft);
+  color: var(--text-primary);
+}
+
 .command-launcher {
   display: inline-flex;
   align-items: center;
@@ -1195,6 +1206,8 @@ input::placeholder {
   z-index: 9999;
   pointer-events: none;
   height: 3px;
+  opacity: 0;
+  transition: opacity 180ms ease;
 }
 
 .nav-progress-bar {
@@ -1206,10 +1219,7 @@ input::placeholder {
   opacity: 1;
   background: linear-gradient(90deg, var(--accent-blue), oklch(0.7 0.18 260));
   border-radius: 0 2px 2px 0;
-  /* Width driven by JS (rAF loop) — transition makes it smooth between frames */
-  transition:
-    width 80ms linear,
-    opacity 300ms ease;
+  /* Width/opacity transitions are applied inline only during finish */
   box-shadow: 0 0 10px oklch(0.6 0.2 250 / 0.6);
 }
 
@@ -17500,6 +17510,85 @@ html[data-theme="dark"] .chain-mark[src*="/landing/chains/arc.png"] {
 /* FLEET-RUN — merged from fleet-run.css */
 /* ========================================================================== */
 
+.fleet-setup-eyebrow {
+  margin: 0 0 0.35rem;
+  font-size: var(--type-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.fleet-setup-ok {
+  color: var(--state-success) !important;
+  font-weight: 600;
+}
+
+.achat-inline-warning {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--state-danger);
+  font-size: var(--type-body-sm);
+  line-height: 1.5;
+}
+
+.achat-inline-warning .action-nav-link {
+  color: var(--accent-ink);
+  font-weight: 650;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-ink) 35%, transparent);
+}
+
+.achat-inline-warning .action-nav-link:hover {
+  border-bottom-color: var(--accent-ink);
+}
+
+.fleet-agents-setup {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.25rem;
+  align-items: flex-start;
+  margin: 0 0 1rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-panel);
+}
+
+.fleet-agents-setup h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.fleet-agents-setup p {
+  margin: 0.45rem 0 0;
+  color: var(--text-muted);
+  font-size: var(--type-body-sm);
+  line-height: 1.5;
+}
+
+.fleet-agents-setup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  align-items: stretch;
+  min-width: 12rem;
+}
+
+.fleet-agents-setup-actions .fleet-run-secondary {
+  text-align: center;
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .fleet-agents-setup {
+    flex-direction: column;
+  }
+}
+
 .fleet-run-shell {
   display: flex;
   flex-direction: column;
@@ -17984,6 +18073,35 @@ html[data-theme="dark"] .chain-mark[src*="/landing/chains/arc.png"] {
   justify-content: space-between;
   gap: 20px;
   pointer-events: auto;
+}
+
+.amkt-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-left: auto;
+  margin-right: 0.5rem;
+}
+
+.amkt-nav-links a {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--amkt-muted);
+  border-bottom: 1px solid transparent;
+  padding-bottom: 2px;
+}
+
+.amkt-nav-links a:hover,
+.amkt-nav-links a[aria-current='page'] {
+  color: var(--amkt-ink);
+  border-bottom-color: var(--amkt-ink);
+}
+
+@media (max-width: 720px) {
+  .amkt-nav-links {
+    display: none;
+  }
 }
 
 .amkt-nav[data-scrolled='true'] .amkt-nav-inner {
@@ -20087,3 +20205,839 @@ html[data-theme='dark'] .aops-tour-popover.driver-popover {
     padding: 1.25rem 1.1rem 1rem;
   }
 }
+
+/* ========================================================================== */
+/* FLEET CHAT — public surface (platform tokens, no pink) */
+/* ========================================================================== */
+
+.achat {
+  --achat-ink: var(--text-primary);
+  --achat-muted: var(--text-muted);
+  --achat-faint: var(--text-faint);
+  --achat-paper: var(--bg-app);
+  --achat-panel: var(--bg-panel);
+  --achat-line: var(--border-subtle);
+  --achat-line-strong: var(--border-strong);
+  --achat-accent: var(--accent-blue);
+  --achat-accent-soft: var(--accent-tint);
+  --achat-accent-ink: var(--accent-ink);
+  --achat-action: var(--console-action);
+  --achat-cursive: var(--font-cursive), 'Segoe Script', 'Apple Chancery', cursive;
+  position: relative;
+  min-height: 100vh;
+  color: var(--achat-ink);
+  background: var(--achat-paper);
+  overflow-x: clip;
+}
+
+.achat .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.achat-shell {
+  position: relative;
+  width: min(1080px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 6.5rem 0 3.5rem;
+  min-height: 100vh;
+  z-index: 1;
+}
+
+/* Same marketplace sky plane + paper fade */
+.achat-sky {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: min(72vh, 640px);
+  z-index: 0;
+  overflow: hidden;
+}
+
+.achat-sky-media {
+  position: absolute;
+  inset: 0;
+  background-image: url('/marketplace/hero-sky.png');
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+}
+
+.achat-sky-fade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgb(247 247 246 / 0.04) 0%,
+      rgb(247 247 246 / 0.2) 42%,
+      rgb(247 247 246 / 0.78) 78%,
+      var(--achat-paper) 100%
+    ),
+    linear-gradient(90deg, rgb(247 247 246 / 0.28) 0%, rgb(247 247 246 / 0.08) 45%, transparent 72%);
+}
+
+html[data-theme='dark'] .achat {
+  background: #0c0c0c;
+}
+
+html[data-theme='dark'] .achat-sky-fade {
+  background:
+    linear-gradient(
+      180deg,
+      rgb(12 12 12 / 0.35) 0%,
+      rgb(12 12 12 / 0.55) 45%,
+      rgb(12 12 12 / 0.88) 78%,
+      var(--achat-paper) 100%
+    ),
+    linear-gradient(90deg, rgb(12 12 12 / 0.4) 0%, transparent 70%);
+}
+
+.achat-landing,
+.achat-run,
+.achat-gate {
+  position: relative;
+  z-index: 1;
+}
+
+.achat-gate {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - 2rem);
+  padding: 6.5rem 1.5rem 3rem;
+}
+
+.achat-gate-inner {
+  width: min(34rem, 100%);
+  text-align: center;
+}
+
+.achat-gate-inner h1 {
+  margin: 0.35rem 0 0.75rem;
+  font-size: clamp(1.75rem, 3vw, 2.35rem);
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.achat-gate-inner p {
+  margin: 0;
+  color: var(--achat-muted);
+  line-height: 1.55;
+}
+
+.achat-gate-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+
+.achat-eyebrow {
+  margin: 0;
+  font-size: var(--type-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--achat-accent-ink);
+  font-weight: 650;
+}
+
+.achat-primary,
+.achat-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 1.1rem;
+  border-radius: 10px;
+  font-size: var(--type-ui);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.achat-primary {
+  background: var(--achat-action);
+  color: var(--text-on-dark);
+  border: 1px solid transparent;
+}
+
+.achat-primary:hover {
+  background: var(--console-action-hover);
+}
+
+.achat-secondary {
+  background: var(--achat-panel);
+  color: var(--achat-ink);
+  border: 1px solid var(--achat-line-strong);
+}
+
+.achat-secondary:hover {
+  background: var(--bg-soft);
+}
+
+.achat-landing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-top: 2.5rem;
+  animation: achat-rise 420ms ease-out;
+}
+
+.achat-landing h1 {
+  margin: 0;
+  font-size: clamp(1.85rem, 3.4vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+  color: var(--achat-ink);
+  text-wrap: balance;
+}
+
+/* Single-word cursive accent only — rest stays Jakarta */
+.achat-script {
+  font-family: var(--achat-cursive);
+  font-style: normal;
+  font-weight: 400;
+  font-size: 1.18em;
+  letter-spacing: 0.01em;
+  line-height: 0.9;
+  color: var(--achat-accent-ink);
+  padding: 0 0.06em;
+}
+
+.achat-lede {
+  margin: 0.85rem 0 0;
+  max-width: 34rem;
+  color: var(--achat-muted);
+  font-size: var(--type-body);
+  line-height: 1.55;
+}
+
+.achat-composer {
+  width: min(720px, 100%);
+  margin-top: 1.75rem;
+  text-align: left;
+  background: var(--achat-panel);
+  border: 1px solid var(--achat-line-strong);
+  border-radius: 18px;
+  padding: 0.85rem 0.95rem 0.75rem;
+  box-shadow: var(--shadow-panel);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.achat-composer:focus-within {
+  border-color: var(--achat-accent);
+  box-shadow: 0 0 0 4px var(--achat-accent-soft);
+}
+
+.achat-composer textarea {
+  width: 100%;
+  border: 0;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: var(--achat-ink);
+  font: inherit;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  min-height: 7.5rem;
+}
+
+.achat-composer textarea::placeholder {
+  color: var(--entry-input-placeholder);
+}
+
+.achat-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--achat-line);
+}
+
+.achat-composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  color: var(--achat-faint);
+  font-size: var(--type-caption);
+}
+
+.achat-composer-meta a {
+  color: var(--achat-muted);
+  text-decoration: none;
+  border-bottom: 1px solid var(--achat-line-strong);
+}
+
+.achat-composer-meta a:hover {
+  color: var(--achat-ink);
+}
+
+.achat-send {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 0;
+  display: inline-grid;
+  place-items: center;
+  background: var(--achat-action);
+  color: var(--text-on-dark);
+  cursor: pointer;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.achat-send:hover:not(:disabled) {
+  background: var(--console-action-hover);
+  transform: translateY(-1px);
+}
+
+.achat-send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.achat-suggestions {
+  list-style: none;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  width: min(780px, 100%);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.achat-suggestions li {
+  display: flex;
+  min-width: 0;
+}
+
+.achat-suggestions button {
+  width: 100%;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.55rem;
+  text-align: left;
+  border: 1px solid var(--achat-line);
+  background: rgb(255 255 255 / 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 14px;
+  padding: 0.9rem 0.95rem;
+  cursor: pointer;
+  color: var(--achat-ink);
+  box-shadow: 0 1px 0 rgb(17 17 17 / 0.03);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.achat-suggestions button:hover:not(:disabled) {
+  border-color: var(--achat-line-strong);
+  background: var(--achat-panel);
+  box-shadow: 0 8px 24px rgb(17 17 17 / 0.06);
+}
+
+.achat-suggestions button.is-active {
+  border-color: var(--achat-ink);
+  background: var(--achat-panel);
+  color: var(--achat-ink);
+  box-shadow: inset 0 0 0 1px var(--achat-ink);
+}
+
+.achat-suggestions button.is-active span {
+  color: var(--achat-muted);
+}
+
+.achat-suggestions strong {
+  display: block;
+  min-height: 2.5em;
+  font-size: 0.9rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.achat-suggestions span {
+  display: block;
+  min-height: 2.6em;
+  margin: 0;
+  color: var(--achat-muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+html[data-theme='dark'] .achat-suggestions button {
+  background: rgb(20 20 20 / 0.72);
+  border-color: var(--achat-line);
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .achat-suggestions button:hover:not(:disabled),
+html[data-theme='dark'] .achat-suggestions button.is-active {
+  background: var(--achat-panel);
+}
+
+.achat-run-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 1.15rem;
+}
+
+.achat-run-header h2 {
+  margin: 0.25rem 0 0;
+  font-size: 1.45rem;
+  letter-spacing: -0.03em;
+}
+
+.achat-run-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.achat-text-link {
+  color: var(--achat-muted);
+  font-size: var(--type-caption);
+  text-decoration: none;
+  border-bottom: 1px solid var(--achat-line-strong);
+}
+
+.achat-text-link:hover {
+  color: var(--achat-ink);
+}
+
+.achat-run-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.85fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.achat-running {
+  margin: 0;
+  color: var(--achat-accent-ink);
+  font-size: var(--type-body-sm);
+  font-weight: 600;
+}
+
+.achat-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.achat-msg {
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  text-align: left;
+  background: var(--achat-panel);
+  border: 1px solid var(--achat-line);
+}
+
+.achat-msg-agent {
+  background: rgb(255 255 255 / 0.78);
+  border-color: var(--achat-line);
+}
+
+.achat-msg-tool {
+  background: var(--bg-soft);
+  font-size: var(--type-body-sm);
+  color: var(--achat-muted);
+}
+
+.achat-msg-error {
+  border-color: #f0c9c9;
+  background: var(--state-danger-tint);
+  color: var(--state-danger);
+}
+
+.achat-msg-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: var(--type-caption);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--achat-faint);
+}
+
+.achat-msg p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.achat-msg-body {
+  margin: 0;
+  white-space: pre-wrap;
+  font: inherit;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  color: inherit;
+}
+
+.achat-msg a {
+  color: var(--achat-accent-ink);
+}
+
+html[data-theme='dark'] .achat-msg-agent {
+  background: rgb(20 20 20 / 0.78);
+}
+
+@keyframes achat-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 900px) {
+  .achat-suggestions,
+  .achat-run-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .achat-shell {
+    width: min(100% - 32px, 1080px);
+    padding-top: 5.5rem;
+  }
+
+  .achat-run-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achat-landing,
+  .achat-suggestions button,
+  .achat-send {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Co-pilot multi-turn + live fleet graph */
+.achat-suggestions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.achat-copilot-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(240px, 0.8fr);
+  gap: 1.15rem;
+  align-items: start;
+}
+
+.achat-copilot-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: min(58vh, 640px);
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.achat-msg-user {
+  background: var(--bg-soft);
+  border-color: var(--achat-line-strong);
+}
+
+.achat-inline-links {
+  margin: 0.55rem 0 0;
+  font-size: var(--type-caption);
+  color: var(--achat-muted);
+}
+
+.achat-inline-links a {
+  color: var(--achat-accent-ink);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--achat-accent-ink) 35%, transparent);
+}
+
+.achat-inline-links a:hover {
+  border-bottom-color: var(--achat-accent-ink);
+}
+
+.achat-listing-cards {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.achat-listing-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid var(--achat-line-strong);
+  background: color-mix(in srgb, var(--bg-soft) 70%, transparent);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.achat-listing-card:hover {
+  border-color: color-mix(in srgb, var(--achat-accent-ink) 45%, var(--achat-line));
+  background: color-mix(in srgb, var(--achat-accent-ink) 6%, var(--bg-soft));
+}
+
+.achat-listing-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.achat-listing-card-top strong {
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.achat-listing-price {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--achat-accent-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.achat-listing-card p {
+  margin: 0;
+  color: var(--achat-muted);
+  font-size: var(--type-body-sm);
+  line-height: 1.4;
+}
+
+.achat-listing-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  margin-top: 0.1rem;
+  color: var(--achat-faint);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.achat-listing-open {
+  margin-left: auto;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--achat-accent-ink);
+  font-weight: 650;
+}
+
+html[data-theme='dark'] .achat-listing-card {
+  background: rgb(255 255 255 / 0.04);
+}
+
+.achat-confirms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.achat-confirm {
+  min-height: 34px;
+  padding: 0 0.85rem;
+  border-radius: 9px;
+  border: 1px solid var(--achat-ink);
+  background: var(--achat-ink);
+  color: var(--text-on-dark);
+  font: inherit;
+  font-size: var(--type-ui);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.achat-confirm:hover:not(:disabled) {
+  background: var(--console-action-hover);
+  border-color: var(--console-action-hover);
+}
+
+.achat-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.achat-error {
+  margin: 0.65rem 0 0;
+  color: var(--state-danger);
+  font-size: var(--type-body-sm);
+}
+
+.achat-composer-dock {
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.achat-composer-dock textarea {
+  min-height: 3.2rem;
+}
+
+.achat-copilot-side .achat-side-card {
+  border: 1px solid var(--achat-line);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 0.78);
+  padding: 0.95rem 1rem;
+}
+
+html[data-theme='dark'] .achat-copilot-side .achat-side-card {
+  background: rgb(20 20 20 / 0.78);
+}
+
+.achat-side-card h3 {
+  margin: 0;
+  font-size: var(--type-ui);
+  letter-spacing: -0.02em;
+}
+
+.achat-side-hint {
+  margin: 0.35rem 0 0.75rem;
+  color: var(--achat-muted);
+  font-size: var(--type-caption);
+  line-height: 1.4;
+}
+
+.achat-side-list {
+  margin: 0.65rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--achat-muted);
+  font-size: var(--type-body-sm);
+  line-height: 1.5;
+}
+
+.achat-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.achat-graph-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0;
+}
+
+.achat-graph-node-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  animation: achat-rise 320ms ease-out;
+}
+
+.achat-graph-node {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 5.5rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 10px;
+  border: 1px solid var(--achat-line-strong);
+  background: var(--achat-panel);
+}
+
+.achat-graph-node-label {
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.achat-graph-node-status {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--achat-faint);
+}
+
+.achat-graph-node.is-ready,
+.achat-graph-node.is-done {
+  border-color: color-mix(in srgb, var(--achat-accent-ink) 45%, var(--achat-line));
+}
+
+.achat-graph-node.is-running,
+.achat-graph-node.is-creating {
+  border-color: var(--achat-accent);
+  box-shadow: 0 0 0 3px var(--achat-accent-soft);
+}
+
+.achat-graph-node.is-failed {
+  border-color: #e8a0a0;
+}
+
+.achat-graph-wire {
+  width: 1.1rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--achat-line-strong);
+}
+
+.achat-graph-wire.is-done {
+  background: var(--achat-accent-ink);
+}
+
+.achat-graph-payments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: var(--type-caption);
+  color: var(--achat-muted);
+}
+
+.achat-graph-payments li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  animation: achat-rise 280ms ease-out;
+}
+
+.achat-graph-pay-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--achat-accent-ink);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .achat-copilot-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .achat-copilot-thread {
+    max-height: none;
+  }
+}
+

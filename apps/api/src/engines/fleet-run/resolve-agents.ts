@@ -62,7 +62,7 @@ export async function resolveFleetAgents(
     throw new IdentityError(
       'fleet_agents_missing',
       409,
-      `Org is missing fleet agents: ${missing.join(', ')}. Create them (or reuse DEMO_ORG_ID reset) before Fleet Run.`,
+      `Fleet roster incomplete (${missing.join(', ')}). Create them in Agents, then enable wallets in Empower.`,
     );
   }
 
@@ -78,7 +78,7 @@ export async function resolveFleetAgents(
       throw new IdentityError(
         'fleet_endpoint_missing',
         409,
-        `${name} has no public endpoint. Publish a URL or start demo sellers on ports 4001–4004.`,
+        `${name} has no public endpoint. Publish a URL on Agents, or start demo sellers on ports 4001–4004.`,
       );
     }
     agents[role] = {

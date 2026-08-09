@@ -4,6 +4,7 @@ import { useActionState, useEffect, useMemo, useState, useTransition } from 'rea
 import Link from 'next/link';
 import { IconPlayerPlay, IconRefresh, IconSparkles } from '@tabler/icons-react';
 import { refreshFleetRunAction, startFleetRunAction, type FleetRunActionState } from '@/app/actions/fleet-run';
+import { FleetRunErrorPanel } from '@/components/fleet-run/FleetRunErrorPanel';
 import type { FleetChecklistItem, FleetRunEvent, FleetRunRecord } from '@/lib/server/fleet-run-client';
 
 type FleetRunWorkspaceProps = {
@@ -143,6 +144,7 @@ export function FleetRunWorkspace({
         <div className="fleet-run-hero-links">
           <Link href={`/app/${orgSlug}/payments/funding`}>Fund</Link>
           <Link href={`/app/${orgSlug}/controls`}>Policies</Link>
+          <Link href={`/chat`}>Chat with agent</Link>
           <Link href={`/marketplace`}>Marketplace</Link>
         </div>
       </header>
@@ -170,7 +172,9 @@ export function FleetRunWorkspace({
                 Refresh
               </button>
             </div>
-            {state.error !== undefined ? <p className="fleet-run-error" role="alert">{state.error}</p> : null}
+            {state.error !== undefined ? (
+              <FleetRunErrorPanel code={state.errorCode ?? null} message={state.error} orgSlug={orgSlug} />
+            ) : null}
           </form>
 
           <div className="fleet-run-thread">
@@ -187,7 +191,7 @@ export function FleetRunWorkspace({
                 </div>
                 <EventFeed events={run.events} />
                 {run.status === 'failed' && run.error !== null ? (
-                  <p className="fleet-run-error" role="alert">{run.error}</p>
+                  <FleetRunErrorPanel message={run.error} orgSlug={orgSlug} />
                 ) : null}
                 {run.status === 'completed' && typeof run.fruit?.brief === 'string' ? (
                   <article className="fleet-run-fruit">

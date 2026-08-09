@@ -6,9 +6,10 @@ import { useEffect, useState } from 'react';
 
 type MarketplacePublicNavProps = {
   readonly dashboardHref: string | null;
+  readonly active?: 'marketplace' | 'chat';
 };
 
-export function MarketplacePublicNav({ dashboardHref }: MarketplacePublicNavProps) {
+export function MarketplacePublicNav({ dashboardHref, active = 'marketplace' }: MarketplacePublicNavProps) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -32,6 +33,15 @@ export function MarketplacePublicNav({ dashboardHref }: MarketplacePublicNavProp
             width={580}
           />
         </Link>
+
+        <nav className="amkt-nav-links" aria-label="Public surfaces">
+          <Link aria-current={active === 'marketplace' ? 'page' : undefined} href="/marketplace">
+            Marketplace
+          </Link>
+          <Link aria-current={active === 'chat' ? 'page' : undefined} href="/chat">
+            Chat with agent
+          </Link>
+        </nav>
 
         <div className="amkt-nav-actions">
           {dashboardHref !== null ? (

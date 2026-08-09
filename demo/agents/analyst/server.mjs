@@ -2,13 +2,8 @@
 // data it analyzes. This is the critical second-hop payment -- it proves
 // the fleet is a real economy (agents paying agents while doing real
 // work), not just a hub fanning payments out to leaf agents.
-//
-// Unlike DataFetcher/Writer/SeniorReviewer (pure earners with no
-// payments-engine dependency), the Analyst is itself a payer: it calls
-// the real agentOps runtime API's intra-fleet payment route with its
-// own connection bearer token, exactly as a real agent integration
-// would -- it never reaches into the payments engine's internals.
 import Fastify from 'fastify';
+import { buildAnalystPayload } from '../shared/service-payloads.mjs';
 
 const ARC_CHAIN_ID = process.env.ARC_CHAIN_ID ?? '5042002';
 const ARC_USDC_ADDRESS = process.env.ARC_USDC_ADDRESS ?? '0x3600000000000000000000000000000000000000';
@@ -75,12 +70,7 @@ export function createAnalystAgent(options) {
       const dataResult = dataPayment.body?.data;
 
       return reply.code(200).send({
-        data: {
-          query: query.q ?? null,
-          analysis: `Analysis of "${dataResult?.value ?? 'unknown'}": within expected range.`,
-          sourcedFrom: { agent: 'DataFetcher', txHash: dataPayment.txHash },
-          servedAt: new Date(0).toISOString(),
-        },
+        data: buildAnalystPayload(query.q ?? null, dataResult, dataPayment.txHash),
       });
     }
 
@@ -90,7 +80,7 @@ export function createAnalystAgent(options) {
       resource: {
         url: resourceUrl,
         category: 'analysis',
-        description: 'Analyst market analysis (sources DataFetcher data mid-task)',
+        description: 'Analyst A2A brief — sources DataFetcher mid-task',
         mimeType: 'application/json',
       },
       accepts: [{
@@ -105,7 +95,7 @@ export function createAnalystAgent(options) {
     });
   });
 
-  app.get('/healthz', async () => ({ status: 'ok', walletAddress }));
+  app.get('/healthz', async () => ({ status: 'ok', walletAddress, service: 'analyst.a2a-brief' }));
 
   return app;
 }

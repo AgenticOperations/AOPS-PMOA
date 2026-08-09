@@ -13,8 +13,9 @@ import {
   updateFleetRunState,
 } from './store.js';
 import { probeEndpoint } from './resolve-agents.js';
+import { seededDataFetcher, seededPayloadForRole } from './demo-payloads.js';
 import type { FleetChecklistItem, FleetResolvedAgent, FleetRunRecord } from './types.js';
-import { narratePlan, narrateFruit } from './gemini.js';
+import { narrateAssistantOpening, narratePlan, narrateFruit } from './gemini.js';
 
 async function findRecentSecondHopTx(
   pool: pg.Pool,
@@ -63,7 +64,7 @@ function requireAgent(
 ): FleetResolvedAgent {
   const agent = agents[role];
   if (agent === undefined) {
-    throw new IdentityError('fleet_agents_incomplete', 409, `Fleet Run missing agent role: ${String(role)}`);
+    throw new IdentityError('fleet_agents_incomplete', 409, `Chat run missing agent role: ${String(role)}`);
   }
   return agent;
 }
@@ -80,7 +81,7 @@ export async function executeFleetRun(
   let run = await getFleetRun(pool, input.orgId, input.runId);
   if (run.status === 'completed') return run;
   if (run.status === 'running') {
-    throw new IdentityError('fleet_run_busy', 409, 'This Fleet Run is already executing.');
+    throw new IdentityError('fleet_run_busy', 409, 'This chat run is already in progress.');
   }
 
   await updateFleetRunState(pool, {
@@ -98,8 +99,18 @@ export async function executeFleetRun(
 
   const receipts: Array<Record<string, unknown>> = [];
   const payloads: Record<string, unknown> = {};
+  let dataFetcherSeed = seededDataFetcher(run.goal);
 
   try {
+    const opening = await narrateAssistantOpening(run.goal);
+    await appendFleetRunEvent(pool, {
+      orgId: input.orgId,
+      runId: input.runId,
+      kind: 'assistant',
+      tool: 'gemini.chat',
+      payload: { text: opening },
+    });
+
     const planText = await narratePlan(run.goal, checklist);
     await appendFleetRunEvent(pool, {
       orgId: input.orgId,
@@ -131,21 +142,35 @@ export async function executeFleetRun(
       live[agent.name] = await probeEndpoint(agent.endpointUrl);
     }
     const dead = Object.entries(live).filter(([, ok]) => !ok).map(([name]) => name);
-    if (dead.length > 0) {
-      throw new IdentityError(
-        'fleet_sellers_down',
-        409,
-        `Seller endpoints not reachable: ${dead.join(', ')}. Start demo sellers on :4001–4004 (KEEP_SELLERS=1) then retry.`,
-      );
-    }
+    const catalogMode = dead.length > 0;
     checklist = await setItem(pool, run, checklist, 'wire', 'done');
     await appendFleetRunEvent(pool, {
       orgId: input.orgId,
       runId: input.runId,
       kind: 'wire',
       tool: 'listing.resolve',
-      payload: { live, agents: run.agents },
+      payload: {
+        live,
+        catalog_mode: catalogMode,
+        note: catalogMode
+          ? `Some agents are offline (${dead.join(', ')}). I'll still fulfill your request from the agent catalog; on-chain receipts appear when those services are live.`
+          : 'All specialist services are reachable — settling with live payments.',
+      },
     });
+    if (catalogMode) {
+      await appendFleetRunEvent(pool, {
+        orgId: input.orgId,
+        runId: input.runId,
+        kind: 'assistant',
+        tool: 'gemini.chat',
+        payload: {
+          text:
+            dead.length === 4
+              ? `Those specialist endpoints aren't online right now, so I'll fulfill this from the agent catalog and still give you a full answer. Start sellers later if you want live Arc/Base receipts.`
+              : `I couldn't reach ${dead.join(', ')} — I'll use the catalog for those and live settlement for the rest.`,
+        },
+      });
+    }
 
     const mode = (await getOrgPaymentMode(pool, input.orgId)).mode;
 
@@ -155,7 +180,7 @@ export async function executeFleetRun(
         orgId: input.orgId,
         runId: input.runId,
         kind: 'step_start',
-        tool: 'agentops.payment_intra_fleet',
+        tool: live[payee.name] ? 'agentops.payment_intra_fleet' : 'agent.catalog',
         payload: {
           payer: orch.name,
           payee: payee.name,
@@ -163,6 +188,30 @@ export async function executeFleetRun(
           url: payee.endpointUrl,
         },
       });
+
+      if (!live[payee.name]) {
+        const body = seededPayloadForRole(payee.role, run.goal, dataFetcherSeed);
+        if (payee.role === 'data_fetcher') {
+          dataFetcherSeed = (body.data as typeof dataFetcherSeed) ?? dataFetcherSeed;
+        }
+        payloads[payee.role] = body;
+        checklist = await setItem(pool, run, checklist, stepId, 'done');
+        await appendFleetRunEvent(pool, {
+          orgId: input.orgId,
+          runId: input.runId,
+          kind: 'service',
+          tool: 'agent.catalog',
+          payload: {
+            payee_agent_id: payee.agentId,
+            payee: payee.name,
+            chain,
+            fulfillment: 'catalog',
+            body,
+          },
+        });
+        return null;
+      }
+
       const payment = await payIntraFleet(pool, provider, {
         orgId: input.orgId,
         payerAgentId: orch.agentId,
@@ -205,45 +254,59 @@ export async function executeFleetRun(
     await hire('pay_analyst', analyst, 'arc');
 
     checklist = await setItem(pool, run, checklist, 'second_hop', 'running');
-    let second = await findRecentSecondHopTx(pool, input.orgId, analyst.agentId, dataFetcher.agentId);
-    if (second === null) {
-      const analystAuth = await resolveClientAgentAuth(pool, input.orgId, analyst.agentId);
-      const payment = await payIntraFleet(pool, provider, {
-        orgId: input.orgId,
-        payerAgentId: analyst.agentId,
-        payeeAgentId: dataFetcher.agentId,
-        mode,
+    if (live.Analyst && live.DataFetcher) {
+      let second = await findRecentSecondHopTx(pool, input.orgId, analyst.agentId, dataFetcher.agentId);
+      if (second === null) {
+        const analystAuth = await resolveClientAgentAuth(pool, input.orgId, analyst.agentId);
+        const payment = await payIntraFleet(pool, provider, {
+          orgId: input.orgId,
+          payerAgentId: analyst.agentId,
+          payeeAgentId: dataFetcher.agentId,
+          mode,
+          chain: 'arc',
+          url: dataFetcher.endpointUrl,
+          approvedBy: input.actorId,
+          connectionId: analystAuth.connection_id,
+        });
+        second = { txHash: payment.txHash, amountUsdc: payment.amountUsdc };
+      }
+      receipts.push({
+        step: 'second_hop',
+        payer: analyst.name,
+        payee: dataFetcher.name,
         chain: 'arc',
-        url: dataFetcher.endpointUrl,
-        approvedBy: input.actorId,
-        connectionId: analystAuth.connection_id,
+        amountUsdc: second.amountUsdc,
+        txHash: second.txHash,
+        tool: 'agentops.payment_intra_fleet',
       });
-      second = { txHash: payment.txHash, amountUsdc: payment.amountUsdc };
+      await appendFleetRunEvent(pool, {
+        orgId: input.orgId,
+        runId: input.runId,
+        kind: 'payment',
+        tool: 'agentops.payment_intra_fleet',
+        payload: {
+          payer_agent_id: analyst.agentId,
+          payee_agent_id: dataFetcher.agentId,
+          chain: 'arc',
+          amount_usdc: second.amountUsdc,
+          tx_hash: second.txHash,
+          second_hop: true,
+        },
+      });
+    } else {
+      await appendFleetRunEvent(pool, {
+        orgId: input.orgId,
+        runId: input.runId,
+        kind: 'service',
+        tool: 'agent.catalog',
+        payload: {
+          second_hop: true,
+          fulfillment: 'catalog',
+          note: 'Second-hop Analyst→DataFetcher recorded in analysis payload (sellers offline).',
+        },
+      });
     }
-    receipts.push({
-      step: 'second_hop',
-      payer: analyst.name,
-      payee: dataFetcher.name,
-      chain: 'arc',
-      amountUsdc: second.amountUsdc,
-      txHash: second.txHash,
-      tool: 'agentops.payment_intra_fleet',
-    });
     checklist = await setItem(pool, run, checklist, 'second_hop', 'done');
-    await appendFleetRunEvent(pool, {
-      orgId: input.orgId,
-      runId: input.runId,
-      kind: 'payment',
-      tool: 'agentops.payment_intra_fleet',
-      payload: {
-        payer_agent_id: analyst.agentId,
-        payee_agent_id: dataFetcher.agentId,
-        chain: 'arc',
-        amount_usdc: second.amountUsdc,
-        tx_hash: second.txHash,
-        second_hop: true,
-      },
-    });
 
     await hire('pay_writer', writer, 'arc');
     await hire('pay_reviewer', reviewer, 'base');
@@ -257,16 +320,16 @@ export async function executeFleetRun(
       category: 'integration',
       action: 'fleet_run.completed',
       outcome: 'success',
-      summary: `Fleet Run ${input.runId}: ${brief.slice(0, 240)}`,
-      payload: { run_id: input.runId, receipts },
+      summary: `Chat run ${input.runId}: ${brief.slice(0, 240)}`,
+      payload: { run_id: input.runId, receipts, catalog_mode: catalogMode },
     });
     checklist = await setItem(pool, run, checklist, 'activity', 'done');
     await appendFleetRunEvent(pool, {
       orgId: input.orgId,
       runId: input.runId,
       kind: 'fruit',
-      tool: 'agentops.activity_record',
-      payload: { brief, receipts },
+      tool: 'gemini.chat',
+      payload: { brief, receipts, text: brief },
     });
 
     const fruit = { brief, receipts, payloads };
@@ -288,10 +351,10 @@ export async function executeFleetRun(
     return getFleetRun(pool, input.orgId, input.runId);
   } catch (error) {
     const message = error instanceof IdentityError
-      ? `${error.code}: ${error.message}`
+      ? error.message
       : error instanceof Error
         ? error.message
-        : 'fleet_run_failed';
+        : 'chat_run_failed';
     await updateFleetRunState(pool, {
       orgId: input.orgId,
       runId: input.runId,
@@ -306,7 +369,7 @@ export async function executeFleetRun(
       kind: 'failed',
       payload: {
         error: message,
-        code: error instanceof IdentityError ? error.code : 'fleet_run_failed',
+        code: error instanceof IdentityError ? error.code : 'chat_run_failed',
       },
     });
     if (error instanceof IdentityError) throw error;

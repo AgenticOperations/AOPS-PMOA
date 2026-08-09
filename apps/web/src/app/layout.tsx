@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Montserrat, Plus_Jakarta_Sans } from 'next/font/google';
+import { Great_Vibes, Montserrat, Plus_Jakarta_Sans } from 'next/font/google';
 import { NavigationProgress } from '@/components/NavigationProgress';
 import './globals.css';
 
@@ -14,6 +14,13 @@ const montserrat = Montserrat({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
   variable: '--font-montserrat',
+  display: 'swap',
+});
+
+const greatVibes = Great_Vibes({
+  subsets: ['latin'],
+  weight: ['400'],
+  variable: '--font-cursive',
   display: 'swap',
 });
 
@@ -44,7 +51,11 @@ const themeInitScript = `
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${jakarta.variable} ${montserrat.variable} ${jakarta.className}`}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${jakarta.variable} ${montserrat.variable} ${greatVibes.variable} ${jakarta.className}`}
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

@@ -6,6 +6,7 @@ import type { FleetRunRecord } from '@/lib/server/fleet-run-client';
 export type FleetRunActionState = {
   readonly ok?: boolean;
   readonly error?: string;
+  readonly errorCode?: string | null;
   readonly run?: FleetRunRecord;
 };
 
@@ -24,7 +25,7 @@ export async function startFleetRunAction(
     return { ok: true, run };
   } catch (error) {
     if (error instanceof FleetRunApiError) {
-      return { error: error.message };
+      return { error: error.message, errorCode: error.code };
     }
     return { error: error instanceof Error ? error.message : 'Fleet Run failed.' };
   }
@@ -36,7 +37,7 @@ export async function refreshFleetRunAction(orgId: string, runId: string): Promi
     return { ok: true, run };
   } catch (error) {
     if (error instanceof FleetRunApiError) {
-      return { error: error.message };
+      return { error: error.message, errorCode: error.code };
     }
     return { error: error instanceof Error ? error.message : 'Could not refresh Fleet Run.' };
   }

@@ -7,90 +7,158 @@
  * change and is never destroyed by server-component page transitions.
  *
  * Strategy (App Router has no router event bus):
- *   • document-level capture click listener → start bar on any same-origin
- *     link click that isn't the current page.
+ *   • document-level capture click listener → start bar on same-origin
+ *     in-app navigations (ignore modified clicks / new tabs).
  *   • usePathname() → route settled; complete and hide the bar.
- *
- * Width is driven by JS (requestAnimationFrame) so the finish transition
- * always starts from wherever the bar currently is, not a hardcoded %.
+ *   • safety timeout → hide if navigation never settles.
  */
 
 import { usePathname } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
+
+const CRAWL_TARGET = 85;
+const SAFETY_MS = 10_000;
 
 export function NavigationProgress() {
   const pathname = usePathname();
-  const [visible, setVisible] = useState(false);
+  const trackRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
-  const prevPathname = useRef(pathname);
+  const startTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevPathname = useRef(pathname);
+  const active = useRef(false);
 
   function clearTimers() {
-    if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-    if (hideTimer.current !== null) { clearTimeout(hideTimer.current); hideTimer.current = null; }
-  }
-
-  function getWidth(): number {
-    return parseFloat(barRef.current?.style.width ?? '0');
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (startTimer.current !== null) {
+      clearTimeout(startTimer.current);
+      startTimer.current = null;
+    }
+    if (hideTimer.current !== null) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    if (safetyTimer.current !== null) {
+      clearTimeout(safetyTimer.current);
+      safetyTimer.current = null;
+    }
   }
 
   function setWidth(w: number) {
     if (barRef.current) barRef.current.style.width = `${w}%`;
   }
 
-  function setOpacity(o: number) {
-    if (barRef.current) barRef.current.style.opacity = String(o);
+  function getWidth(): number {
+    return parseFloat(barRef.current?.style.width || '0') || 0;
   }
 
-  // Easing: run from current width toward 85%, slowing as it approaches.
+  function showTrack() {
+    if (!trackRef.current || !barRef.current) return;
+    trackRef.current.style.opacity = '1';
+    barRef.current.style.opacity = '1';
+    barRef.current.style.transition = 'none';
+  }
+
+  function hideTrack() {
+    active.current = false;
+    clearTimers();
+    if (!trackRef.current || !barRef.current) return;
+    trackRef.current.style.opacity = '0';
+    barRef.current.style.width = '0%';
+    barRef.current.style.opacity = '1';
+    barRef.current.style.transition = 'none';
+  }
+
   function runAnimation() {
-    const target = 85;
     const step = () => {
+      if (!active.current) return;
       const current = getWidth();
-      if (current >= target) return;
-      const delta = (target - current) * 0.04;
-      setWidth(Math.min(target, current + Math.max(delta, 0.3)));
+      if (current >= CRAWL_TARGET) return;
+      const delta = (CRAWL_TARGET - current) * 0.04;
+      setWidth(Math.min(CRAWL_TARGET, current + Math.max(delta, 0.3)));
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
   }
 
-  // Snap to 100% then fade out.
   function finishAnimation() {
+    if (!active.current) return;
     clearTimers();
-    setWidth(100);
-    setOpacity(1);
+
+    if (barRef.current) {
+      // Animate only the finish + fade, not every rAF tick.
+      barRef.current.style.transition = 'width 180ms ease-out, opacity 280ms ease';
+      barRef.current.style.width = '100%';
+      barRef.current.style.opacity = '1';
+    }
+    if (trackRef.current) trackRef.current.style.opacity = '1';
+
     hideTimer.current = setTimeout(() => {
-      setOpacity(0);
+      if (barRef.current) barRef.current.style.opacity = '0';
+      if (trackRef.current) trackRef.current.style.opacity = '0';
       hideTimer.current = setTimeout(() => {
-        setVisible(false);
-        setWidth(0);
-        setOpacity(1);
+        hideTrack();
       }, 300);
-    }, 160);
+    }, 180);
   }
 
-  // Start bar on any same-origin link click that targets a different path.
+  function startAnimation() {
+    clearTimers();
+    active.current = true;
+    setWidth(0);
+    showTrack();
+
+    startTimer.current = setTimeout(() => {
+      startTimer.current = null;
+      if (!active.current) return;
+      setWidth(8);
+      runAnimation();
+    }, 16);
+
+    safetyTimer.current = setTimeout(() => {
+      safetyTimer.current = null;
+      finishAnimation();
+    }, SAFETY_MS);
+  }
+
+  // Start bar on same-origin in-app link clicks.
   useEffect(() => {
     function handleClick(event: MouseEvent) {
+      if (event.defaultPrevented) return;
+      if (event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       if (!(event.target instanceof Element)) return;
+
       const anchor = event.target.closest('a');
       if (!anchor) return;
+      if (anchor.target === '_blank' || anchor.hasAttribute('download')) return;
 
       const href = anchor.getAttribute('href');
-      if (!href || href.startsWith('http') || href.startsWith('//') || href.startsWith('#')) return;
+      if (!href || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:')) return;
+      if (href.startsWith('http') || href.startsWith('//')) {
+        try {
+          const url = new URL(href, window.location.href);
+          if (url.origin !== window.location.origin) return;
+        } catch {
+          return;
+        }
+      }
 
-      // Extract pathname from href (may be relative like /app/slug/agents).
-      const normalized = href.split('?')[0];
-      if (normalized === window.location.pathname) return;
+      let nextPath = href;
+      try {
+        nextPath = new URL(href, window.location.href).pathname;
+      } catch {
+        nextPath = href.split('?')[0]?.split('#')[0] ?? href;
+      }
 
-      clearTimers();
-      setWidth(0);
-      setOpacity(1);
-      setVisible(true);
-      // Tiny delay lets the DOM mount before animating.
-      setTimeout(runAnimation, 16);
+      if (nextPath === window.location.pathname) return;
+
+      startAnimation();
     }
 
     document.addEventListener('click', handleClick, { capture: true });
@@ -108,11 +176,14 @@ export function NavigationProgress() {
 
   useEffect(() => () => clearTimers(), []);
 
-  if (!visible) return null;
-
   return (
-    <div aria-hidden="true" className="nav-progress-track">
-      <div className="nav-progress-bar" ref={barRef} />
+    <div
+      aria-hidden="true"
+      className="nav-progress-track"
+      ref={trackRef}
+      style={{ opacity: 0 }}
+    >
+      <div className="nav-progress-bar" ref={barRef} style={{ width: '0%', opacity: 1 }} />
     </div>
   );
 }

@@ -38,6 +38,7 @@ export function CommandPalette({ orgSlug }: CommandPaletteProps) {
       { group: 'Treasury', href: `${base}/payments/activity`, label: 'Activity' },
       { group: 'Org', href: `${base}/settings`, label: 'Settings' },
       { group: 'Marketplace', href: '/marketplace', label: 'Hire from marketplace' },
+      { group: 'Runtime', href: '/chat', label: 'Chat with agent' },
     ],
     [base],
   );

@@ -1,9 +1,6 @@
 // SeniorReviewer: a pure earner on Base Sepolia -- the cross-chain hop.
-// Same shape as Writer/DataFetcher; only the chain, USDC address, and
-// RPC env var differ. Never claim a Gateway/Arc balance can pay here --
-// the Orchestrator must hold a pre-funded Base wallet to reach this
-// agent at all (see demo/agents/orchestrator/server.mjs).
 import Fastify from 'fastify';
+import { buildSeniorReviewerPayload } from '../shared/service-payloads.mjs';
 
 const BASE_SEPOLIA_CHAIN_ID = process.env.BASE_SEPOLIA_CHAIN_ID ?? '84532';
 const BASE_SEPOLIA_USDC_ADDRESS = process.env.BASE_SEPOLIA_USDC_ADDRESS ?? '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
@@ -34,11 +31,7 @@ export function createSeniorReviewerAgent(options) {
       const paid = await verifyPayment(paymentHeader, rpcUrl);
       if (paid) {
         return reply.code(200).send({
-          data: {
-            verdict: 'approved',
-            notes: `Reviewed "${query.title ?? 'untitled'}" -- no blocking issues found.`,
-            servedAt: new Date(0).toISOString(),
-          },
+          data: buildSeniorReviewerPayload(query.title ?? null),
         });
       }
       return reply.code(402).send({ error: 'payment_verification_failed' });
@@ -50,7 +43,7 @@ export function createSeniorReviewerAgent(options) {
       resource: {
         url: resourceUrl,
         category: 'review',
-        description: 'SeniorReviewer sign-off',
+        description: 'SeniorReviewer Base Sepolia sign-off',
         mimeType: 'application/json',
       },
       accepts: [{
@@ -65,7 +58,7 @@ export function createSeniorReviewerAgent(options) {
     });
   });
 
-  app.get('/healthz', async () => ({ status: 'ok', walletAddress }));
+  app.get('/healthz', async () => ({ status: 'ok', walletAddress, service: 'senior-reviewer.signoff' }));
 
   return app;
 }

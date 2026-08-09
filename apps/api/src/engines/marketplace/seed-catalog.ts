@@ -43,8 +43,9 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
     {
       id: 'svc_demo_data_fetcher',
       name: 'DataFetcher',
-      category: 'Demo/Utility',
-      description: 'Fleet demo market-data agent. Returns 402 then Arc USDC-paid payload on GET /data. Hire uses Permit2 when your org has a DataFetcher agent; start the seller on port 4001 (or via demo/run).',
+      category: 'Market data',
+      description:
+        'Paid market snapshot for Arc A2A USDC activity — metrics, rail mix, and source confidence. GET /data after settlement.',
       endpointUrl: `${host}:${dataFetcherPort}/data`,
       chain: 'arc',
       priceHint: '0.01 USDC',
@@ -54,8 +55,9 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
     {
       id: 'svc_demo_analyst',
       name: 'Analyst',
-      category: 'Demo/Utility',
-      description: 'Fleet demo analysis agent with second-hop payment capability. GET /analysis.',
+      category: 'Analysis',
+      description:
+        'Paid A2A brief that buys DataFetcher mid-task (second hop), then returns insights and risk flags. GET /analysis.',
       endpointUrl: `${host}:${analystPort}/analysis`,
       chain: 'arc',
       priceHint: '0.05 USDC',
@@ -65,8 +67,9 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
     {
       id: 'svc_demo_writer',
       name: 'Writer',
-      category: 'Demo/Utility',
-      description: 'Fleet demo report writer. GET /report after x402 payment.',
+      category: 'Research',
+      description:
+        'Paid research report on Arc agent-to-agent USDC payments — abstract, sections, citations. GET /report.',
       endpointUrl: `${host}:${writerPort}/report`,
       chain: 'arc',
       priceHint: '0.02 USDC',
@@ -76,8 +79,9 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
     {
       id: 'svc_demo_senior_reviewer',
       name: 'SeniorReviewer',
-      category: 'Demo/Utility',
-      description: 'Cross-chain fleet reviewer on Base Sepolia. GET /review.',
+      category: 'Review',
+      description:
+        'Cross-chain editorial sign-off on Base Sepolia — verdict, score, and checklist. GET /review.',
       endpointUrl: `${host}:${reviewerPort}/review`,
       chain: 'base',
       priceHint: '0.03 USDC',

@@ -1,8 +1,8 @@
 // DataFetcher: a small paid HTTP service. Returns 402 with x402 payment
 // requirements naming its own real wallet address, verifies an incoming
 // payment proof (a real Permit2 drawdown tx hash), and serves the payload.
-// Kept genuinely small -- the value is that it's real, not sophisticated.
 import Fastify from 'fastify';
+import { buildDataFetcherPayload } from '../shared/service-payloads.mjs';
 
 const ARC_CHAIN_ID = process.env.ARC_CHAIN_ID ?? '5042002';
 const ARC_USDC_ADDRESS = process.env.ARC_USDC_ADDRESS ?? '0x3600000000000000000000000000000000000000';
@@ -43,7 +43,7 @@ export function createDataFetcherAgent(options) {
       const paid = await verifyPayment(paymentHeader, rpcUrl);
       if (paid) {
         return reply.code(200).send({
-          data: { query: query.q ?? null, value: 'real-data-payload', servedAt: new Date(0).toISOString() },
+          data: buildDataFetcherPayload(query.q ?? null),
         });
       }
       return reply.code(402).send({ error: 'payment_verification_failed' });
@@ -55,7 +55,7 @@ export function createDataFetcherAgent(options) {
       resource: {
         url: resourceUrl,
         category: 'market-data',
-        description: 'DataFetcher real-time data feed',
+        description: 'DataFetcher market snapshot — Arc A2A USDC activity feed',
         mimeType: 'application/json',
       },
       accepts: [{
@@ -70,7 +70,7 @@ export function createDataFetcherAgent(options) {
     });
   });
 
-  app.get('/healthz', async () => ({ status: 'ok', walletAddress }));
+  app.get('/healthz', async () => ({ status: 'ok', walletAddress, service: 'datafetcher.market-snapshot' }));
 
   return app;
 }

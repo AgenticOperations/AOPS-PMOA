@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import { createAgentAction } from '../../../actions/identity-spine';
+import { FleetAgentsSetupCard } from '@/components/agents/FleetAgentsSetupCard';
 import { getOrgBySlug, listAgentsPage, listTeams } from '@/lib/server/identity-spine-client';
 import type { AgentStatus } from '@/lib/identity-spine-types';
 
@@ -110,6 +111,7 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
   const pageEnd = agentPage.pagination.offset + agentPage.agents.length;
   const hasFilters = filters.search.length > 0 || filters.team.length > 0 || filters.status.length > 0;
   const activeTeams = teams.filter((team) => team.archived_at === null);
+  const setupFleet = singleParam(query.setup) === 'fleet';
 
   return (
       <main className="registry-page" id="main-content">
@@ -124,6 +126,8 @@ export default async function AgentsPage({ params, searchParams }: AgentsPagePro
             templateRepoUrl={process.env.NEXT_PUBLIC_AGENT_TEMPLATE_REPO_URL?.trim() || 'https://github.com/circlefin/arc-nanopayments'}
           />
         </header>
+
+        {setupFleet ? <FleetAgentsSetupCard orgId={org.id} orgSlug={org.slug} /> : null}
 
         <AgentRegistryFilters applied={filters} orgSlug={org.slug} pageSizes={supportedPageSizes} statuses={agentStatuses} teams={activeTeams} />
 

@@ -1,8 +1,6 @@
-// Writer: a pure earner. Sells a written report, never pays anyone else.
-// Same shape as DataFetcher (demo/agents/data-fetcher/server.mjs) --
-// the value here is a second, independent real earning agent, not a
-// different verification strategy.
+// Writer: a pure earner. Sells a written research report, never pays anyone else.
 import Fastify from 'fastify';
+import { buildWriterPayload } from '../shared/service-payloads.mjs';
 
 const ARC_CHAIN_ID = process.env.ARC_CHAIN_ID ?? '5042002';
 const ARC_USDC_ADDRESS = process.env.ARC_USDC_ADDRESS ?? '0x3600000000000000000000000000000000000000';
@@ -33,11 +31,7 @@ export function createWriterAgent(options) {
       const paid = await verifyPayment(paymentHeader, rpcUrl);
       if (paid) {
         return reply.code(200).send({
-          data: {
-            title: `Report: ${query.topic ?? 'untitled'}`,
-            body: `Findings on "${query.topic ?? 'untitled'}", based on the supplied input.`,
-            servedAt: new Date(0).toISOString(),
-          },
+          data: buildWriterPayload(query.topic ?? null),
         });
       }
       return reply.code(402).send({ error: 'payment_verification_failed' });
@@ -49,7 +43,7 @@ export function createWriterAgent(options) {
       resource: {
         url: resourceUrl,
         category: 'written-report',
-        description: 'Writer report generation',
+        description: 'Writer research brief — Arc A2A USDC payments',
         mimeType: 'application/json',
       },
       accepts: [{
@@ -64,7 +58,7 @@ export function createWriterAgent(options) {
     });
   });
 
-  app.get('/healthz', async () => ({ status: 'ok', walletAddress }));
+  app.get('/healthz', async () => ({ status: 'ok', walletAddress, service: 'writer.research-report' }));
 
   return app;
 }
