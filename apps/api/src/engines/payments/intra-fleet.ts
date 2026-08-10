@@ -100,6 +100,20 @@ async function findActiveDelegationWithHeadroom(
   return { id: row.id };
 }
 
+const FULFILLMENT_BODY_MAX_CHARS = 4096;
+
+function boundFulfillmentBody(body: unknown): unknown | undefined {
+  if (body === undefined) return undefined;
+  try {
+    const encoded = JSON.stringify(body);
+    if (encoded === undefined) return undefined;
+    if (encoded.length <= FULFILLMENT_BODY_MAX_CHARS) return body;
+    return encoded.slice(0, FULFILLMENT_BODY_MAX_CHARS);
+  } catch {
+    return undefined;
+  }
+}
+
 async function recordIntraFleetPaymentEvent(
   pool: pg.Pool,
   input: {
@@ -115,10 +129,12 @@ async function recordIntraFleetPaymentEvent(
     readonly url: string;
     readonly txHash: string;
     readonly httpStatus: number;
+    readonly body?: unknown | undefined;
   },
 ): Promise<string> {
   const eventId = prefixedId('payevt');
   const delivered = input.httpStatus >= 200 && input.httpStatus < 300;
+  const boundedBody = boundFulfillmentBody(input.body);
   await pool.query(
     `INSERT INTO payment_events (
        id, org_id, agent_id, connection_id, source_id, reservation_id,
@@ -156,7 +172,11 @@ async function recordIntraFleetPaymentEvent(
         tx_hash: input.txHash,
         payee_agent_id: input.payeeAgentId,
         payee_name: input.payeeName,
-        fulfillment: { status: delivered ? 'delivered' : 'failed', http_status: input.httpStatus },
+        fulfillment: {
+          status: delivered ? 'delivered' : 'failed',
+          http_status: input.httpStatus,
+          ...(boundedBody === undefined ? {} : { body: boundedBody }),
+        },
       }),
     ],
   );
@@ -252,6 +272,7 @@ export async function payIntraFleet(
     url: input.url,
     txHash: draw.txHash,
     httpStatus: paid.status,
+    body,
   });
 
   return { status: paid.status, body, txHash: draw.txHash, amountUsdc, paymentEventId };

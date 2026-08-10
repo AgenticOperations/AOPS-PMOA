@@ -6935,6 +6935,151 @@ html[data-theme="dark"] .sidebar-brand-logo {
   flex-shrink: 0;
 }
 
+.purchase-row {
+  cursor: pointer;
+}
+
+.purchase-row:hover,
+.purchase-row.is-selected {
+  background: color-mix(in oklch, var(--accent-blue) 6%, transparent);
+}
+
+.purchase-row:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
+}
+
+.purchase-sandbox {
+  display: grid;
+  gap: 16px;
+}
+
+.purchase-sandbox-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.purchase-sandbox-hero strong {
+  display: block;
+  font-size: 15px;
+}
+
+.purchase-sandbox-hero small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.purchase-sandbox-endpoint {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.purchase-sandbox-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.purchase-sandbox-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.purchase-sandbox-tabs button {
+  position: relative;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 8px 10px;
+}
+
+.purchase-sandbox-tabs button.is-active {
+  color: var(--text-primary);
+}
+
+.purchase-sandbox-tabs button.is-active::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--accent-blue);
+  content: "";
+}
+
+.purchase-sandbox-pane {
+  display: grid;
+  gap: 10px;
+  min-height: 12rem;
+}
+
+.purchase-sandbox-pane-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.purchase-sandbox-json {
+  margin: 0;
+  max-height: min(52vh, 28rem);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--surface-raised, var(--bg)) 88%, black);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.purchase-sandbox-empty {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+}
+
+.purchase-sandbox-empty strong {
+  font-size: 13px;
+}
+
+.purchase-sandbox-empty p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.purchase-sandbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.purchase-sandbox-drawer {
+  width: min(440px, 100vw);
+}
+
 .registry-eyebrow {
   margin: 0 0 6px;
   color: var(--accent-ink);

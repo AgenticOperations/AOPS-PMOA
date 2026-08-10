@@ -1,5 +1,9 @@
+'use client';
+
 import Link from 'next/link';
+import { useMemo, useState } from 'react';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { Sheet, SheetBody, SheetCloseButton, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableShell } from '@/components/ui/table-shell';
 import { formatUtcDateTime } from '@/lib/date-format';
@@ -7,6 +11,7 @@ import { formatMoney, titleCase } from '@/lib/payments-format';
 import type { EscrowJobActivityRecord, PaymentEventRecord } from '@/lib/payments-types';
 import type { MarketplaceListingRecord } from '@/lib/server/payments-client';
 import { MarketplaceChainChip, MarketplaceListingMark } from './MarketplaceMarks';
+import { PurchaseSandboxPanel, type PurchaseSandboxSelection } from './PurchaseSandboxPanel';
 
 type PurchasedMarketplaceViewProps = {
   readonly jobs: readonly EscrowJobActivityRecord[];
@@ -24,10 +29,12 @@ type PurchaseRow = {
   readonly listing: MarketplaceListingRecord | null;
   readonly outcome: string;
   readonly outcomeTone: string;
+  readonly paymentResult: Record<string, unknown> | null;
   readonly reputationLabel: string;
   readonly spend: string;
   readonly subtitle: string;
   readonly title: string;
+  readonly endpointUrl: string | null;
 };
 
 function shortAddress(address: string): string {
@@ -122,6 +129,8 @@ function buildRows(
       outcomeTone: escrowTone(job.state),
       reputationLabel: job.state === 'completed' ? 'Earned' : '—',
       hiredAt: job.createdAt,
+      paymentResult: null,
+      endpointUrl: listing?.endpointUrl ?? null,
     };
   });
 
@@ -144,6 +153,8 @@ function buildRows(
       outcomeTone: paymentTone(event),
       reputationLabel: paymentTone(event) === 'active' ? 'Earned' : '—',
       hiredAt: event.created_at,
+      paymentResult: event.result,
+      endpointUrl: listing?.endpointUrl ?? event.resource_url,
     };
   });
 
@@ -152,13 +163,34 @@ function buildRows(
   );
 }
 
+function toSelection(row: PurchaseRow): PurchaseSandboxSelection {
+  return {
+    id: row.id,
+    kind: row.kind,
+    title: row.title,
+    subtitle: row.subtitle,
+    spend: row.spend,
+    outcome: row.outcome,
+    outcomeTone: row.outcomeTone,
+    chain: row.chain,
+    listing: row.listing,
+    endpointUrl: row.endpointUrl,
+    paymentResult: row.paymentResult,
+  };
+}
+
 export function PurchasedMarketplaceView({
   jobs,
   listings,
   orgSlug,
   paymentEvents = [],
 }: PurchasedMarketplaceViewProps) {
-  const purchased = buildRows(jobs, paymentEvents, listings);
+  const purchased = useMemo(
+    () => buildRows(jobs, paymentEvents, listings),
+    [jobs, paymentEvents, listings],
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = purchased.find((row) => row.id === selectedId);
 
   return (
     <main className="registry-page" id="main-content">
@@ -167,7 +199,7 @@ export function PurchasedMarketplaceView({
           <p className="registry-eyebrow">Purchases</p>
           <h1>Hired agents &amp; services</h1>
           <p className="registry-page-copy">
-            Agents and services you hired — marketplace escrow and Permit2 fleet hires.
+            Agents and services you hired — open a row to preview sample data or the delivered response.
           </p>
         </div>
         <p className="registry-page-copy purchases-header-trail">
@@ -208,7 +240,21 @@ export function PurchasedMarketplaceView({
             </TableHeader>
             <TableBody>
               {purchased.map((row) => (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  className={selectedId === row.id ? 'purchase-row is-selected' : 'purchase-row'}
+                  data-purchase-id={row.id}
+                  onClick={() => setSelectedId(row.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedId(row.id);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open sandbox for ${row.title}`}
+                >
                   <TableCell>
                     <div className="treasury-index-primary treasury-primary-cell">
                       {row.listing !== null ? (
@@ -246,6 +292,34 @@ export function PurchasedMarketplaceView({
           </Table>
         </TableShell>
       )}
+
+      <Sheet
+        labelledBy="purchase-sandbox-title"
+        onOpenChange={(open) => {
+          if (!open) setSelectedId(null);
+        }}
+        open={selected !== undefined}
+        panelClassName="treasury-drawer purchase-sandbox-drawer"
+      >
+        <SheetHeader>
+          <div>
+            <SheetTitle id="purchase-sandbox-title">Service sandbox</SheetTitle>
+            <SheetDescription>
+              {selected?.title ?? 'Preview the data this hire returns'}
+            </SheetDescription>
+          </div>
+          <SheetCloseButton onClick={() => setSelectedId(null)} />
+        </SheetHeader>
+        <SheetBody className="treasury-evidence-drawer">
+          {selected !== undefined ? (
+            <PurchaseSandboxPanel
+              key={selected.id}
+              orgSlug={orgSlug}
+              selection={toSelection(selected)}
+            />
+          ) : null}
+        </SheetBody>
+      </Sheet>
     </main>
   );
 }

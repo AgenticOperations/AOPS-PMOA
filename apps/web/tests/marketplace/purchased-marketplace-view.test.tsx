@@ -1,9 +1,13 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import {
   isPurchasePaymentEvent,
   PurchasedMarketplaceView,
 } from '../../src/components/marketplace/PurchasedMarketplaceView.js';
+import {
+  extractDeliveredResponseBody,
+  resolveMarketplaceServiceSample,
+} from '../../src/lib/marketplace-service-samples.js';
 import type { PaymentEventRecord } from '../../src/lib/payments-types.js';
 
 function payment(overrides: Partial<PaymentEventRecord> = {}): PaymentEventRecord {
@@ -38,6 +42,38 @@ function payment(overrides: Partial<PaymentEventRecord> = {}): PaymentEventRecor
   };
 }
 
+const writerListing = {
+  id: 'svc_demo_writer',
+  kind: 'service' as const,
+  name: 'Writer',
+  category: 'writing',
+  description: 'Writes briefs',
+  endpointUrl: 'http://127.0.0.1:4003/report',
+  chain: 'arc' as const,
+  priceHint: '0.02',
+  providerAddress: '0x6c3d6a54b4fc967c8320b2e9efd09aa86f0ef02e',
+  rails: ['x402'] as const,
+  orgId: 'org_1',
+  agentId: 'agt_writer',
+  identityStatus: 'registered' as const,
+  identityTokenId: null,
+};
+
+describe('marketplace service samples', () => {
+  it('resolves demo Writer sample by listing id', () => {
+    const sample = resolveMarketplaceServiceSample(writerListing);
+    expect(sample?.label).toBe('Writer sample');
+    expect(JSON.stringify(sample?.payload)).toContain('writer.research-report');
+  });
+
+  it('extracts delivered fulfillment body', () => {
+    expect(extractDeliveredResponseBody({
+      fulfillment: { status: 'delivered', body: { hello: 'world' } },
+    })).toEqual({ hello: 'world' });
+    expect(extractDeliveredResponseBody({ fulfillment: { status: 'delivered' } })).toBeNull();
+  });
+});
+
 describe('PurchasedMarketplaceView', () => {
   it('treats Permit2 fleet hires as purchase events', () => {
     expect(isPurchasePaymentEvent(payment())).toBe(true);
@@ -51,24 +87,7 @@ describe('PurchasedMarketplaceView', () => {
     render(
       <PurchasedMarketplaceView
         jobs={[]}
-        listings={[
-          {
-            id: 'lst_writer',
-            kind: 'service',
-            name: 'Writer',
-            category: 'writing',
-            description: 'Writes briefs',
-            endpointUrl: 'http://127.0.0.1:4003/report',
-            chain: 'arc',
-            priceHint: '0.02',
-            providerAddress: '0x6c3d6a54b4fc967c8320b2e9efd09aa86f0ef02e',
-            rails: ['x402'],
-            orgId: 'org_1',
-            agentId: 'agt_writer',
-            identityStatus: 'registered',
-            identityTokenId: null,
-          },
-        ]}
+        listings={[writerListing]}
         orgSlug="demo"
         paymentEvents={[payment()]}
       />,
@@ -82,5 +101,51 @@ describe('PurchasedMarketplaceView', () => {
       '/app/demo/activity?tab=payments',
     );
     expect(screen.queryByText('No purchases yet')).not.toBeInTheDocument();
+  });
+
+  it('opens a sandbox panel with sample JSON when a purchase row is clicked', () => {
+    render(
+      <PurchasedMarketplaceView
+        jobs={[]}
+        listings={[writerListing]}
+        orgSlug="demo"
+        paymentEvents={[payment()]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sandbox for Writer' }));
+
+    expect(screen.getByRole('heading', { name: 'Service sandbox' })).toBeInTheDocument();
+    expect(screen.getByText(/Writer sample/)).toBeInTheDocument();
+    expect(screen.getByText(/writer\.research-report/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open listing / hire again' })).toHaveAttribute(
+      'href',
+      '/marketplace/svc_demo_writer',
+    );
+  });
+
+  it('shows delivered body when fulfillment includes a response', () => {
+    render(
+      <PurchasedMarketplaceView
+        jobs={[]}
+        listings={[writerListing]}
+        orgSlug="demo"
+        paymentEvents={[payment({
+          result: {
+            lane: 'permit2_intra_fleet',
+            payee_name: 'Writer',
+            payee_agent_id: 'agt_writer',
+            settlement: 'settled',
+            fulfillment: {
+              status: 'delivered',
+              body: { title: 'Delivered research brief', score: 1 },
+            },
+          },
+        })]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sandbox for Writer' }));
+    expect(screen.getByText(/Delivered research brief/)).toBeInTheDocument();
   });
 });
