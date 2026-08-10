@@ -1,3 +1,6 @@
+# Dependabot — keep noise low.
+# Groups only apply to minor/patch. Without ignore-major, every major bump
+# opens its own PR (next 16, zod 4, eslint 10, node 26, …) on top of the groups.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -6,7 +9,12 @@ updates:
       interval: weekly
       day: monday
       time: '06:00'
-    open-pull-requests-limit: 10
+    # Cap concurrent noise; prefer one grouped PR over many singles.
+    open-pull-requests-limit: 3
+    # Do not auto-open major upgrades (breaking). Review those manually / via alerts.
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
     groups:
       production-dependencies:
         dependency-type: production
@@ -20,7 +28,6 @@ updates:
           - patch
     labels:
       - dependencies
-      - security
     commit-message:
       prefix: chore(deps)
       include: scope
@@ -31,7 +38,17 @@ updates:
       interval: weekly
       day: monday
       time: '06:00'
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
       - github-actions
@@ -42,10 +59,14 @@ updates:
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
       day: monday
       time: '06:00'
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 1
+    # Stay on Node 22 line used by engines / CI; do not jump to 23+.
+    ignore:
+      - dependency-name: 'node'
+        update-types: ['version-update:semver-major']
     labels:
       - dependencies
       - docker
