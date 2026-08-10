@@ -2,7 +2,6 @@
 /**
  * validation/fleet-run-e2e.mts
  *
- * End-to-end Fleet Run against a live API + funded DEMO_ORG_ID + sellers on :4001–4004.
  *
  * Usage:
  *   DEMO_ORG_ID=org_… node --env-file=apps/api/.env --import tsx validation/fleet-run-e2e.mts
