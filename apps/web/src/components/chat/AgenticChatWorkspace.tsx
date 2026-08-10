@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useTransition, type FormEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { agentChatTurnAction } from '@/app/actions/agent-chat';
@@ -67,14 +67,47 @@ function InlineLinks({
   if (links === undefined || links.length === 0) return null;
   return (
     <p className="achat-inline-links">
-      {links.slice(0, 4).map((link, index) => (
-        <span key={link.href}>
-          {index > 0 ? ' · ' : null}
-          <Link href={link.href}>{link.label}</Link>
-        </span>
-      ))}
+      {links.slice(0, 12).map((link, index) => {
+        const external = /^https?:\/\//i.test(link.href);
+        return (
+          <span key={`${link.href}-${link.label}`}>
+            {index > 0 ? ' · ' : null}
+            {external ? (
+              <a href={link.href} rel="noreferrer" target="_blank">
+                {link.label}
+              </a>
+            ) : (
+              <Link href={link.href}>{link.label}</Link>
+            )}
+          </span>
+        );
+      })}
     </p>
   );
+}
+
+function MessageBody({ content }: { readonly content: string }) {
+  const nodes: ReactNode[] = [];
+  const pattern = /(https?:\/\/[^\s]+)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = pattern.exec(content)) !== null) {
+    if (match.index > last) {
+      nodes.push(content.slice(last, match.index));
+    }
+    const href = match[1]!.replace(/[),.;]+$/u, '');
+    const trailing = match[1]!.slice(href.length);
+    nodes.push(
+      <a href={href} key={`u-${key++}`} rel="noreferrer" target="_blank">
+        {href}
+      </a>,
+    );
+    if (trailing) nodes.push(trailing);
+    last = match.index + match[1]!.length;
+  }
+  if (last < content.length) nodes.push(content.slice(last));
+  return <p className="achat-msg-body">{nodes}</p>;
 }
 
 function ListingCards({
@@ -276,7 +309,7 @@ export function AgenticChatWorkspace({ orgId, orgSlug }: AgenticChatWorkspacePro
                   key={item.id}
                 >
                   <span className="achat-msg-label">{item.role === 'user' ? 'You' : 'Agent'}</span>
-                  <p className="achat-msg-body">{item.content}</p>
+                  <MessageBody content={item.content} />
                   {item.role === 'assistant' ? <ListingCards listings={item.listings} /> : null}
                   {item.role === 'assistant' ? <InlineLinks links={item.links} /> : null}
                   {item.role === 'assistant' &&

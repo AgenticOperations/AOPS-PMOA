@@ -10,10 +10,11 @@ import {
 } from '../payments/store.js';
 import type { CircleTreasuryProvider } from '../payments/circle-provider.js';
 import type { PaymentRail } from '../payments/types.js';
-import { createFleetRun } from '../fleet-run/store.js';
+import { createFleetRun, getFleetRun } from '../fleet-run/store.js';
 import { resolveFleetAgents } from '../fleet-run/resolve-agents.js';
 import { executeFleetRun } from '../fleet-run/executor.js';
 import { buildCanonicalChecklist, CANONICAL_FLEET_GOAL } from '../fleet-run/types.js';
+import { formatFleetRunChatReply, fleetRunTxLinks } from './format-fleet-reply.js';
 import { DEFAULT_FLEET_AGENTS } from './knowledge.js';
 import {
   answerQa,
@@ -348,6 +349,7 @@ export async function handleAgentChatTurn(
       // Ensure agents exist, then execute fleet if goal looks like fleet OR we have default roster
       await createAndEmpowerAgents(pool, operator, orgId, pending.agents);
       const goal = pending.goal?.trim() || message || CANONICAL_FLEET_GOAL;
+      let createdId: string | null = null;
       try {
         const agents = await resolveFleetAgents(pool, orgId);
         const checklist = buildCanonicalChecklist();
@@ -359,30 +361,23 @@ export async function handleAgentChatTurn(
           checklist,
           agents,
         });
+        createdId = created.id;
         const run = await executeFleetRun(pool, provider, {
           orgId,
           runId: created.id,
           actorId: operator.actorId,
         });
         const graph = graphFromFleetRun(pending.agents, run.agents, run.events);
-        const fruitEvent = [...run.events].reverse().find((e) => e.kind === 'fruit' || e.kind === 'assistant');
-        const fruitText =
-          typeof fruitEvent?.payload.text === 'string'
-            ? fruitEvent.payload.text
-            : typeof fruitEvent?.payload.brief === 'string'
-              ? fruitEvent.payload.brief
-              : null;
-        const reply =
-          fruitText ??
-          (run.status === 'failed'
-            ? `Fleet run failed: ${run.error ?? 'unknown error'}`
-            : 'Fleet run finished. Check Activity for receipts.');
+        const reply = formatFleetRunChatReply(run);
+        const txLinks = fleetRunTxLinks(run);
         return {
           ...empty(),
           reply,
           links: [
+            ...txLinks,
             appLink(orgSlug, '/activity', 'Activity'),
             appLink(orgSlug, '/agents', 'Agents'),
+            appLink(orgSlug, '/payments/fund', 'Fund'),
             { label: 'Marketplace', href: '/marketplace' },
           ],
           confirms: [],
@@ -393,13 +388,37 @@ export async function handleAgentChatTurn(
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : 'Could not run fleet.';
         const needsAgents = /fleet_agents_missing|Fleet roster incomplete/i.test(errMsg);
+
+        if (createdId !== null && !needsAgents) {
+          try {
+            const run = await getFleetRun(pool, orgId, createdId);
+            const graph = graphFromFleetRun(pending.agents, run.agents, run.events);
+            const txLinks = fleetRunTxLinks(run);
+            return {
+              ...empty(),
+              reply: formatFleetRunChatReply(run),
+              links: [
+                ...txLinks,
+                appLink(orgSlug, '/activity', 'Activity'),
+                appLink(orgSlug, '/agents', 'Agents'),
+                appLink(orgSlug, '/payments/fund', 'Fund'),
+              ],
+              confirms: [],
+              graph,
+              pending: null,
+              runId: run.id,
+            };
+          } catch {
+            // fall through to short error
+          }
+        }
+
         return {
           ...empty(),
           reply: needsAgents
             ? `${errMsg}\n\nI can create the standard research fleet (5 agents) first — confirm below.`
             : errMsg,
           links: [
-            appLink(orgSlug, '/agents', 'Agents'),
             appLink(orgSlug, '/agents', 'Agents'),
             appLink(orgSlug, '/payments/fund', 'Fund'),
           ],

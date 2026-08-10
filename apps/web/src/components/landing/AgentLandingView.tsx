@@ -64,13 +64,18 @@ export function AgentLandingView() {
             </li>
           </ol>
 
-          <h2>Default local MCP endpoint</h2>
+          <h2>MCP endpoint</h2>
+          <p>
+            Use the hosted production MCP for live credentials. Path is always{' '}
+            <code>/mcp</code>; origin changes by environment.
+          </p>
           <pre className="aops-agent-code">
-            <code>http://127.0.0.1:8070/mcp</code>
+            <code>https://agentops-pmoamcp-production.up.railway.app/mcp</code>
           </pre>
           <p>
-            Production hosts replace the origin; the path stays <code>/mcp</code>. Credential is
-            always required for MCP tools.
+            Local development only: <code>http://127.0.0.1:8070/mcp</code>. Console / join
+            responses read <code>MCP_PUBLIC_URL</code> (must be HTTPS <code>…/mcp</code> in
+            production).
           </p>
 
           <h2>Stable tool names</h2>

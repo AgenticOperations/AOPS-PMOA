@@ -51,12 +51,29 @@ function issueInviteToken(): string {
   return `ajoin_${randomBytes(24).toString('base64url')}`;
 }
 
+function normalizeMcpPublicUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (url.pathname === '' || url.pathname === '/') {
+      url.pathname = '/mcp';
+    }
+    return `${url.origin}${url.pathname === '/mcp' ? '/mcp' : url.pathname.replace(/\/$/, '')}`;
+  } catch {
+    const base = trimmed.replace(/\/+$/, '');
+    return base.endsWith('/mcp') ? base : `${base}/mcp`;
+  }
+}
+
 function defaultMcpUrl(): string {
   const fromEnv =
     process.env.PUBLIC_MCP_URL?.trim() ||
     process.env.MCP_PUBLIC_URL?.trim() ||
     '';
-  if (fromEnv.length > 0) return fromEnv.replace(/\/+$/, '');
+  if (fromEnv.length > 0) return normalizeMcpPublicUrl(fromEnv);
+  // Local-only fallback. Production API must set MCP_PUBLIC_URL / PUBLIC_MCP_URL
+  // to https://…/mcp (Railway: https://agentops-pmoamcp-production.up.railway.app/mcp).
   return 'http://127.0.0.1:8070/mcp';
 }
 

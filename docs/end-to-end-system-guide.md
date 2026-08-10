@@ -119,7 +119,10 @@ Local setup: `./setup.sh` or `npm run start:local`. Details: root [`README.md`](
 
 **Redis** is only a ~25s treasury balance cache. Sessions, jobs, and rate limits are **Postgres**. As-built detail: [`docs/current-architecture-and-userflow.md`](current-architecture-and-userflow.md).
 
-Hosted MCP deploy notes: [`docs/deployment/hosted-mcp.md`](deployment/hosted-mcp.md) (local default `http://127.0.0.1:8070/mcp`; production HTTPS `/mcp` with bearer preserved).
+Hosted MCP deploy notes: [`docs/deployment/hosted-mcp.md`](deployment/hosted-mcp.md).  
+- Local default: `http://127.0.0.1:8070/mcp`  
+- Railway production: `https://agentops-pmoamcp-production.up.railway.app/mcp` (HTTPS `/mcp`, bearer preserved). Set `MCP_PUBLIC_URL` on web + API so console/join never emit localhost.  
+Fleet sellers in Compose: service `fleet-sellers` in [`deploy/docker-compose.testnet.yml`](../deploy/docker-compose.testnet.yml) — see [`how-to-use-platform.md`](how-to-use-platform.md) §6E.
 
 ---
 
@@ -392,7 +395,8 @@ Streamable HTTP → Authorization: Bearer <credential>
      → live runtime contract
 ```
 
-Local MCP URL default: `http://127.0.0.1:8070/mcp`.
+Local MCP URL default: `http://127.0.0.1:8070/mcp`.  
+Production Railway MCP: `https://agentops-pmoamcp-production.up.railway.app/mcp` (set `MCP_PUBLIC_URL` on web + API).
 
 #### Act (all governed)
 

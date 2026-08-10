@@ -59,6 +59,8 @@ type EvidenceRow = {
   readonly secondary: string;
   readonly target: string;
   readonly time: string;
+  readonly txHref?: string | null;
+  readonly txLabel?: string | null;
 };
 
 type DateFilter = 'all' | '24h' | '7d' | '30d';
@@ -136,6 +138,8 @@ function rowsForTab(props: OrgActivityWorkbenchProps): EvidenceRow[] {
         secondary: payeeName === null ? event.agent_id : `payer ${event.agent_id.slice(0, 12)}… → ${payeeName}`,
         target: lane === 'permit2_intra_fleet' ? 'Permit2 · Fleet' : formatRail(event.rail),
         time: event.created_at,
+        txHref: explorer,
+        txLabel: txHash === null ? null : `${txHash.slice(0, 10)}…${txHash.slice(-4)}`,
         details: [
           { label: 'Payer agent', value: event.agent_id },
           ...(payeeName === null ? [] : [{ label: 'Payee agent', value: payeeName }]),
@@ -511,6 +515,7 @@ export function OrgActivityWorkbench(props: OrgActivityWorkbenchProps) {
                           ? 'Detail'
                           : 'Rail / target'}
                     </TableHead>
+                    {props.activeTab === 'payments' ? <TableHead>Tx</TableHead> : null}
                     <TableHead>
                       {props.activeTab === 'decisions' || props.activeTab === 'approvals' || props.activeTab === 'policy' || props.activeTab === 'audit'
                         ? 'Type'
@@ -532,6 +537,17 @@ export function OrgActivityWorkbench(props: OrgActivityWorkbenchProps) {
                         </div>
                       </TableCell>
                       <TableCell>{row.target}</TableCell>
+                      {props.activeTab === 'payments' ? (
+                        <TableCell>
+                          {row.txHref && row.txLabel ? (
+                            <a href={row.txHref} rel="noreferrer" target="_blank" onClick={(e) => e.stopPropagation()}>
+                              {row.txLabel}
+                            </a>
+                          ) : (
+                            <span>—</span>
+                          )}
+                        </TableCell>
+                      ) : null}
                       <TableCell>{row.amount}</TableCell>
                       <TableCell><StatusBadge label={row.outcome} status={outcomeTone(row.outcome)} /></TableCell>
                       <TableCell><time dateTime={row.time}>{formatUtcDateTime(row.time)}</time></TableCell>
@@ -580,16 +596,23 @@ export function OrgActivityWorkbench(props: OrgActivityWorkbenchProps) {
                 <div><dt>Detail</dt><dd>{selected.target}</dd></div>
                 <div><dt>Type / amount</dt><dd>{selected.amount}</dd></div>
                 <div><dt>Recorded</dt><dd>{formatUtcDateTime(selected.time)}</dd></div>
-                {selected.details.map((detail) => (
-                  <div key={detail.label}>
-                    <dt>{detail.label}</dt>
-                    <dd>
-                      {detail.label === 'Explorer' && detail.value.startsWith('http')
-                        ? <a href={detail.value} rel="noreferrer" target="_blank">{detail.value}</a>
-                        : detail.value}
-                    </dd>
-                  </div>
-                ))}
+                {selected.details.map((detail) => {
+                  const explorerHref = detail.label === 'Explorer' && detail.value.startsWith('http')
+                    ? detail.value
+                    : detail.label === 'Tx hash' && selected.txHref
+                      ? selected.txHref
+                      : null;
+                  return (
+                    <div key={detail.label}>
+                      <dt>{detail.label}</dt>
+                      <dd>
+                        {explorerHref !== null
+                          ? <a href={explorerHref} rel="noreferrer" target="_blank">{detail.value}</a>
+                          : detail.value}
+                      </dd>
+                    </div>
+                  );
+                })}
               </dl>
             </>
           )}

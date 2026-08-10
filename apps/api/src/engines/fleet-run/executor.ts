@@ -143,6 +143,9 @@ export async function executeFleetRun(
     }
     const dead = Object.entries(live).filter(([, ok]) => !ok).map(([name]) => name);
     const catalogMode = dead.length > 0;
+    const requireLive =
+      process.env.FLEET_REQUIRE_LIVE_SELLERS === '1'
+      || process.env.FLEET_REQUIRE_LIVE_SELLERS === 'true';
     checklist = await setItem(pool, run, checklist, 'wire', 'done');
     await appendFleetRunEvent(pool, {
       orgId: input.orgId,
@@ -157,6 +160,13 @@ export async function executeFleetRun(
           : 'All specialist services are reachable — settling with live payments.',
       },
     });
+    if (catalogMode && requireLive) {
+      throw new IdentityError(
+        'fleet_sellers_offline',
+        409,
+        `Fleet sellers offline (${dead.join(', ')}). Start them (npm run dev:fleet-sellers or Docker fleet-sellers) with DEMO_ORG_ID matching this org, then retry Chat. Catalog mode is disabled (FLEET_REQUIRE_LIVE_SELLERS).`,
+      );
+    }
     if (catalogMode) {
       await appendFleetRunEvent(pool, {
         orgId: input.orgId,
@@ -355,6 +365,9 @@ export async function executeFleetRun(
       : error instanceof Error
         ? error.message
         : 'chat_run_failed';
+    checklist = checklist.map((item) => (
+      item.status === 'running' ? { ...item, status: 'failed' as const } : item
+    ));
     await updateFleetRunState(pool, {
       orgId: input.orgId,
       runId: input.runId,
@@ -370,6 +383,8 @@ export async function executeFleetRun(
       payload: {
         error: message,
         code: error instanceof IdentityError ? error.code : 'chat_run_failed',
+        receipts_so_far: receipts,
+        checklist,
       },
     });
     if (error instanceof IdentityError) throw error;

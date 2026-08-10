@@ -12,6 +12,21 @@ the Quickstart below in order — it is the complete, minimal path to a
 working connection. Do not guess endpoint shapes or invent actions; the
 runtime contract you fetch in Step 2 is the authoritative, current list.
 
+## Production hosts (do not use the web origin for `/v1`)
+
+`https://agentops.up.railway.app` is the **console / static docs** origin only.
+Join and other `/v1/...` routes live on the **API**. MCP tools live on the
+**MCP** host. Path stays `/mcp`.
+
+| Role | Production URL |
+|---|---|
+| Web / `/llms.txt` / `/skill.md` | `https://agentops.up.railway.app` |
+| API (`{API}` below) | `https://agentops-pmoaapi-production.up.railway.app` |
+| MCP | `https://agentops-pmoamcp-production.up.railway.app/mcp` |
+
+Local development substitutes: API `http://127.0.0.1:8080`, MCP
+`http://127.0.0.1:8070/mcp`. Never POST join to the web origin — it 404s.
+
 ## Quickstart
 
 1. **Get a connection.** Prefer one of these (payment access starts **disabled**
@@ -25,6 +40,11 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
      `POST {API}/v1/agent-join/invite/redeem` with JSON
      `{ "token": "<invite>", "agent_name": "<human-chosen name>" }` → response
      `join.mcp_url` + `join.credential`.
+     Example production redeem URL:
+     `https://agentops-pmoaapi-production.up.railway.app/v1/agent-join/invite/redeem`.
+     If `join.mcp_url` is loopback (`127.0.0.1` / `localhost`), ignore it and use
+     `https://agentops-pmoamcp-production.up.railway.app/mcp` (API misconfigured
+     `MCP_PUBLIC_URL`).
    - **Phase 3 (open join):** Only if the deployment enabled open join
      (`GET {API}/v1/agent-join/open/status` → `open_join.enabled`). Same rule:
      **ask the human for `agent_name` first**, then
@@ -93,10 +113,17 @@ runtime contract you fetch in Step 2 is the authoritative, current list.
 
 ## Join HTTP APIs (no MCP credential yet)
 
-- `POST /v1/agent-join/invite/redeem` — Phase 1 invite → `{ join: { mcp_url, credential, ... } }`
+Base these on the **API** host from **Production hosts**, not the web origin.
+
+- `POST {API}/v1/agent-join/invite/redeem` — Phase 1 invite → `{ join: { mcp_url, credential, ... } }`
   (chat agents: always pass human-chosen `agent_name`; scripts may omit and get a generated slug)
-- `GET /v1/agent-join/open/status` — whether Phase 3 open join is enabled
-- `POST /v1/agent-join/open` — Phase 3 open register (gated + rate-limited; payment off; same `agent_name` rule)
+- `GET {API}/v1/agent-join/open/status` — whether Phase 3 open join is enabled
+- `POST {API}/v1/agent-join/open` — Phase 3 open register (gated + rate-limited; payment off; same `agent_name` rule)
+
+Production examples:
+
+- `POST https://agentops-pmoaapi-production.up.railway.app/v1/agent-join/invite/redeem`
+- `GET https://agentops-pmoaapi-production.up.railway.app/v1/agent-join/open/status`
 
 ## What NOT to do
 

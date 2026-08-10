@@ -213,13 +213,61 @@ Use this sequence for a clean fleet bootstrap.
 - [ ] Same agents → **Add draw allowance → From treasury** (Permit2 / draw ceilings)  
 - [ ] Leave sell-only agents’ payment access **off**
 
-### E. Credentials / run
+### E. Live sellers (required for real Activity txs)
 
-- [ ] Agents → Connections → issue MCP credential for agents that will call tools  
-- [ ] Paste MCP URL + bearer into Claude / Cursor **or** run a goal from **`/chat`**  
-- [ ] Watch **Approvals** for Base / high-risk gates; **Activity** / explorer for receipts
+Chat fleet falls back to **catalog mode** (seeded briefs, no payments) unless seller HTTP is reachable.
 
-### F. Guardrail beats (optional)
+**Local (5th process beside api/web/mcp/worker):**
+
+```bash
+# apps/api/.env — optional DEMO_ORG_ID (sellers auto-pick any org with the full fleet)
+MARKETPLACE_DEMO_HOST=http://127.0.0.1
+FLEET_SELLERS_PUBLIC_BASE=http://127.0.0.1
+FLEET_REQUIRE_LIVE_SELLERS=true
+
+# restart API, then:
+npm run dev:fleet-sellers
+# Boot auto-picks an org with the five fleet agents and publishes public_endpoint_url.
+# Use Chat in that same workspace (check the log line "auto-picked org …").
+```
+
+**Docker Compose:**
+
+```bash
+# .env used by compose
+DEMO_ORG_ID=org_…
+ARC_RPC_URL=https://rpc.testnet.arc.network
+FLEET_SELLERS_OPTIONAL=0
+FLEET_REQUIRE_LIVE_SELLERS=true
+# defaults: MARKETPLACE_DEMO_HOST / FLEET_SELLERS_PUBLIC_BASE = http://fleet-sellers
+
+docker compose --env-file .env -f deploy/docker-compose.testnet.yml up -d --build
+curl -sf http://127.0.0.1:4001/healthz
+```
+
+Then open `/chat` in that same org. If sellers are down, Chat now **errors** (no silent catalog success) when `FLEET_REQUIRE_LIVE_SELLERS=true`.
+
+**Laptop sellers → production Chat (nginx + ngrok):** see [`fleet-sellers-tunnel.md`](fleet-sellers-tunnel.md).
+
+### F. Credentials / run (MCP)
+
+**Production MCP URL (copy into Claude / Cursor):**
+
+```text
+https://agentops-pmoamcp-production.up.railway.app/mcp
+```
+
+Local-only alternative while developing the MCP process: `http://127.0.0.1:8070/mcp`.
+
+- [ ] Set `MCP_PUBLIC_URL` on **web** and **API** (and Railway services) to the production `…/mcp` URL so Connections / join redeem do **not** show localhost  
+- [ ] Confirm `curl -sf https://agentops-pmoamcp-production.up.railway.app/healthz` → ok  
+- [ ] Confirm `curl -sf https://agentops-pmoamcp-production.up.railway.app/readyz` → ready (if 503, fix MCP’s `AGENTOPS_API_BASE_URL` to the production API)  
+- [ ] Agents → Connections → issue MCP credential → paste **production** URL + bearer into Claude / Cursor **or** run a goal from **`/chat`**  
+- [ ] Watch **Approvals** for Base / high-risk gates; **Activity** / explorer for receipts  
+
+See [`deployment/hosted-mcp.md`](deployment/hosted-mcp.md) for Railway env checklist.
+
+### G. Guardrail beats (optional)
 
 - [ ] Ask for over-cap spend → expect per-request / budget / wallet deny  
 - [ ] Hit weather HTTP with B3 attached → expect `policy_denied`  

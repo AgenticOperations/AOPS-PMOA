@@ -99,7 +99,11 @@ export async function probeEndpoint(url: string, timeoutMs = 2500): Promise<bool
     const response = await fetch(url, {
       method: 'GET',
       signal: controller.signal,
-      headers: { accept: 'application/json' },
+      headers: {
+        accept: 'application/json',
+        // ngrok free tier interstitial otherwise returns 200 HTML → false negatives / bad payloads
+        'ngrok-skip-browser-warning': 'true',
+      },
     });
     // 402 Payment Required means the seller is alive and gated — success for wiring.
     return response.status === 402 || response.ok;

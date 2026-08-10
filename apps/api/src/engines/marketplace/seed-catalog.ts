@@ -27,6 +27,17 @@ function demoHost(): string {
   return (process.env.MARKETPLACE_DEMO_HOST?.trim() || 'http://127.0.0.1').replace(/\/+$/, '');
 }
 
+function fleetEndpoint(host: string, port: string, path: string): string {
+  const explicit = process.env.FLEET_SELLERS_URL_MODE?.trim().toLowerCase();
+  const mode = explicit === 'paths' || explicit === 'ports'
+    ? explicit
+    : host.startsWith('https://')
+      ? 'paths'
+      : 'ports';
+  if (mode === 'paths') return `${host}${path}`;
+  return `${host}:${port}${path}`;
+}
+
 /**
  * Curated demo/test x402 services shipped with AgentOps (fleet agents + weather fixtures).
  * Not Ampersend/Exa scrapes — our own endpoints for marketplace demos.
@@ -46,7 +57,7 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
       category: 'Market data',
       description:
         'Paid market snapshot for Arc A2A USDC activity — metrics, rail mix, and source confidence. GET /data after settlement.',
-      endpointUrl: `${host}:${dataFetcherPort}/data`,
+      endpointUrl: fleetEndpoint(host, dataFetcherPort, '/data'),
       chain: 'arc',
       priceHint: '0.01 USDC',
       providerAddress: null,
@@ -58,7 +69,7 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
       category: 'Analysis',
       description:
         'Paid A2A brief that buys DataFetcher mid-task (second hop), then returns insights and risk flags. GET /analysis.',
-      endpointUrl: `${host}:${analystPort}/analysis`,
+      endpointUrl: fleetEndpoint(host, analystPort, '/analysis'),
       chain: 'arc',
       priceHint: '0.05 USDC',
       providerAddress: null,
@@ -70,7 +81,7 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
       category: 'Research',
       description:
         'Paid research report on Arc agent-to-agent USDC payments — abstract, sections, citations. GET /report.',
-      endpointUrl: `${host}:${writerPort}/report`,
+      endpointUrl: fleetEndpoint(host, writerPort, '/report'),
       chain: 'arc',
       priceHint: '0.02 USDC',
       providerAddress: null,
@@ -82,7 +93,7 @@ export function seedMarketplaceServices(): readonly SeedMarketplaceService[] {
       category: 'Review',
       description:
         'Cross-chain editorial sign-off on Base Sepolia — verdict, score, and checklist. GET /review.',
-      endpointUrl: `${host}:${reviewerPort}/review`,
+      endpointUrl: fleetEndpoint(host, reviewerPort, '/review'),
       chain: 'base',
       priceHint: '0.03 USDC',
       providerAddress: null,

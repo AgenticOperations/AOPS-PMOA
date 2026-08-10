@@ -92,6 +92,13 @@ services:
       CIRCLE_WORKER_TIMEOUT_MS: ${CIRCLE_WORKER_TIMEOUT_MS:-10000}
       X402_RESULT_ENCRYPTION_KEY: ${X402_RESULT_ENCRYPTION_KEY:?set X402_RESULT_ENCRYPTION_KEY}
       ENABLE_TESTNET_X402_FIXTURES: ${ENABLE_TESTNET_X402_FIXTURES:-false}
+      # Fleet Chat / marketplace seed URLs resolve here when sellers are up.
+      MARKETPLACE_DEMO_HOST: ${MARKETPLACE_DEMO_HOST:-http://fleet-sellers}
+      FLEET_REQUIRE_LIVE_SELLERS: ${FLEET_REQUIRE_LIVE_SELLERS:-true}
+      ARC_RPC_URL: ${ARC_RPC_URL:-}
+      BASE_SEPOLIA_RPC_URL: ${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,6 +114,46 @@ services:
       timeout: 5s
       retries: 20
       start_period: 15s
+    networks: [private]
+
+  fleet-sellers:
+    <<: *app-image
+    stop_grace_period: 30s
+    # Demo HTTP sellers for Chat fleet / intra-fleet Permit2 (DataFetcher…SeniorReviewer).
+    command: ["npm", "run", "start:fleet-sellers"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+      DEMO_ORG_ID: ${DEMO_ORG_ID:-}
+      AGENTOPS_API_BASE_URL: http://api:8080
+      ARC_RPC_URL: ${ARC_RPC_URL:?set ARC_RPC_URL}
+      BASE_SEPOLIA_RPC_URL: ${BASE_SEPOLIA_RPC_URL:-https://sepolia.base.org}
+      FLEET_SELLERS_HOST: 0.0.0.0
+      FLEET_SELLERS_PUBLIC_BASE: ${FLEET_SELLERS_PUBLIC_BASE:-http://fleet-sellers}
+      MARKETPLACE_DEMO_HOST: ${MARKETPLACE_DEMO_HOST:-http://fleet-sellers}
+      # 1 = stay up idle if org/agents missing; 0 = exit so you notice misconfig.
+      FLEET_SELLERS_OPTIONAL: ${FLEET_SELLERS_OPTIONAL:-1}
+      DATA_FETCHER_PORT: 4001
+      ANALYST_PORT: 4002
+      WRITER_PORT: 4003
+      SENIOR_REVIEWER_PORT: 4004
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    # Publish for host curls / debugging; API reaches them as http://fleet-sellers:400x
+    ports:
+      - "${DATA_FETCHER_PORT:-4001}:4001"
+      - "${ANALYST_PORT:-4002}:4002"
+      - "${WRITER_PORT:-4003}:4003"
+      - "${SENIOR_REVIEWER_PORT:-4004}:4004"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 45s
     networks: [private]
 
   mcp:

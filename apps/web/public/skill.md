@@ -11,6 +11,16 @@ one) connecting to agentOps for the first time, with worked examples for
 every tool call. Read `llms.txt` first if you have not — this is the longer
 version of the same five steps.
 
+## Production hosts
+
+| Role | URL |
+|---|---|
+| Web / docs | `https://agentops.up.railway.app` |
+| API (`{API}`) | `https://agentops-pmoaapi-production.up.railway.app` |
+| MCP | `https://agentops-pmoamcp-production.up.railway.app/mcp` |
+
+Do **not** call `/v1/agent-join/...` on the web origin — it is frontend-only and returns 404.
+
 ## 1. Connect
 
 Obtain an MCP URL + bearer credential via one of:
@@ -20,6 +30,8 @@ Obtain an MCP URL + bearer credential via one of:
   `{ "token": "<invite>", "agent_name": "<name>" }`. **Before calling redeem in a
   chat session, ask the human** what display name to use (console + marketplace).
   Do not silently invent `joined-agent-…` names when a human is present.
+  Production: `https://agentops-pmoaapi-production.up.railway.app/v1/agent-join/invite/redeem`.
+  If `join.mcp_url` is localhost, use `https://agentops-pmoamcp-production.up.railway.app/mcp` instead.
 - **Phase 3:** `POST {API}/v1/agent-join/open` only if `GET .../open/status` says
   enabled — same rule: ask for `agent_name` first, then include it in the body.
 

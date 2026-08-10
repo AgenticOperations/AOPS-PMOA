@@ -14,7 +14,44 @@ Backlinks: [[10-Projects/Web3-Builds/agentOps/BUILD-PMOA/README]] | [[10-Project
 
 The hosted MCP service is a stateless Streamable HTTP boundary for remote agents. It exposes the canonical nine-tool AOPS contract at `POST /mcp` and resolves every request from the supplied agent bearer credential through the runtime API. There is no shared process credential and no tenant state is reused between requests.
 
-The local product endpoint is `http://127.0.0.1:8070/mcp`. Production must publish an HTTPS URL with the exact `/mcp` path and a reverse proxy that preserves `Authorization`, `Origin`, `Host`, `Content-Type`, and `Accept` headers.
+The local product endpoint is `http://127.0.0.1:8070/mcp`.
+
+**Railway production MCP (current deploy):**
+
+```text
+https://agentops-pmoamcp-production.up.railway.app/mcp
+```
+
+| Probe | Expected | Meaning |
+|---|---|---|
+| `GET /healthz` | `200 {"status":"ok"}` | Process is up |
+| `GET /readyz` | `200 {"status":"ready"}` | MCP can reach the runtime API |
+| `POST /mcp` without bearer | `401` | Endpoint is live; auth required |
+| `POST /mcp` with agent bearer + `initialize` / `agentops.onboard` | `200` | Credential works |
+
+If `/healthz` is 200 but `/readyz` is **503 `not_ready`**, the MCP service cannot reach `AGENTOPS_API_BASE_URL`. Onboard will fail even though the host is up. Fix Railway MCP env:
+
+```bash
+AGENTOPS_API_BASE_URL=https://agentops-pmoaapi-production.up.railway.app
+MCP_PUBLIC_URL=https://agentops-pmoamcp-production.up.railway.app/mcp
+MCP_ALLOWED_HOSTS=agentops-pmoamcp-production.up.railway.app
+# include your production console origin(s):
+MCP_ALLOWED_ORIGINS=https://YOUR-WEB.up.railway.app
+NODE_ENV=production
+```
+
+Console / join credential screens must also set the same public URL (exact `/mcp` path):
+
+```bash
+# apps/web (and API join redeem):
+MCP_PUBLIC_URL=https://agentops-pmoamcp-production.up.railway.app/mcp
+# API alias also accepted for join.mcp_url:
+PUBLIC_MCP_URL=https://agentops-pmoamcp-production.up.railway.app/mcp
+```
+
+Without those, the UI falls back to `http://127.0.0.1:8070/mcp` and Claude/Cursor will try local MCP.
+
+Production must publish an HTTPS URL with the exact `/mcp` path and a reverse proxy that preserves `Authorization`, `Origin`, `Host`, `Content-Type`, and `Accept` headers.
 
 Paid HTTP is exposed through `agentops.payment_x402`. The hosted MCP forwards the agent's bounded request and idempotency key to the runtime API; the API remains the policy, approval, accounting, recovery, and payment authority. MCP returns the exact bounded merchant response and never acts as a general-purpose proxy.
 
@@ -42,7 +79,7 @@ npm --workspace @agentops-pmoa/mcp run start:http
 
 ## Reproducible Testnet Topology
 
-The deployment manifest starts four application services plus PostgreSQL and Redis:
+The deployment manifest starts five application services plus PostgreSQL and Redis (web, API, MCP, Circle worker, fleet sellers):
 
 ```bash
 cp .env.example .env
