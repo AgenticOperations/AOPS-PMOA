@@ -168,7 +168,7 @@ export function registerAgentJoinRoutes(app: FastifyInstance, deps: RegisterAgen
     return reply.code(201).send({ join: joined });
   });
 
-  app.get('/v1/agent-join/open/status', async () => {
+  app.get('/v1/agent-join/open/status', () => {
     const config = deps.openJoin ?? readOpenJoinConfig();
     return {
       open_join: {

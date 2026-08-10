@@ -49,7 +49,7 @@ test('setup generates distinct persistent 32-byte encryption keys for API result
   }
 });
 
-test('setup and startup document the four-service command contract', () => {
+test('setup and startup document the application command contract', () => {
   for (const command of [setup, startup]) {
     const result = spawnSync(command, ['--help'], { encoding: 'utf8' });
     assert.equal(result.status, 0);
@@ -58,7 +58,7 @@ test('setup and startup document the four-service command contract', () => {
     assert.match(result.stdout, /Hosted MCP \(8070\)/);
     assert.match(result.stdout, /API \(8080\)/);
     assert.match(result.stdout, /Circle worker \(8090\)/);
-    assert.match(result.stdout, /four application services/);
+    assert.match(result.stdout, /fleet sellers \(4001/);
   }
 });
 
@@ -68,14 +68,15 @@ test('startup remains a compatibility wrapper around setup', async () => {
   assert.doesNotMatch(source, /start_service|wait-for-http|dev:mcp:http/);
 });
 
-test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
+test('setup supervises API, Hosted MCP, Circle worker, web, and fleet sellers', async () => {
   const source = await readFile(setup, 'utf8');
   const serviceCalls = [...source.matchAll(/^\s*start_service (\S+) (.+)$/gm)].map(
     ([, name, command]) => ({ name, command }),
   );
   const services = new Map(serviceCalls.map((service) => [service.name, service.command]));
+  const coreServices = serviceCalls.filter(({ name }) => name !== 'fleet-sellers');
 
-  assert.equal(serviceCalls.length, 4);
+  assert.equal(serviceCalls.length, 5);
   assert.deepEqual(services, new Map([
     ['api', 'npm run dev:api'],
     [
@@ -84,6 +85,10 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
     ],
     ['circle-worker', 'npm run dev:circle-worker'],
     ['web', 'env MCP_PUBLIC_URL=http://127.0.0.1:8070/mcp npm --workspace @agentops-pmoa/web run dev -- --port 3005'],
+    [
+      'fleet-sellers',
+      'env FLEET_SELLERS_OPTIONAL=1 AGENTOPS_API_BASE_URL=http://127.0.0.1:8080 npm run dev:fleet-sellers',
+    ],
   ]));
 
   assert.match(source, /SERVICE_NAMES\+=\("\$name"\)/);
@@ -92,7 +97,7 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
   assert.equal(`${serviceCalls.find(({ name }) => name === 'mcp').name}.log`, 'mcp.log');
   assert.equal(`${serviceCalls.find(({ name }) => name === 'mcp').name}.pid`, 'mcp.pid');
 
-  for (const port of [3005, 8070, 8080, 8090]) {
+  for (const port of [3005, 8070, 8080, 8090, 4001, 4002, 4003, 4004]) {
     assert.match(source, new RegExp(`port_available_for_app ${port}`));
   }
   for (const healthUrl of [
@@ -100,17 +105,23 @@ test('setup supervises API, Hosted MCP, Circle worker, and web', async () => {
     'http://127.0.0.1:8070/healthz',
     'http://127.0.0.1:8090/healthz',
     'http://127.0.0.1:3005/',
+    'http://127.0.0.1:4001/healthz',
   ]) {
     assert.match(source, new RegExp(healthUrl.replaceAll('.', '\\.')));
   }
 
-  const lastStart = Math.max(...serviceCalls.map(({ name }) => source.indexOf(`start_service ${name} `)));
+  const lastCoreStart = Math.max(
+    ...coreServices.map(({ name }) => source.indexOf(`start_service ${name} `)),
+  );
   const firstHealth = source.indexOf('wait_for_service_health API');
-  assert.ok(lastStart < firstHealth, 'all four services must start before readiness health checks');
+  const fleetStart = source.indexOf('start_service fleet-sellers ');
+  assert.ok(lastCoreStart < firstHealth, 'core services must start before readiness health checks');
+  assert.ok(firstHealth < fleetStart, 'fleet sellers start after the core stack is healthy');
 
   assert.match(source, /Hosted MCP:\s+http:\/\/127\.0\.0\.1:8070\/mcp/);
   assert.match(source, /Hosted MCP health:\s+http:\/\/127\.0\.0\.1:8070\/healthz/);
-  assert.match(source, /stop all four application services/);
+  assert.match(source, /Fleet sellers:/);
+  assert.match(source, /stop all application services/);
 });
 
 test('sourced supervisor helpers monitor health, exits, logs, pids, and shutdown', async () => {

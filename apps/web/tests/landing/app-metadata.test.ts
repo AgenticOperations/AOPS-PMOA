@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/font/google', () => ({
-  Montserrat: () => ({ variable: '--font-montserrat' }),
+  Montserrat: () => ({ className: 'font-montserrat', variable: '--font-montserrat' }),
+  Plus_Jakarta_Sans: () => ({ className: 'font-jakarta', variable: '--font-jakarta' }),
+  Great_Vibes: () => ({ className: 'font-cursive', variable: '--font-cursive' }),
 }));
 
 describe('application metadata', () => {

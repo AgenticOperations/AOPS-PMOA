@@ -3,6 +3,8 @@ import { testConnectionFromFormAction } from '../../src/app/actions/identity-spi
 import { testConnection } from '@/lib/server/identity-spine-client.js';
 import { revalidatePath } from 'next/cache';
 
+vi.mock('server-only', () => ({}));
+
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }));

@@ -60,7 +60,7 @@ export function formatFleetRunChatReply(run: FleetRunRecord): string {
   const fruitReceipts = receiptsFromFruit(run.fruit);
   const failedEvent = [...run.events].reverse().find((e) => e.kind === 'failed');
   const progressReceipts = Array.isArray(failedEvent?.payload?.receipts_so_far)
-    ? (failedEvent!.payload.receipts_so_far as unknown[]).filter(
+    ? (failedEvent.payload.receipts_so_far as unknown[]).filter(
       (row): row is Record<string, unknown> => row !== null && typeof row === 'object',
     )
     : [];
@@ -73,7 +73,10 @@ export function formatFleetRunChatReply(run: FleetRunRecord): string {
       const payer = typeof row.payer === 'string' ? row.payer : 'payer';
       const payee = typeof row.payee === 'string' ? row.payee : 'payee';
       const chain = typeof row.chain === 'string' ? row.chain : '?';
-      const amount = row.amountUsdc !== undefined ? String(row.amountUsdc) : '?';
+      const amount =
+        typeof row.amountUsdc === 'string' || typeof row.amountUsdc === 'number'
+          ? String(row.amountUsdc)
+          : '?';
       const hash = typeof row.txHash === 'string' ? row.txHash : null;
       const step = typeof row.step === 'string' ? row.step : `tx${index + 1}`;
       const link = explorerUrl(chain, hash);
@@ -86,7 +89,10 @@ export function formatFleetRunChatReply(run: FleetRunRecord): string {
       const p = event.payload;
       const hop = p.second_hop === true ? ' [second-hop]' : '';
       const chain = typeof p.chain === 'string' ? p.chain : '?';
-      const amount = p.amount_usdc !== undefined ? String(p.amount_usdc) : '?';
+      const amount =
+        typeof p.amount_usdc === 'string' || typeof p.amount_usdc === 'number'
+          ? String(p.amount_usdc)
+          : '?';
       const hash = typeof p.tx_hash === 'string' ? p.tx_hash : null;
       const link = explorerUrl(chain, hash);
       parts.push(`  ${index + 1}.${hop} ${chain} · ${amount} USDC · ${shortTx(hash)}`);
@@ -157,7 +163,7 @@ export function fleetRunTxLinks(run: FleetRunRecord): Array<{ readonly label: st
   const fruitReceipts = receiptsFromFruit(run.fruit);
   const failedEvent = [...run.events].reverse().find((e) => e.kind === 'failed');
   const progressReceipts = Array.isArray(failedEvent?.payload?.receipts_so_far)
-    ? (failedEvent!.payload.receipts_so_far as unknown[]).filter(
+    ? (failedEvent.payload.receipts_so_far as unknown[]).filter(
       (row): row is Record<string, unknown> => row !== null && typeof row === 'object',
     )
     : [];

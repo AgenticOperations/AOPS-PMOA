@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/AgenticOperations/AOPS-PMOA/security/advisories/new
+    about: Please report security issues privately via GitHub Security Advisories.
+  - name: Product docs
+    url: https://github.com/AgenticOperations/AOPS-PMOA/blob/main/README.md
+    about: Start with the README and docs/ for setup and architecture questions.

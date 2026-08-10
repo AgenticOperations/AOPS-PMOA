@@ -1,0 +1,11 @@
+# Default reviewers for changes in this repository.
+# Update the usernames/teams below as the org grows.
+* @kaushalya4s5s7
+
+# CI / security configuration
+.github/ @kaushalya4s5s7
+
+# Payment and identity surfaces need careful review
+apps/api/src/payments/ @kaushalya4s5s7
+apps/api/src/identity/ @kaushalya4s5s7
+packages/onchain/ @kaushalya4s5s7

@@ -118,6 +118,6 @@ describe('Writer demo agent, end to end', () => {
     });
 
     expect(result.status).toBe(200);
-    expect(result.body).toMatchObject({ data: { title: 'Report: quarterly-metrics' } });
+    expect(result.body).toMatchObject({ data: { title: 'Research brief: quarterly-metrics' } });
   });
 });

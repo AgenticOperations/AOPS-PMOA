@@ -581,10 +581,13 @@ describe('Section 2 policy routes', () => {
       payload: { kind: 'agent_credential', name: 'Runtime credential' },
     });
     expect(issued.statusCode, issued.body).toBe(201);
-    expect(issued.json()).toMatchObject({
-      connection: expect.objectContaining({ name: 'Runtime credential' }),
-      secret: expect.any(String),
-    });
+    const issuedBody = issued.json<{
+      connection: { name: string };
+      secret: string;
+    }>();
+    expect(issuedBody.connection.name).toBe('Runtime credential');
+    expect(typeof issuedBody.secret).toBe('string');
+    expect(issuedBody.secret.length).toBeGreaterThan(0);
   });
 
   it('rejects runtime policies that mix condition groups from another action surface', async () => {

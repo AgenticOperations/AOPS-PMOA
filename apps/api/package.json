@@ -1,6 +1,7 @@
 {
   "name": "@agentops-pmoa/api",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "dist/src/server.js",

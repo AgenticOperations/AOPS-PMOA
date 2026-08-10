@@ -23,13 +23,9 @@ describe('public marketplace catalog', () => {
   it('lists seed services without authentication', async () => {
     const response = await app.inject({ method: 'GET', url: '/v1/marketplace/listings' });
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      readonly listings: ReadonlyArray<{
-        readonly id: string;
-        readonly kind: string;
-        readonly destinationAuthorized?: boolean;
-      }>;
-    };
+    const body = response.json<{
+      listings: Array<{ id: string; destinationAuthorized?: unknown }>;
+    }>();
     expect(body.listings.some((listing) => listing.id === 'svc_demo_data_fetcher')).toBe(true);
     expect(body.listings.every((listing) => listing.destinationAuthorized === undefined)).toBe(true);
   });
@@ -40,7 +36,7 @@ describe('public marketplace catalog', () => {
       url: '/v1/marketplace/listings?kind=service',
     });
     expect(response.statusCode).toBe(200);
-    const body = response.json() as { readonly listings: ReadonlyArray<{ readonly kind: string }> };
+    const body = response.json<{ listings: Array<{ kind: string }> }>();
     expect(body.listings.length).toBeGreaterThan(0);
     expect(body.listings.every((listing) => listing.kind === 'service')).toBe(true);
   });
@@ -51,7 +47,7 @@ describe('public marketplace catalog', () => {
       url: '/v1/marketplace/listings/svc_demo_data_fetcher',
     });
     expect(detail.statusCode).toBe(200);
-    const detailBody = detail.json() as { readonly listing: { readonly id: string; readonly name: string } };
+    const detailBody = detail.json<{ listing: { id: string; name: string } }>();
     expect(detailBody.listing.id).toBe('svc_demo_data_fetcher');
     expect(detailBody.listing.name).toBe('DataFetcher');
 
@@ -60,13 +56,9 @@ describe('public marketplace catalog', () => {
       url: '/v1/marketplace/listings/svc_demo_data_fetcher/activity',
     });
     expect(activity.statusCode).toBe(200);
-    const activityBody = activity.json() as {
-      readonly activity: {
-        readonly reputationScore: number;
-        readonly completedJobs: number;
-        readonly series: readonly unknown[];
-      };
-    };
+    const activityBody = activity.json<{
+      activity: { reputationScore: number; completedJobs: number; series: unknown[] };
+    }>();
     expect(activityBody.activity.reputationScore).toBe(0);
     expect(activityBody.activity.completedJobs).toBe(0);
     expect(Array.isArray(activityBody.activity.series)).toBe(true);

@@ -296,6 +296,7 @@ function fakeTransferProvider(transferWallet: CircleTreasuryProvider['transferWa
     settleGatewayX402: vi.fn(),
     signPermit2Delegation: vi.fn(),
     executePermit2Transaction: vi.fn(),
+    transferNativeGas: vi.fn(),
     transferWallet,
   };
 }

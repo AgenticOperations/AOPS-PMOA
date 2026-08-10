@@ -238,7 +238,7 @@ export async function listMarketplaceListings(
     const endpointUrl = stringMeta(metadata, 'public_endpoint_url');
     if (endpointUrl === null) return [];
     const providerAddress = row.wallet_address;
-    const chain = (row.wallet_chain ?? input.chain ?? 'arc') as PaymentChain;
+    const chain = (row.wallet_chain ?? input.chain ?? 'arc');
     if (input.chain !== undefined && chain !== input.chain) return [];
     const rails: MarketplaceRail[] = providerAddress === null ? ['x402'] : ['x402', 'escrow'];
     return [{
@@ -352,7 +352,7 @@ export async function getMarketplaceListing(
     throw new IdentityError('listing_not_found', 404, 'Marketplace listing was not found.');
   }
   const providerAddress = row.wallet_address;
-  const chain = (row.wallet_chain ?? 'arc') as PaymentChain;
+  const chain = (row.wallet_chain ?? 'arc');
   return {
     id: agentListingId(row.id),
     kind: 'agent',

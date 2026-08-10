@@ -1,6 +1,7 @@
 {
   "name": "@agentops-pmoa/runtime-client",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Thin AgentOps runtime HTTP client for template forks (not a Circle/Arc SDK).",

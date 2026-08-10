@@ -1,0 +1,53 @@
+# Gitleaks configuration for agentOps PMOA
+# https://github.com/gitleaks/gitleaks
+
+title = "AgentOps PMOA gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixtures, docs samples, onchain addresses, and generated noise"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.next/''',
+  '''(^|/)apps/web/\.next/''',
+  '''(^|/)dist/''',
+  '''(^|/)apps/.+/dist/''',
+  '''(^|/)\.env$''',
+  '''(^|/)\.env\..*$''',
+  '''(^|/)packages/onchain/lib/''',
+  '''(^|/)packages/onchain/deployments\.json$''',
+  '''(^|/)archive/''',
+  '''(^|/)docs/audit/''',
+  '''(^|/)docs/qa/''',
+  '''(^|/)docs/spike-results\.md$''',
+  '''(^|/)apps/.+/test/''',
+  '''(^|/)apps/.+/tests/''',
+  '''(^|/)validation/''',
+  '''(^|/)demo/''',
+  '''(^|/)package-lock\.json$''',
+]
+
+regexTarget = "match"
+regexes = [
+  # Synthetic TLS key used only by unit tests for local HTTPS merchant fixtures
+  '''MHcCAQEEIPpDbYk0sgAw6D6GkesVzGFUt7cO9oq/PqW6yxp9AKZWoAoGCCqGSM49''',
+  # Placeholder / canary strings in tests and docs
+  '''sk_live_secret''',
+  '''sk_live_canary_f3''',
+  '''sk_live_\.\.\.''',
+  '''credential-a''',
+  '''credential-b''',
+  # Circle token UUID constants and similar public identifiers
+  '''[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}''',
+  # EVM contract / token addresses (not API secrets)
+  '''0x[a-fA-F0-9]{40}''',
+  # Env var *names* that mention KEY but are not secret values
+  '''X402_RESULT_ENCRYPTION_KEY''',
+  '''CIRCLE_PROFILE_MASTER_KEY''',
+  '''GOOGLE_CLIENT_SECRET''',
+  # Object field named flow_key (false positive for generic-api-key)
+  '''section_1_foundation''',
+  '''flow_key''',
+]

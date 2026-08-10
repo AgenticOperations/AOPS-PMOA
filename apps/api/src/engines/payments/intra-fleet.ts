@@ -102,7 +102,7 @@ async function findActiveDelegationWithHeadroom(
 
 const FULFILLMENT_BODY_MAX_CHARS = 4096;
 
-function boundFulfillmentBody(body: unknown): unknown | undefined {
+function boundFulfillmentBody(body: unknown): unknown {
   if (body === undefined) return undefined;
   try {
     const encoded = JSON.stringify(body);
@@ -129,7 +129,7 @@ async function recordIntraFleetPaymentEvent(
     readonly url: string;
     readonly txHash: string;
     readonly httpStatus: number;
-    readonly body?: unknown | undefined;
+    readonly body?: unknown;
   },
 ): Promise<string> {
   const eventId = prefixedId('payevt');

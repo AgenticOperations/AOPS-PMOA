@@ -164,19 +164,30 @@ describe('ERC-8004 identity registration', () => {
 
   it('throws when the agent has no wallet on that chain', async () => {
     const fixture = await seedAgentFixture('nowallet', { withWallet: false });
-    await expect(
-      registerAgentIdentity(store.pool, fakeProvider(), {
-        orgId: fixture.orgId,
-        agentId: fixture.agentId,
-        mode: 'test',
-        chain: 'arc',
-        agentUri: 'https://example.test/agents/nowallet.json',
-      }),
-    ).rejects.toMatchObject({
+    const error = await registerAgentIdentity(store.pool, fakeProvider(), {
+      orgId: fixture.orgId,
+      agentId: fixture.agentId,
+      mode: 'test',
+      chain: 'arc',
+      agentUri: 'https://example.test/agents/nowallet.json',
+    }).then(
+      () => {
+        throw new Error('expected registerAgentIdentity to reject');
+      },
+      (err: unknown) => err,
+    );
+    expect(error).toMatchObject({
       code: 'erc8004_agent_wallet_not_found',
       statusCode: 409,
-      message: expect.stringMatching(/does not have an Arc wallet/i),
     });
+    const message =
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof error.message === 'string'
+        ? error.message
+        : '';
+    expect(message).toMatch(/does not have an Arc wallet/i);
   });
 
   it('throws rather than guessing when the receipt carries no Registered log', async () => {

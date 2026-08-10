@@ -8,6 +8,10 @@ tags: [readme, product, setup, testnet, mcp, circle, arc]
 
 # agentOps
 
+[![CI](https://github.com/AgenticOperations/AOPS-PMOA/actions/workflows/ci.yml/badge.svg)](https://github.com/AgenticOperations/AOPS-PMOA/actions/workflows/ci.yml)
+[![Security](https://github.com/AgenticOperations/AOPS-PMOA/actions/workflows/security.yml/badge.svg)](https://github.com/AgenticOperations/AOPS-PMOA/actions/workflows/security.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 agentOps is a testnet control plane for teams operating autonomous agents. It combines agent identity, runtime credentials, policy enforcement, human approvals, operational rate limits, Circle-backed USDC wallets, hosted MCP, agent-to-agent payments, and hash-chained evidence in one organization-isolated product.
 
 On Arc it is the **org control plane + hosted MCP** — not another wallets / x402 / Gateway SDK. Circle owns those rails; AgentOps owns policy, budgets, approvals, kill/sweep, and the audit trail. See [docs/arc-agentops-addon.md](docs/arc-agentops-addon.md).
@@ -16,7 +20,7 @@ The current release is intentionally **testnet only**. It does not represent mai
 
 ## Where we are now
 
-The working branch for the Arc build is `kc/a2a-imple`. Live proofs (explorer links, not just unit tests) live in [docs/spike-results.md](docs/spike-results.md). The judge / demo path is [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
+The primary development line is `main`. Live proofs (explorer links, not just unit tests) live in [docs/spike-results.md](docs/spike-results.md). The judge / demo path is [demo/DEMO-RUNBOOK.md](demo/DEMO-RUNBOOK.md).
 
 Earlier Checkpoint 2 work (paid MCP HTTP on Circle Agent Wallets) is still documented as release evidence:
 
@@ -275,6 +279,7 @@ All `/internal/circle/*` routes require the worker bearer token. The worker owns
 
 ### Setup and deploy
 - [docs/env-inventory.md](docs/env-inventory.md): current environment keys and ownership.
+- [docs/ci-and-repo-standards.md](docs/ci-and-repo-standards.md): CI gates, security workflows, and GitHub community standards.
 - [docs/deployment/testnet-circle-worker.md](docs/deployment/testnet-circle-worker.md): deployment and worker security model.
 - [docs/deployment/hosted-mcp.md](docs/deployment/hosted-mcp.md): hosted MCP deployment, security, and client contract.
 
@@ -299,3 +304,14 @@ All `/internal/circle/*` routes require the worker bearer token. The worker owns
 - [docs/features-to-discuss-later.md](docs/features-to-discuss-later.md): deliberately deferred product work.
 
 Historical audits, build journals, critiques, screenshots, wireframes, and completed plans are retained under [archive/2026-07-12-pre-bootstrap-sanitization](archive/2026-07-12-pre-bootstrap-sanitization/README.md). They are reference material, not current implementation instructions.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, branch/PR expectations, and the quality bar.
+Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Report vulnerabilities privately via [SECURITY.md](SECURITY.md).
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+Third-party and vendored license notes are in [NOTICE.md](NOTICE.md).

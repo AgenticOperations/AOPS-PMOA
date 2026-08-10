@@ -132,6 +132,8 @@ describe('PMOA database migrations', () => {
       '0033_agent_identity_reputation',
       '0034_ledger_postings',
       '0035_approval_quorum',
+      '0036_fleet_runs',
+      '0037_agent_join_invites',
     ]);
 
     const attemptConstraints = await pool.query<{ conname: string }>(

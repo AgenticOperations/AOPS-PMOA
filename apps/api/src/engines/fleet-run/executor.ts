@@ -78,7 +78,7 @@ export async function executeFleetRun(
     readonly actorId: string;
   },
 ): Promise<FleetRunRecord> {
-  let run = await getFleetRun(pool, input.orgId, input.runId);
+  const run = await getFleetRun(pool, input.orgId, input.runId);
   if (run.status === 'completed') return run;
   if (run.status === 'running') {
     throw new IdentityError('fleet_run_busy', 409, 'This chat run is already in progress.');

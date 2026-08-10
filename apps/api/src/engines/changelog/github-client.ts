@@ -63,7 +63,7 @@ export async function fetchCommits(
   config: ChangelogGithubConfig,
   repoName: string,
   branchName: string,
-  since?: Date | undefined,
+  since?: Date  ,
 ): Promise<GithubCommit[]> {
   const params = new URLSearchParams({ sha: branchName, per_page: String(PER_PAGE) });
   if (since !== undefined) params.set('since', since.toISOString());

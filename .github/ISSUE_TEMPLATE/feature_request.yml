@@ -1,0 +1,52 @@
+name: Feature request
+description: Propose a product or engineering improvement
+title: 'feat: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first, then the proposed change.
+        Check [docs/features-to-discuss-later.md](https://github.com/AgenticOperations/AOPS-PMOA/blob/main/docs/features-to-discuss-later.md) before filing duplicates.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operator pain does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should change?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - API
+        - Web console
+        - MCP
+        - Payments / wallets
+        - Identity / auth
+        - Policy / approvals
+        - Marketplace / fleet
+        - Docs
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints acknowledged
+      options:
+        - label: Current release remains testnet-oriented unless explicitly scoped otherwise
+        - label: Tenant isolation and least-privilege authZ are required for multi-tenant surfaces
+        - label: Payment / credential paths must not expose provider secrets to the browser

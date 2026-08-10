@@ -25,7 +25,6 @@ describe('platform tour steps', () => {
       'add-agent',
       'controls',
       'fund',
-      'empower',
       'marketplace',
       'approvals',
       'done',

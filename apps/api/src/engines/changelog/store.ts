@@ -209,7 +209,7 @@ export async function getTimeline(pool: pg.Pool, filters: TimelineFilters): Prom
 export async function getOrganizationDetails(
   pool: pg.Pool,
   config: ChangelogGithubConfig,
-  repoFilter?: string | undefined,
+  repoFilter?: string  ,
 ): Promise<ChangelogOrganizationDetails> {
   const repoRows = await pool.query<ActivityRow>(
     `SELECT * FROM changelog_activities WHERE kind = 'repository' AND ($1::text IS NULL OR repo_name = $1)`,

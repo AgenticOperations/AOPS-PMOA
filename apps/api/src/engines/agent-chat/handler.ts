@@ -173,7 +173,7 @@ function graphFromFleetRun(
       payIndex += 1;
     }
   }
-  const nodeStatus = new Map(base.nodes.map((n) => [n.id, n.status as ChatGraph['nodes'][number]['status']]));
+  const nodeStatus = new Map(base.nodes.map((n) => [n.id, n.status]));
   for (const event of events) {
     if (event.kind !== 'service' && event.kind !== 'payment' && event.kind !== 'tool') continue;
     const payload = event.payload;

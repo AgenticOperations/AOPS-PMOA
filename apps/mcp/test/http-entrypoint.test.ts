@@ -206,11 +206,14 @@ function fakeRuntimeClient(): AgentOpsRuntimeClient {
     approvalConsume: () => Promise.resolve({}),
     approvalStatus: () => Promise.resolve({}),
     check: () => Promise.resolve({}),
+    identityRegister: () => Promise.resolve({}),
+    identityStatus: () => Promise.resolve({}),
     onboard: () => Promise.resolve({ tenant: 'test' }),
     operationCheck: () => Promise.resolve({}),
     operationRecord: () => Promise.resolve({}),
     paymentIntraFleet: () => Promise.resolve({}),
     paymentX402: () => Promise.resolve({}),
+    publish: () => Promise.resolve({}),
   };
 }
 
