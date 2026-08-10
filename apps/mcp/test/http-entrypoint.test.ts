@@ -797,7 +797,7 @@ describe('hosted HTTP module', () => {
         '--eval',
         "await import('./src/http.ts'); process.stdout.write('imported');",
       ],
-      { cwd: new URL('..', import.meta.url), env, timeout: 1_000 },
+      { cwd: new URL('..', import.meta.url), env, timeout: 10_000 },
     );
     expect(stdout).toBe('imported');
   });

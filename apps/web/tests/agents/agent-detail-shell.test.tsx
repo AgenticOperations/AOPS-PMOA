@@ -181,10 +181,10 @@ describe('AgentDetailShell', () => {
       'href',
       '/app/acme-agent-ops/agents/agt_research?tab=access',
     );
-    expect(screen.getByRole('heading', { name: 'Identity details' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Lifecycle' })).toBeInTheDocument();
     expect(screen.queryByDisplayValue('research')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit agent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('dialog', { name: 'Edit agent' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('research')).toBeInTheDocument();
     expect(screen.getByDisplayValue('dev')).toBeInTheDocument();
