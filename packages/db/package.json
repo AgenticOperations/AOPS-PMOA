@@ -19,12 +19,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
-    "@types/node": "^26.0.0",
-    "@types/pg": "^8.11.10",
+    "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.4",
     "eslint": "^9.39.4",
-    "testcontainers": "12.0.0",
+    "testcontainers": "12.1.0",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.48.0",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^4.1.9"
   }
 }
