@@ -34,8 +34,28 @@ everything else in this doc is the underlying design they're drawn from.
   > mechanic, not cross-org trust — agentId is operator-asserted, not yet
   > verifiable without a real identity registry (ERC-8004), out of scope here.
 - **Track:** AI & DevTools
-- **Entities & attributes / queries / expiry-extension-ownership / why Arkiv / what
-  stays off Arkiv:** see the matching sections below verbatim.
+- **Entities & attributes** (1200-char form limit — exact text to paste):
+
+  > GovernedAction — one per governed action (payment, hire, escrow release,
+  > cross-chain call). Attributes: agentId (string), orgId (string), policyId
+  > (string, shared key -> PolicySnapshot), actionType (string), counterpartyId
+  > (string), status (string: pending_approval/approved/denied/executing/settled/
+  > expired), riskTier (numeric 0-3), amountCents (numeric, integer fixed-point
+  > USD — range queries need integers), chain (string), parentActionKey (string,
+  > links a delegation to its parent, no graph DB needed). Payload: evidence
+  > bundle (intent text, budget-check summary, approval trace, tx hash). $creator
+  > = initiating agent wallet (immutable). $owner = agent -> approver via
+  > changeOwnership().
+  >
+  > PolicySnapshot — one per published policy version. Attributes: orgId
+  > (string), policyName (string), version (numeric), active (numeric 0/1),
+  > effectiveAtBlock (numeric). Payload: policy JSON (limits, thresholds).
+  > $creator = org-admin wallet. Referenced by GovernedAction.policyId — Arkiv
+  > has no joins, so this shared key is the relationship.
+
+- **Queries / expiry-extension-ownership / why Arkiv / what stays off Arkiv:**
+  see the matching sections below verbatim (character limits unconfirmed for
+  these — trim the same way if the form rejects on length).
 - **Used the Ideathon MCP?** Yes — connected `arkiv-ideathon`, used `get_doc`
   (`arkiv-fundamentals`, `rubric`) and `review_my_idea` to pressure-test and correct the
   schema (see "Verified against the Ideathon MCP" below).
