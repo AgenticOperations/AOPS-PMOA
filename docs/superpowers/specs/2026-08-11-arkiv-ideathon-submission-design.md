@@ -18,11 +18,21 @@ everything else in this doc is the underlying design they're drawn from.
   denial, and settlement is a queryable, wallet-owned, time-scoped record instead of a
   private database row.
 - **Problem & audience:** see "Problem & audience" section below.
-- **Scope — weekend slice + honest risks:** approval engine writes `GovernedAction` to
-  Arkiv for actions crossing a policy threshold; approval UI runs on the inbox query and
-  `.ownedBy(approverWallet)`. Named risks: `updateEntity`'s full-replace semantics require
-  a single authoritative writer; cross-org `agentId`/`orgId` namespacing needs a shared
-  convention beyond this slice.
+- **Scope — weekend slice + honest risks** (800-char form limit — this is the exact
+  text to paste):
+
+  > Weekend slice: point one AOPS approval-escalation path at Arkiv. On escalation,
+  > createEntity() a GovernedAction ($owner=agent, status=pending_approval, short
+  > expiresIn). Build an inbox — where(eq(orgId,X), eq(status,'pending_approval')) —
+  > with Approve/Deny. Approve = one mutateEntities batch: changeOwnership() to
+  > approver + updateEntity() setting status=approved, atomically. Add
+  > ownedBy(approverWallet) for "my approvals". Prove by hand: raise 3 actions,
+  > approve one, deny one, let one expire unclaimed.
+  >
+  > Risks: (1) changeOwnership()/updateEntity() are separate writes — batching
+  > required, since cross-tx ops aren't guaranteed ordering. (2) Proves the
+  > mechanic, not cross-org trust — agentId is operator-asserted, not yet
+  > verifiable without a real identity registry (ERC-8004), out of scope here.
 - **Track:** AI & DevTools
 - **Entities & attributes / queries / expiry-extension-ownership / why Arkiv / what
   stays off Arkiv:** see the matching sections below verbatim.
