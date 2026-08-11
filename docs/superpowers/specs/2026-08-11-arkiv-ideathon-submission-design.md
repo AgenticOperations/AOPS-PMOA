@@ -1,8 +1,37 @@
 # Arkiv Ideathon Submission — AOPS Governed Action Ledger
 
-**Status:** design approved, ready to draft into the Tally form
+**Status:** field-mapped to the actual Tally form, ready to submit
 **Track:** AI & DevTools (closes Aug 11, 23:59 UTC)
 **Diagram:** https://claude.ai/code/artifact/725d930a-27c5-415c-bd8d-ee4cfcbf963d
+
+## Final answers, mapped to the Tally form fields
+
+The form (`tally.so/r/OD9eeY`) has dedicated fields beyond what an initial WebFetch
+surfaced — separate entries for entities/attributes, queries, expiry/extension/
+ownership, the Arkiv counterfactual, and what stays off Arkiv, plus a required
+question on whether the Ideathon MCP was used. Answers below map 1:1 to those fields;
+everything else in this doc is the underlying design they're drawn from.
+
+- **Idea name:** AOPS Governed Action Ledger
+- **One-line pitch:** AOPS already governs what autonomous agents are allowed to spend
+  and with whom — Arkiv becomes its evidence and coordination layer, so every approval,
+  denial, and settlement is a queryable, wallet-owned, time-scoped record instead of a
+  private database row.
+- **Problem & audience:** see "Problem & audience" section below.
+- **Scope — weekend slice + honest risks:** approval engine writes `GovernedAction` to
+  Arkiv for actions crossing a policy threshold; approval UI runs on the inbox query and
+  `.ownedBy(approverWallet)`. Named risks: `updateEntity`'s full-replace semantics require
+  a single authoritative writer; cross-org `agentId`/`orgId` namespacing needs a shared
+  convention beyond this slice.
+- **Track:** AI & DevTools
+- **Entities & attributes / queries / expiry-extension-ownership / why Arkiv / what
+  stays off Arkiv:** see the matching sections below verbatim.
+- **Used the Ideathon MCP?** Yes — connected `arkiv-ideathon`, used `get_doc`
+  (`arkiv-fundamentals`, `rubric`) and `review_my_idea` to pressure-test and correct the
+  schema (see "Verified against the Ideathon MCP" below).
+- **Sketch/diagram:** the artifact URL above.
+- **Video walkthrough / X post:** left to the user — not something to generate on their
+  behalf.
 
 ## Idea
 
