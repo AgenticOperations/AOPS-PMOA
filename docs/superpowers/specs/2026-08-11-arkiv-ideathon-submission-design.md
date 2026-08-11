@@ -34,7 +34,7 @@ everything else in this doc is the underlying design they're drawn from.
   > mechanic, not cross-org trust — agentId is operator-asserted, not yet
   > verifiable without a real identity registry (ERC-8004), out of scope here.
 - **Track:** AI & DevTools
-- **Entities & attributes** (1200-char form limit — exact text to paste):
+- **Entities & attributes** (limit 1220 chars — text below is 1034):
 
   > GovernedAction — one per governed action (payment, hire, escrow release,
   > cross-chain call). Attributes: agentId (string), orgId (string), policyId
@@ -53,12 +53,67 @@ everything else in this doc is the underlying design they're drawn from.
   > $creator = org-admin wallet. Referenced by GovernedAction.policyId — Arkiv
   > has no joins, so this shared key is the relationship.
 
-- **Queries / expiry-extension-ownership / why Arkiv / what stays off Arkiv:**
-  see the matching sections below verbatim (character limits unconfirmed for
-  these — trim the same way if the form rejects on length).
+- **The queries you rely on** (limit 1000 chars — text below is 627):
+
+  > Approval inbox: where(eq(orgId,X), eq(status,'pending_approval')), paginated
+  > by cursor, sorted client-side by riskTier (no server-side ORDER BY). My
+  > approvals: ownedBy(approverWallet). Policy audit:
+  > where(eq(policyId,'policy-42-v3')) — every action under one exact policy
+  > version, for compliance review. Delegation trace:
+  > where(eq(parentActionKey,rootKey)) — reconstructs a second-hop hire chain
+  > via a shared key, no graph DB. Risk feed: where(gt(riskTier,1),
+  > eq(status,'executing')). Trust score: count(where(eq(counterpartyId,X),
+  > eq(status,'settled'))) — a dashboard number, not a full fetch, feeding
+  > counterparty reputation.
+
+- **Expiry, extension & ownership** (limit 1000 chars — text below is 720):
+
+  > A pending_approval GovernedAction gets a short expiresIn — an unclaimed
+  > request genuinely drops off the inbox; expiry is a guarantee, not a cron
+  > job. Once settled, extendEntity() renews it to match the org's compliance
+  > retention window; an active PolicySnapshot is renewed the same way for as
+  > long as it governs live actions, then allowed to lapse. Ownership is the
+  > core mechanic: $owner starts on the initiating agent's wallet, and a human
+  > approval is a changeOwnership() transfer to the approver — the approval
+  > itself is the on-chain event, not an editable status column. $creator stays
+  > immutable, so it's always verifiable who actually initiated an action or
+  > published a policy, independent of who currently holds it.
+
+- **Why Arkiv, not a plain database?** (limit 700 chars — text below is 678):
+
+  > When an agent from one org hires an agent from another, the second org
+  > shouldn't have to trust the first org's private table — $creator plus
+  > Ethereum anchoring gives both sides an independently verifiable record
+  > neither has to run an indexer to check. Approval-as-changeOwnership() is a
+  > mechanic a conventional database can't express: real non-repudiation, not
+  > an approved_by column anyone with DB access could edit. Time-scoping
+  > matches AOPS's own escrow-to-standing-relationship model as a schema
+  > feature, not an ops burden. AOPS's agents already query this state across
+  > runs via MCP — Arkiv's built-in attribute indexes replace a database plus a
+  > search index plus a sync job.
+
+- **What stays off Arkiv?** (limit 2000 chars — text below is 452):
+
+  > Settlement execution itself — the Permit2 transfer or cross-chain call
+  > still runs on Arc/Base; GovernedAction holds the tx hash as evidence, not
+  > the execution path, since Arkiv never executes logic. Secrets, credentials,
+  > and raw counterparty PII never enter the payload, since entities are public
+  > by design. Full policy-engine logs and raw agent traces are hashed and
+  > referenced by pointer, not embedded — Arkiv holds the evidence record, not
+  > the blob.
+
 - **Used the Ideathon MCP?** Yes — connected `arkiv-ideathon`, used `get_doc`
   (`arkiv-fundamentals`, `rubric`) and `review_my_idea` to pressure-test and correct the
   schema (see "Verified against the Ideathon MCP" below).
+- **Did you use the Arkiv MCP or docs?** (limit 2000 chars — text below is 409):
+
+  > Used the Ideathon MCP's get_doc (arkiv-fundamentals, rubric) and
+  > review_my_idea, plus docs.arkiv.network directly. Hardest part: realizing
+  > amountUsd needed to become amountCents, since range-queryable attributes
+  > must be integers — and that updateEntity is a full replace, not a patch,
+  > which forced designing changeOwnership() + updateEntity() as one atomic
+  > mutateEntities batch instead of two separate writes.
+
 - **Sketch/diagram:** the artifact URL above.
 - **Video walkthrough / X post:** left to the user — not something to generate on their
   behalf.
