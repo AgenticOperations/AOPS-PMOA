@@ -48,18 +48,25 @@ services deciding whether to transact with an agent they don't already trust.
 | `counterpartyId` | string | other agent or service |
 | `status` | string | `pending_approval` / `approved` / `denied` / `executing` / `settled` / `expired` |
 | `riskTier` | numeric (0–3) | escalation tier |
-| `amountUsd` | numeric | for threshold and range queries |
+| `amountCents` | numeric (integer) | USD amount in cents — fixed-point, since Arkiv numeric attributes must be integers and this is the field threshold/range queries run on |
 | `chain` | string | `arc` / `base` |
 | `parentActionKey` | string | links a second-hop delegation to its parent action, no graph DB needed |
 
-- Payload: full evidence bundle — intent text, budget-check result, approval trace, settlement tx hash.
-- **Creator** = the agent wallet that initiated the action (immutable — proof of who acted).
-- **Owner** = starts on the agent wallet. A human approval is a `changeOwnership()` call
+- Payload: evidence bundle metadata — intent text, budget-check result summary, approval
+  trace, settlement tx hash. Large artifacts (full policy-engine logs, raw LLM traces) are
+  hashed and referenced by pointer, not embedded — see "What stays off Arkiv" below.
+- **`$creator`** = the agent wallet that initiated the action (immutable — proof of who acted).
+- **`$owner`** = starts on the agent wallet. A human approval is a `changeOwnership()` call
   to the approver's wallet: the approval is a signed transfer of custody, not a status
   flag anyone with DB access could edit.
-- `expiresIn`: short while `pending_approval` (stale, unclaimed requests drop off the
-  inbox automatically); extended via `extendEntity()` once `settled`, to match the
+- `expiresIn`: short while `status = pending_approval` (stale, unclaimed requests drop off
+  the inbox automatically); extended via `extendEntity()` once `settled`, to match the
   org's compliance retention window.
+- **Write ownership**: `updateEntity` is a full replace, not a patch, so `status`
+  transitions (`executing` → `settled`) are read-modify-write operations. AOPS's approval
+  engine is the single authoritative writer for each `GovernedAction` — no other AOPS
+  service writes to the same entity — which sidesteps the race that a full-replace API
+  creates when two writers touch one entity concurrently.
 
 ### `PolicySnapshot` — one entity per published policy version
 
@@ -72,10 +79,17 @@ services deciding whether to transact with an agent they don't already trust.
 | `effectiveAtBlock` | numeric | |
 
 - Payload: the policy JSON (limits, allowed counterparties, approval thresholds).
-- **Creator** = the org-admin wallet that published it — immutable proof of who set the
+- **`$creator`** = the org-admin wallet that published it — immutable proof of who set the
   rule a `GovernedAction` is later judged against.
 - Referenced by `GovernedAction.policyId`, so an action's authorizing policy is a
   lookup, not a foreign key in someone else's database.
+- **Lifetime**: long-lived and renewed via `extendEntity()` while `active = 1` — a policy
+  stays queryable for as long as it governs live actions. When a new version is published,
+  the old `PolicySnapshot` is superseded (`active` flips to `0`) but is deliberately **not**
+  deleted or left to expire while any `GovernedAction` still references it by key — Arkiv
+  has no joins or cascades, so a `GovernedAction` whose `policyId` pointed at an expired
+  entity would be unauditable. Once every action under a policy version is `settled` or
+  `expired`, that `PolicySnapshot` is allowed to lapse.
 
 ## Key queries
 
@@ -86,9 +100,26 @@ services deciding whether to transact with an agent they don't already trust.
    taken under one exact policy version.
 4. **Delegation trace** — `.where(eq('parentActionKey', rootKey))` — reconstructs a
    second-hop hire chain without a graph database.
-5. **Risk feed** — `.where(gt('riskTier', 1), eq('status','executing'))`
+5. **Risk feed** — `.where(gt('riskTier', 1), eq('status','executing'))`, sorted
+   client-side by `riskTier` descending — Arkiv has no server-side `ORDER BY`, so the
+   inbox and risk feed both filter first (which is selective) and sort the small result
+   after fetching.
 6. **Trust score** — `.where(eq('counterpartyId', X), eq('status','settled'))` — feeds
-   an ERC-8004-style reputation score for a counterparty agent.
+   an ERC-8004-style reputation score for a counterparty agent. Read as a `count()` for
+   a dashboard tile rather than fetching every matching entity.
+
+## What stays off Arkiv
+
+- **Settlement execution itself.** Arkiv stores and answers queries; it never executes
+  logic. The actual payment/settlement (Permit2 transfer, cross-chain call) happens on
+  Arc/Base as it does today — `GovernedAction` holds the evidence of that execution
+  (the tx hash), not the execution path itself.
+- **Secrets and PII.** Entities are public and verifiable by design. Policy internals
+  that must stay private, raw counterparty PII, and API credentials never go in the
+  payload — only hashes/commitments or non-sensitive summaries do.
+- **Large artifacts.** Full policy-engine logs or raw agent traces are hashed and
+  referenced by pointer in the payload, not embedded — Arkiv holds the evidence record,
+  not the underlying blob.
 
 ## Why Arkiv, not Postgres (the counterfactual)
 
@@ -127,3 +158,18 @@ story, not the MVP.
   to support the rubric's Data & Query Design (20 pts) and Clarity & Feasibility
   (15 pts) criteria; the ideathon submission explicitly allows an optional mock or
   diagram.
+
+## Verified against the Ideathon MCP (2026-08-11)
+
+Once `arkiv-ideathon` connected, `get_doc('arkiv-fundamentals')`, `get_doc('rubric')`,
+and `review_my_idea` surfaced fixes applied above:
+
+- Numeric attributes must be integers — `amountUsd` became `amountCents` (fixed-point).
+- System fields are `$creator` / `$owner` (dollar-prefixed), not bare names.
+- `updateEntity` is a full replace, not a patch — noted the single-authoritative-writer
+  answer for `GovernedAction` status transitions to avoid a read-modify-write race.
+- No server-side `ORDER BY` — the risk feed and inbox filter first, sort client-side.
+- `PolicySnapshot` needed its own differentiated lifetime story (rubric criterion 3
+  explicitly rewards differentiated lifetimes per entity type, not one blanket expiry).
+- Added an explicit "what stays off Arkiv" section — the rubric's Arkiv-fit criterion
+  names this as what separates a 3 from a 5.
