@@ -1,0 +1,55 @@
+@model AgentOps.Application.DTOs.CreatePolicyDto
+@{
+    ViewData["Title"] = "Create Policy";
+}
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card bg-black border-secondary shadow">
+            <div class="card-header border-secondary py-3">
+                <h4 class="fw-bold text-info mb-0">Define Governance Policy</h4>
+            </div>
+            <div class="card-body p-4">
+                <form asp-action="Create" method="post">
+                    <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+
+                    <div class="mb-3">
+                        <label asp-for="Name" class="form-label text-secondary fw-semibold">Policy Name</label>
+                        <input asp-for="Name" class="form-control bg-dark text-light border-secondary" placeholder="e.g. Treasury Micro-Payment Envelope" required />
+                    </div>
+
+                    <div class="mb-3">
+                        <label asp-for="Description" class="form-label text-secondary fw-semibold">Description</label>
+                        <textarea asp-for="Description" class="form-control bg-dark text-light border-secondary" rows="3"></textarea>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label asp-for="MaxAllowedRiskLevel" class="form-label text-secondary fw-semibold">Max Risk Level</label>
+                            <select asp-for="MaxAllowedRiskLevel" class="form-select bg-dark text-light border-secondary">
+                                <option value="0">Low</option>
+                                <option value="1">Moderate</option>
+                                <option value="2">High</option>
+                                <option value="3">Critical</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label asp-for="AutoApprovalSpendThresholdUsd" class="form-label text-secondary fw-semibold">Auto-Approval Cap ($)</label>
+                            <input asp-for="AutoApprovalSpendThresholdUsd" type="number" step="0.01" class="form-control bg-dark text-light border-secondary" />
+                        </div>
+                    </div>
+
+                    <div class="form-check mb-4">
+                        <input asp-for="RequiresMultiSigForExternalTransfers" class="form-check-input" type="checkbox" id="multiSigCheck" />
+                        <label class="form-check-label text-secondary" for="multiSigCheck">Require Multi-Sig for External Transfers</label>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-info btn-lg">Publish Governance Policy</button>
+                        <a asp-action="Index" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

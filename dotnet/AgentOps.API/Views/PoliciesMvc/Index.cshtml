@@ -1,0 +1,37 @@
+@model List<AgentOps.Application.DTOs.PolicySummaryDto>
+@{
+    ViewData["Title"] = "Governance Policies";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="fw-bold text-light mb-1">Organizational Governance Policies</h2>
+        <p class="text-secondary mb-0">Programmatic risk thresholds, multi-sig constraints, and auto-approval limits.</p>
+    </div>
+    <a asp-action="Create" class="btn btn-info">+ Define Policy</a>
+</div>
+
+<div class="row g-4">
+    @if (Model != null)
+    {
+        @foreach (var policy in Model)
+        {
+            <div class="col-md-4">
+                <div class="card bg-black border-secondary h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="badge bg-info-subtle text-info border border-info">Risk: @policy.MaxAllowedRiskLevel</span>
+                            <small class="text-secondary">@policy.RuleCount rules</small>
+                        </div>
+                        <h5 class="card-title fw-bold text-light">@policy.Name</h5>
+                        <p class="card-text text-secondary small">@policy.Description</p>
+                        <div class="bg-dark p-2 rounded small text-secondary">
+                            <div>Auto-Approval Cap: <strong class="text-light">$@policy.AutoApprovalSpendThresholdUsd</strong></div>
+                            <div>Multi-Sig Required: <strong class="text-light">@(policy.RequiresMultiSig ? "Yes" : "No")</strong></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>

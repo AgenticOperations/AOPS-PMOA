@@ -23,6 +23,160 @@ Agents can discover services, purchase resources, hire other agents, commission 
 
 > **Wallets provide financial capability. AgentOps provides organizational authority.**
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Language-C%23%2012-blue?logo=csharp" alt="C#" />
+  <img src="https://img.shields.io/badge/Platform-.NET%208.0-purple?logo=dotnet" alt=".NET 8" />
+  <img src="https://img.shields.io/badge/Framework-ASP.NET%20Core%20%7C%20MVC-512BD4?logo=dotnet" alt="ASP.NET Core MVC" />
+  <img src="https://img.shields.io/badge/Database-SQL%20Server%20%26%20EF%20Core-CC292B?logo=microsoftsqlserver" alt="SQL Server" />
+  <img src="https://img.shields.io/badge/Cloud-Microsoft%20Azure%20Queue%20%26%20Blob-0078D4?logo=microsoftazure" alt="Azure" />
+  <img src="https://img.shields.io/badge/Background%20Workers-.NET%20BackgroundService-blueviolet" alt="BackgroundService" />
+  <img src="https://img.shields.io/badge/Testing-xUnit%20%7C%20Moq-2496ED" alt="xUnit" />
+</p>
+
+---
+
+## .NET Core & ASP.NET MVC Parallel Architecture
+
+Alongside the TypeScript and EVM prototype, this repository incorporates a parallel, production-grade enterprise backend located in [`dotnet/`](file:///Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/agentOps/AOPS-DotnetMigration/dotnet) implemented with **C# 12, .NET 8, ASP.NET Core Web API, ASP.NET MVC (Razor), Entity Framework Core, SQL Server, and Microsoft Azure Cloud Services**.
+
+### Solution Structure
+
+```
+dotnet/
+├── AgentOps.sln
+│
+├── AgentOps.API/                          # ASP.NET Core Web API & Operations MVC Console
+│   ├── Controllers/                       # REST endpoints: Agent registration, policies, execution tracking
+│   │   ├── AgentRegistrationController.cs
+│   │   ├── GovernancePoliciesController.cs
+│   │   ├── ExecutionTrackingController.cs
+│   │   ├── ApprovalWorkflowsController.cs
+│   │   ├── AuditTrailsController.cs
+│   │   └── Mvc/                           # ASP.NET MVC Controllers (Razor Views & Forms)
+│   │       ├── OperationsConsoleController.cs
+│   │       └── PoliciesMvcController.cs
+│   ├── Views/                             # Razor UI with Model Binding and CSRF Verification
+│   │   ├── Shared/_Layout.cshtml
+│   │   ├── OperationsConsole/Index.cshtml
+│   │   └── PoliciesMvc/Create.cshtml, Index.cshtml
+│   ├── wwwroot/js/governance-dashboard.js # DOM manipulation, telemetry feeds, dynamic approval triggers
+│   ├── Middleware/                        # Custom Global Exception & Agent Auth middleware
+│   ├── Program.cs                         # DI configuration, EF Core DbContext, Swagger OpenAPI
+│   └── AgentOps.API.csproj
+│
+├── AgentOps.Application/                  # CQRS & Domain Service Abstractions
+│   ├── Services/                          # PolicyEvaluationService, ExecutionLifecycleService, ApprovalService
+│   ├── DTOs/                              # Strongly-typed Data Transfer Objects & ViewModels
+│   ├── Validators/                        # FluentValidation request pipeline validation
+│   └── AgentOps.Application.csproj
+│
+├── AgentOps.Domain/                       # Domain Entities & Value Objects (DDD)
+│   ├── Entities/                          # AgentIdentity, GovernancePolicy, ToolPermission, ExecutionSession, AuditEvent
+│   ├── Enums/                             # AgentStatus, PolicyActionType, ApprovalState, RiskLevel
+│   ├── Exceptions/                        # PolicyViolationException, UnauthorizedToolException
+│   └── AgentOps.Domain.csproj
+│
+├── AgentOps.Infrastructure/              # Data Persistence & Cloud Integration
+│   ├── Persistence/
+│   │   ├── AgentOpsDbContext.cs           # EF Core DbContext with Fluent API mappings & foreign keys
+│   │   ├── Configurations/                # Table schemas, composite indexes, decimal precisions
+│   │   ├── Migrations/                    # SQL Server code-first database migrations
+│   │   └── SqlQueries/                    # Direct SQL Server queries with Dapper, CTEs & Window Functions
+│   ├── Services/
+│   │   ├── AzureQueueService.cs           # Azure Queue Storage SDK for asynchronous dispatch
+│   │   └── AzureOpenAiAuditService.cs     # LLM semantic reasoning service for prompt egress risk
+│   └── AgentOps.Infrastructure.csproj
+│
+├── AgentOps.Worker/                       # Asynchronous Background Processing
+│   ├── BackgroundServices/                # .NET BackgroundService / IHostedService implementations
+│   │   └── ExecutionReconciliationWorker.cs # Continuous consumer reconciling queue tasks & anchoring proofs
+│   ├── Program.cs                         # Generic Worker Host configuration
+│   └── AgentOps.Worker.csproj
+│
+└── AgentOps.Tests/                        # Automated Verification Suite
+    ├── Unit/                              # xUnit tests for policy evaluation & execution state machines
+    └── AgentOps.Tests.csproj
+```
+
+### Core Engineering Capabilities
+
+| Component | .NET Implementation | Technical Highlights |
+|---|---|---|
+| **Agent Registration** | ASP.NET Core API | Unique public key validation, cryptographic API key generation, and role-based metadata persistence. |
+| **Agent Identity** | C# Domain Entities & Value Objects | Enforced spending caps, daily reset schedules, permission bindings, and lifecycle state management. |
+| **Governance Policies** | Policy Evaluation Engine | Algorithmic policy parsing checking spend thresholds, risk levels, and multi-sig escalation rules. |
+| **Tool Permissions** | Authorization Service | Fine-grained per-tool spend limits, execution rate-limiting, and invocation authorization guards. |
+| **Execution Tracking** | State-Transition Management | Complete execution lifecycle: `Queued` &rarr; `EvaluatingPolicy` &rarr; `AwaitingApproval` &rarr; `Executing` &rarr; `Completed`. |
+| **Approval Workflows** | State Machine Logic | Human-in-the-loop approval triggers with configurable expiry windows and cryptographic decision signers. |
+| **Audit Trails** | Persistent Audit Events | Merkle proof hashes, tamper-evident action logs, and immutable timestamps. |
+| **Background Processing** | `.NET BackgroundService` | Hosted background workers listening to Azure Storage Queues for detached, asynchronous execution handling. |
+| **Data Persistence** | EF Core 8 + SQL Server | Relational mapping, composite indexes, decimal precisions, and raw SQL queries using CTEs and `DENSE_RANK()`. |
+| **Web Presentation** | ASP.NET MVC + Razor + HTML5 / CSS / JS | Operations console with interactive DOM manipulation, live telemetry graphs, and AJAX form submissions. |
+| **Automated Testing** | xUnit, Moq, FluentAssertions | Unit and integration tests validating policy boundaries, spend cap violations, and state transitions. |
+
+### SQL Server & Raw Query Showcase
+
+The analytics engine uses optimized raw SQL queries with Dapper for telemetry aggregations and agent spend rankings:
+
+```sql
+WITH AgentSpendCTE AS (
+    SELECT 
+        a.Id AS AgentId,
+        a.Name AS AgentName,
+        a.Role,
+        COALESCE(SUM(es.TotalExecutedSpendUsd), 0) AS TotalHistoricalSpendUsd,
+        COUNT(es.Id) AS TotalSessionsExecuted
+    FROM AgentIdentities a
+    LEFT JOIN ExecutionSessions es ON es.AgentId = a.Id
+    WHERE a.OrganizationId = @OrgId AND a.IsDeleted = 0
+    GROUP BY a.Id, a.Name, a.Role
+)
+SELECT 
+    AgentId,
+    AgentName,
+    Role,
+    TotalHistoricalSpendUsd,
+    TotalSessionsExecuted,
+    DENSE_RANK() OVER (ORDER BY TotalHistoricalSpendUsd DESC, TotalSessionsExecuted DESC) AS [SpendRank]
+FROM AgentSpendCTE
+ORDER BY [SpendRank] ASC;
+```
+
+---
+
+## Resume & Portfolio Highlights
+
+```text
+AgentOps – AI Agent Governance Platform | C# · .NET 8 · ASP.NET Core · SQL Server · Azure · EF Core
+• Implemented an enterprise .NET 8 backend architecture for autonomous agent registration, authorization, and execution governance.
+• Developed a policy evaluation engine with dynamic risk tiering, tool permission controls, and multi-sig human approval escalations.
+• Designed relational SQL Server schemas, EF Core configurations, and high-performance SQL analytics with CTEs and window functions.
+• Built asynchronous background services with .NET BackgroundService and Azure Queue Storage for decoupled execution workflows.
+• Created an ASP.NET MVC Razor operations dashboard featuring responsive HTML5/CSS layouts, DOM manipulation, and fetch API telemetry feeds.
+• Authored comprehensive xUnit test suites validating policy rules, state transitions, and spend boundary enforcement.
+```
+
+---
+
+## Build & Test Instructions
+
+```bash
+# Navigate to the .NET solution directory
+cd dotnet
+
+# Restore NuGet dependencies
+dotnet restore
+
+# Build solution
+dotnet build
+
+# Execute automated tests
+dotnet test
+
+# Run API & MVC dashboard
+dotnet run --project AgentOps.API
+```
+
 ---
 
 ## Why AgentOps

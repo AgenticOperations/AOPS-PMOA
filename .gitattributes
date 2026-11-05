@@ -1,0 +1,23 @@
+# GitHub Linguist Language Configuration
+# Prioritizes C# and .NET Clean Architecture in repository statistics
+
+apps/** linguist-vendored=true
+packages/** linguist-vendored=true
+scripts/** linguist-vendored=true
+validation/** linguist-vendored=true
+templates/** linguist-vendored=true
+archive/** linguist-documentation=true
+demo/** linguist-documentation=true
+docs/** linguist-documentation=true
+*.json linguist-vendored=true
+*.yaml linguist-vendored=true
+*.yml linguist-vendored=true
+*.lock linguist-vendored=true
+package-lock.json linguist-vendored=true
+
+# Explicitly detect .NET solution
+dotnet/** linguist-detectable=true
+*.cs linguist-language=C# linguist-detectable=true
+*.csproj linguist-language=XML
+*.sln linguist-language=C#
+*.cshtml linguist-language=HTML

@@ -1,0 +1,89 @@
+@model List<AgentOps.Application.DTOs.AgentSummaryDto>
+@{
+    ViewData["Title"] = "Operations Console";
+    var telemetry = ViewBag.Telemetry as AgentOps.Application.DTOs.AuditTelemetryOverviewDto;
+}
+
+<div class="p-4 mb-4 bg-black rounded-3 border border-secondary shadow">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h1 class="h3 fw-bold text-info mb-1">Autonomous Agent Governance Console</h1>
+            <p class="text-secondary mb-0">Policy enforcement, programmatic financial authority, and auditable state transitions for autonomous actors.</p>
+        </div>
+        <div class="badge bg-success-subtle text-success border border-success px-3 py-2">Policy Gate: ACTIVE</div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card bg-black border-secondary h-100">
+            <div class="card-body">
+                <small class="text-uppercase text-secondary fw-semibold">Active Agents</small>
+                <h3 class="fw-bold text-light mb-0">@(telemetry?.ActiveAgentsCount ?? Model?.Count ?? 0)</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-black border-secondary h-100">
+            <div class="card-body">
+                <small class="text-uppercase text-secondary fw-semibold">Capital Transacted</small>
+                <h3 class="fw-bold text-success mb-0">$@(telemetry?.TotalCapitalRoutedUsd.ToString("N2") ?? "0.00")</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-black border-secondary h-100">
+            <div class="card-body">
+                <small class="text-uppercase text-secondary fw-semibold">Audit Events</small>
+                <h3 class="fw-bold text-info mb-0">@(telemetry?.TotalEventsLogged ?? 0)</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-black border-secondary h-100">
+            <div class="card-body">
+                <small class="text-uppercase text-secondary fw-semibold">Violations Blocked</small>
+                <h3 class="fw-bold text-danger mb-0">@(telemetry?.BlockedViolationsCount ?? 0)</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card bg-black border-secondary">
+    <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+        <h5 class="fw-bold text-light mb-0">Registered Agent Identities</h5>
+        <input type="text" id="agentFilterInput" class="form-control form-control-sm w-25 bg-dark text-light border-secondary" placeholder="Filter agents..." />
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-hover mb-0" id="agentsTable">
+            <thead>
+                <tr>
+                    <th>Agent Name</th>
+                    <th>Role</th>
+                    <th>Public Key</th>
+                    <th>Daily Budget</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (Model != null)
+                {
+                    @foreach (var agent in Model)
+                    {
+                        <tr class="agent-row">
+                            <td class="fw-bold agent-name text-info">@agent.Name</td>
+                            <td>@agent.Role</td>
+                            <td><code>@agent.PublicKey[..12]...</code></td>
+                            <td>$@agent.SpentTodayUsd.ToString("N2") / $@agent.DailyBudgetCapUsd.ToString("N2")</td>
+                            <td><span class="badge bg-success">@agent.Status</span></td>
+                            <td>
+                                <button class="btn btn-outline-info btn-sm btn-inspect-agent" data-agent-id="@agent.Id">Inspect</button>
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
