@@ -24,6 +24,15 @@ public class AgentOpsDbContext : DbContext, IAgentOpsDbContext
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
+
+        // Entities create their own Guid ids in the domain. Telling EF the key is never
+        // store-generated makes children added through a navigation (a tool permission on an
+        // agent, an action on a session) get inserted rather than treated as updates.
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes()
+                     .Where(t => typeof(AgentOps.Domain.Common.BaseEntity).IsAssignableFrom(t.ClrType)))
+        {
+            modelBuilder.Entity(entityType.ClrType).Property(nameof(AgentOps.Domain.Common.BaseEntity.Id)).ValueGeneratedNever();
+        }
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
@@ -32,7 +41,8 @@ public class AgentOpsDbContext : DbContext, IAgentOpsDbContext
         {
             switch (entry.State)
             {
-                case EntityState.Added:
+                // Audit events carry the time of the decision, and that time is part of their hash.
+                case EntityState.Added when entry.Entity is not AgentOps.Domain.Entities.AuditEvent:
                     entry.Entity.CreatedAtUtc = DateTime.UtcNow;
                     break;
                 case EntityState.Modified:

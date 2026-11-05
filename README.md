@@ -35,147 +35,45 @@ Agents can discover services, purchase resources, hire other agents, commission 
 
 ---
 
-## .NET Core & ASP.NET MVC Parallel Architecture
+## Architecture: migrated to C# on .NET 8
 
-Alongside the TypeScript and EVM prototype, this repository incorporates a parallel, production-grade enterprise backend located in [`dotnet/`](file:///Users/18abhinav07/Documents/Brain/10-Projects/Web3-Builds/agentOps/AOPS-DotnetMigration/dotnet) implemented with **C# 12, .NET 8, ASP.NET Core Web API, ASP.NET MVC (Razor), Entity Framework Core, SQL Server, and Microsoft Azure Cloud Services**.
+The first AgentOps control plane was a TypeScript monorepo: a Fastify API on PostgreSQL, a Next.js operator app and an MCP server (still in [`apps/`](apps) and [`packages/`](packages), along with the on-chain integrations used in the testnet demos). The governance core has been migrated to C# on .NET 8 in [`dotnet/`](dotnet). The goal was a stricter implementation: a typed domain model, a policy engine that fails closed, and settlement moved out of the request path into a worker.
 
-### Solution Structure
-
-```
-dotnet/
-├── AgentOps.sln
-│
-├── AgentOps.API/                          # ASP.NET Core Web API & Operations MVC Console
-│   ├── Controllers/                       # REST endpoints: Agent registration, policies, execution tracking
-│   │   ├── AgentRegistrationController.cs
-│   │   ├── GovernancePoliciesController.cs
-│   │   ├── ExecutionTrackingController.cs
-│   │   ├── ApprovalWorkflowsController.cs
-│   │   ├── AuditTrailsController.cs
-│   │   └── Mvc/                           # ASP.NET MVC Controllers (Razor Views & Forms)
-│   │       ├── OperationsConsoleController.cs
-│   │       └── PoliciesMvcController.cs
-│   ├── Views/                             # Razor UI with Model Binding and CSRF Verification
-│   │   ├── Shared/_Layout.cshtml
-│   │   ├── OperationsConsole/Index.cshtml
-│   │   └── PoliciesMvc/Create.cshtml, Index.cshtml
-│   ├── wwwroot/js/governance-dashboard.js # DOM manipulation, telemetry feeds, dynamic approval triggers
-│   ├── Middleware/                        # Custom Global Exception & Agent Auth middleware
-│   ├── Program.cs                         # DI configuration, EF Core DbContext, Swagger OpenAPI
-│   └── AgentOps.API.csproj
-│
-├── AgentOps.Application/                  # CQRS & Domain Service Abstractions
-│   ├── Services/                          # PolicyEvaluationService, ExecutionLifecycleService, ApprovalService
-│   ├── DTOs/                              # Strongly-typed Data Transfer Objects & ViewModels
-│   ├── Validators/                        # FluentValidation request pipeline validation
-│   └── AgentOps.Application.csproj
-│
-├── AgentOps.Domain/                       # Domain Entities & Value Objects (DDD)
-│   ├── Entities/                          # AgentIdentity, GovernancePolicy, ToolPermission, ExecutionSession, AuditEvent
-│   ├── Enums/                             # AgentStatus, PolicyActionType, ApprovalState, RiskLevel
-│   ├── Exceptions/                        # PolicyViolationException, UnauthorizedToolException
-│   └── AgentOps.Domain.csproj
-│
-├── AgentOps.Infrastructure/              # Data Persistence & Cloud Integration
-│   ├── Persistence/
-│   │   ├── AgentOpsDbContext.cs           # EF Core DbContext with Fluent API mappings & foreign keys
-│   │   ├── Configurations/                # Table schemas, composite indexes, decimal precisions
-│   │   ├── Migrations/                    # SQL Server code-first database migrations
-│   │   └── SqlQueries/                    # Direct SQL Server queries with Dapper, CTEs & Window Functions
-│   ├── Services/
-│   │   ├── AzureQueueService.cs           # Azure Queue Storage SDK for asynchronous dispatch
-│   │   └── AzureOpenAiAuditService.cs     # LLM semantic reasoning service for prompt egress risk
-│   └── AgentOps.Infrastructure.csproj
-│
-├── AgentOps.Worker/                       # Asynchronous Background Processing
-│   ├── BackgroundServices/                # .NET BackgroundService / IHostedService implementations
-│   │   └── ExecutionReconciliationWorker.cs # Continuous consumer reconciling queue tasks & anchoring proofs
-│   ├── Program.cs                         # Generic Worker Host configuration
-│   └── AgentOps.Worker.csproj
-│
-└── AgentOps.Tests/                        # Automated Verification Suite
-    ├── Unit/                              # xUnit tests for policy evaluation & execution state machines
-    └── AgentOps.Tests.csproj
-```
-
-### Core Engineering Capabilities
-
-| Component | .NET Implementation | Technical Highlights |
+| Layer | Project | What lives there |
 |---|---|---|
-| **Agent Registration** | ASP.NET Core API | Unique public key validation, cryptographic API key generation, and role-based metadata persistence. |
-| **Agent Identity** | C# Domain Entities & Value Objects | Enforced spending caps, daily reset schedules, permission bindings, and lifecycle state management. |
-| **Governance Policies** | Policy Evaluation Engine | Algorithmic policy parsing checking spend thresholds, risk levels, and multi-sig escalation rules. |
-| **Tool Permissions** | Authorization Service | Fine-grained per-tool spend limits, execution rate-limiting, and invocation authorization guards. |
-| **Execution Tracking** | State-Transition Management | Complete execution lifecycle: `Queued` &rarr; `EvaluatingPolicy` &rarr; `AwaitingApproval` &rarr; `Executing` &rarr; `Completed`. |
-| **Approval Workflows** | State Machine Logic | Human-in-the-loop approval triggers with configurable expiry windows and cryptographic decision signers. |
-| **Audit Trails** | Persistent Audit Events | Merkle proof hashes, tamper-evident action logs, and immutable timestamps. |
-| **Background Processing** | `.NET BackgroundService` | Hosted background workers listening to Azure Storage Queues for detached, asynchronous execution handling. |
-| **Data Persistence** | EF Core 8 + SQL Server | Relational mapping, composite indexes, decimal precisions, and raw SQL queries using CTEs and `DENSE_RANK()`. |
-| **Web Presentation** | ASP.NET MVC + Razor + HTML5 / CSS / JS | Operations console with interactive DOM manipulation, live telemetry graphs, and AJAX form submissions. |
-| **Automated Testing** | xUnit, Moq, FluentAssertions | Unit and integration tests validating policy boundaries, spend cap violations, and state transitions. |
+| Domain | `AgentOps.Domain` | `AgentIdentity` (daily budget cap, per-tool permissions, suspension), `GovernancePolicy`, `ExecutionSession` and `ExecutionAction`, `ApprovalWorkflow` with an expiry window, `AuditEvent`. |
+| Application | `AgentOps.Application` | Policy evaluation, the execution lifecycle, approvals, settlement reconciliation, the risk screen, audit hashing, FluentValidation validators. |
+| Infrastructure | `AgentOps.Infrastructure` | EF Core 8 on SQL Server, a Dapper analytics query, Azure Queue Storage, and the Azure OpenAI review client. |
+| Presentation | `AgentOps.API` | ASP.NET Core REST controllers for agents, policies, executions, approvals and audit trails, plus a Razor operations console. |
+| Worker | `AgentOps.Worker` | A .NET `BackgroundService` that drains the execution queue and settles each action in its own DI scope. |
+| Tests | `AgentOps.Tests` | 41 xUnit tests with Moq, FluentAssertions and the EF Core in-memory provider. |
 
-### SQL Server & Raw Query Showcase
+### How a request moves
 
-The analytics engine uses optimized raw SQL queries with Dapper for telemetry aggregations and agent spend rankings:
+1. **Evaluate.** `PolicyEvaluationService` checks, in order: the agent exists, it is active, the tool is granted, the action's risk is within that tool's ceiling, the spend is within the per-call limit, the daily budget can absorb it, and then the organization's active governance policy. An organization with no active policy is denied; nothing moves money by default.
+2. **Route.** Allowed actions are marked executing and a typed `ExecutionDispatchMessage` goes onto the `agent-executions` queue. Spend above the policy's auto-approval threshold opens an `ApprovalWorkflow` (human or multi-sig) instead. Denials block the action, fail the session and write an audit event.
+3. **Approve.** Approving a workflow re-dispatches the action. Rejecting blocks it. A decision after the window expires marks the workflow expired and fails the session.
+4. **Settle.** The worker dequeues the message and calls `ExecutionReconciliationService`, which re-checks the agent's daily budget at settlement time (another session may have spent in between), records the spend, completes the session once every action is terminal, and writes an audit event. Settlement is idempotent: a redelivered message for an action that is no longer executing is acknowledged without charging again.
 
-```sql
-WITH AgentSpendCTE AS (
-    SELECT 
-        a.Id AS AgentId,
-        a.Name AS AgentName,
-        a.Role,
-        COALESCE(SUM(es.TotalExecutedSpendUsd), 0) AS TotalHistoricalSpendUsd,
-        COUNT(es.Id) AS TotalSessionsExecuted
-    FROM AgentIdentities a
-    LEFT JOIN ExecutionSessions es ON es.AgentId = a.Id
-    WHERE a.OrganizationId = @OrgId AND a.IsDeleted = 0
-    GROUP BY a.Id, a.Name, a.Role
-)
-SELECT 
-    AgentId,
-    AgentName,
-    Role,
-    TotalHistoricalSpendUsd,
-    TotalSessionsExecuted,
-    DENSE_RANK() OVER (ORDER BY TotalHistoricalSpendUsd DESC, TotalSessionsExecuted DESC) AS [SpendRank]
-FROM AgentSpendCTE
-ORDER BY [SpendRank] ASC;
-```
+### Design decisions
 
----
+- **Fail closed.** Every branch of policy evaluation that cannot prove an action is allowed returns a deny, with a named reason (`NoActivePolicy`, `ToolRiskCeilingExceeded`, `DailyBudgetExceeded` and so on) that is written to the audit trail.
+- **Tamper-evident audit rows.** Each `AuditEvent` stores a SHA-256 digest over its id, type, agent, organization, session, action, decision, amount and timestamp. `AuditEventFactory.Verify` recomputes it, so a row edited after the fact no longer matches. The `DbContext` leaves audit timestamps alone on insert so the hash stays valid; a test caught the case where it did not.
+- **The model can only escalate.** Every request gets a deterministic risk screen first (spend bands, malformed JSON, instruction-like text in the payload). When Azure OpenAI is configured, its assessment is merged with that baseline: the higher risk wins and either side can flag. If the model is unavailable the baseline stands.
+- **Entity keys are generated by the domain.** Entities create their own `Guid` ids, so every key is configured `ValueGeneratedNever()` and children added through navigations are inserted, not treated as stale updates.
 
-## Resume & Portfolio Highlights
-
-```text
-AgentOps – AI Agent Governance Platform | C# · .NET 8 · ASP.NET Core · SQL Server · Azure · EF Core
-• Implemented an enterprise .NET 8 backend architecture for autonomous agent registration, authorization, and execution governance.
-• Developed a policy evaluation engine with dynamic risk tiering, tool permission controls, and multi-sig human approval escalations.
-• Designed relational SQL Server schemas, EF Core configurations, and high-performance SQL analytics with CTEs and window functions.
-• Built asynchronous background services with .NET BackgroundService and Azure Queue Storage for decoupled execution workflows.
-• Created an ASP.NET MVC Razor operations dashboard featuring responsive HTML5/CSS layouts, DOM manipulation, and fetch API telemetry feeds.
-• Authored comprehensive xUnit test suites validating policy rules, state transitions, and spend boundary enforcement.
-```
-
----
-
-## Build & Test Instructions
+### Build and test
 
 ```bash
-# Navigate to the .NET solution directory
 cd dotnet
-
-# Restore NuGet dependencies
 dotnet restore
-
-# Build solution
 dotnet build
-
-# Execute automated tests
-dotnet test
-
-# Run API & MVC dashboard
-dotnet run --project AgentOps.API
+dotnet test                            # 41 tests
+dotnet run --project AgentOps.API      # REST API, Swagger and the operations console
+dotnet run --project AgentOps.Worker   # settlement worker
 ```
+
+Configuration: `ConnectionStrings:DefaultConnection` (SQL Server), `ConnectionStrings:AzureQueueStorage`, and optionally `AzureOpenAI:Endpoint`, `AzureOpenAI:ApiKey`, `AzureOpenAI:Deployment`.
 
 ---
 

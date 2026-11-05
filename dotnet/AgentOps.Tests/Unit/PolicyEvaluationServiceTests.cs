@@ -1,77 +1,153 @@
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
 using AgentOps.Application.DTOs;
 using AgentOps.Application.Services;
-using AgentOps.Domain.Entities;
 using AgentOps.Domain.Enums;
-using AgentOps.Infrastructure.Persistence;
 using Xunit;
 
 namespace AgentOps.Tests.Unit;
 
 public class PolicyEvaluationServiceTests
 {
-    private AgentOpsDbContext CreateInMemoryDbContext()
+    private static EvaluateExecutionRequestDto Req(Guid agentId, decimal spend, RiskLevel risk = RiskLevel.Low, string tool = "pay_invoice") =>
+        new(agentId, tool, "{}", spend, risk);
+
+    [Fact]
+    public async Task WhenSpendWithinThreshold_Allows()
     {
-        var options = new DbContextOptionsBuilder<AgentOpsDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        return new AgentOpsDbContext(options);
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db);
+        TestDb.Policy(db);
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 50m));
+
+        result.IsAllowed.Should().BeTrue();
+        result.ActionRequired.Should().Be(PolicyActionType.Allow);
     }
 
     [Fact]
-    public async Task EvaluateExecutionAsync_WhenSpendExceedsThreshold_RequiresHumanApproval()
+    public async Task WhenSpendAboveThreshold_RequiresHumanApproval()
     {
-        // Arrange
-        using var context = CreateInMemoryDbContext();
-        var service = new PolicyEvaluationService(context);
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db);
+        TestDb.Policy(db, autoApprove: 100m);
 
-        var orgId = "test-org";
-        var agent = new AgentIdentity("TradingBot-1", "Trader", "0x1234567890abcdef1234567890abcdef12345678", orgId, 1000m, "hash");
-        agent.AddToolPermission("swapTokens", 500m, 10, RiskLevel.Moderate);
-        context.AgentIdentities.Add(agent);
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 250m));
 
-        var policy = new GovernancePolicy("OrgPolicy", "Test", orgId, RiskLevel.Moderate, 100m, false);
-        context.GovernancePolicies.Add(policy);
-
-        await context.SaveChangesAsync();
-
-        var request = new EvaluateExecutionRequestDto(agent.Id, "swapTokens", "{}", 250m, RiskLevel.Moderate);
-
-        // Act
-        var result = await service.EvaluateExecutionAsync(request);
-
-        // Assert
-        result.Should().NotNull();
         result.IsAllowed.Should().BeFalse();
         result.ActionRequired.Should().Be(PolicyActionType.RequireHumanApproval);
     }
 
     [Fact]
-    public async Task EvaluateExecutionAsync_WhenSpendWithinLimit_AllowsExecution()
+    public async Task WhenPolicyRequiresMultiSig_EscalatesToMultiSig()
     {
-        // Arrange
-        using var context = CreateInMemoryDbContext();
-        var service = new PolicyEvaluationService(context);
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db);
+        TestDb.Policy(db, autoApprove: 100m, multiSig: true);
 
-        var orgId = "test-org";
-        var agent = new AgentIdentity("WorkerBot", "Worker", "0xabcdef1234567890abcdef1234567890abcdef12", orgId, 500m, "hash");
-        agent.AddToolPermission("queryData", 50m, 60, RiskLevel.Low);
-        context.AgentIdentities.Add(agent);
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 250m));
 
-        var policy = new GovernancePolicy("OrgPolicy", "Test", orgId, RiskLevel.Low, 100m, false);
-        context.GovernancePolicies.Add(policy);
+        result.ActionRequired.Should().Be(PolicyActionType.RequireMultiSig);
+    }
 
-        await context.SaveChangesAsync();
+    [Fact]
+    public async Task WhenNoActivePolicy_FailsClosed()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db);
 
-        var request = new EvaluateExecutionRequestDto(agent.Id, "queryData", "{}", 10m, RiskLevel.Low);
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 1m));
 
-        // Act
-        var result = await service.EvaluateExecutionAsync(request);
+        result.IsAllowed.Should().BeFalse();
+        result.ActionRequired.Should().Be(PolicyActionType.Deny);
+        result.PolicyName.Should().Be("NoActivePolicy");
+    }
 
-        // Assert
-        result.Should().NotNull();
-        result.IsAllowed.Should().BeTrue();
-        result.ActionRequired.Should().Be(PolicyActionType.Allow);
+    [Fact]
+    public async Task WhenAgentUnknown_Denies()
+    {
+        using var db = TestDb.Create();
+        TestDb.Policy(db);
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(Guid.NewGuid(), 1m));
+
+        result.PolicyName.Should().Be("AgentNotFound");
+        result.IsAllowed.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WhenAgentSuspended_Denies()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db);
+        TestDb.Policy(db);
+        agent.Suspend("key rotation");
+        await db.SaveChangesAsync();
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 1m));
+
+        result.PolicyName.Should().Be("AgentSuspended");
+    }
+
+    [Fact]
+    public async Task WhenToolNotGranted_Denies()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db);
+        TestDb.Policy(db);
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 1m, tool: "wire_transfer"));
+
+        result.PolicyName.Should().Be("ToolNotPermitted");
+    }
+
+    [Fact]
+    public async Task WhenActionRiskAboveToolCeiling_Denies()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db, toolRisk: RiskLevel.Moderate);
+        TestDb.Policy(db);
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 1m, RiskLevel.High));
+
+        result.PolicyName.Should().Be("ToolRiskCeilingExceeded");
+    }
+
+    [Fact]
+    public async Task WhenPerCallLimitExceeded_DeniesBeforePolicy()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db, perCall: 500m);
+        TestDb.Policy(db);
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 501m));
+
+        result.PolicyName.Should().Be("SpendPerCallExceeded");
+    }
+
+    [Fact]
+    public async Task WhenDailyBudgetWouldBeExceeded_Denies()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db, dailyCap: 100m);
+        TestDb.Policy(db);
+        agent.RecordSpend(90m);
+        await db.SaveChangesAsync();
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 20m));
+
+        result.PolicyName.Should().Be("DailyBudgetExceeded");
+    }
+
+    [Fact]
+    public async Task WhenRiskAbovePolicyMaximum_Denies()
+    {
+        using var db = TestDb.Create();
+        var agent = TestDb.Agent(db, toolRisk: RiskLevel.Critical);
+        TestDb.Policy(db, maxRisk: RiskLevel.Moderate);
+
+        var result = await new PolicyEvaluationService(db).EvaluateExecutionAsync(Req(agent.Id, 1m, RiskLevel.High));
+
+        result.ActionRequired.Should().Be(PolicyActionType.Deny);
+        result.PolicyName.Should().Be("Treasury policy");
     }
 }

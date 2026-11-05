@@ -24,6 +24,7 @@ builder.Services.AddScoped<IAgentRegistrationService, AgentRegistrationService>(
 builder.Services.AddScoped<IPolicyEvaluationService, PolicyEvaluationService>();
 builder.Services.AddScoped<IExecutionLifecycleService, ExecutionLifecycleService>();
 builder.Services.AddScoped<IApprovalWorkflowService, ApprovalWorkflowService>();
+builder.Services.AddScoped<IExecutionReconciliationService, ExecutionReconciliationService>();
 builder.Services.AddScoped<IAuditMetricsRawSqlService, AuditMetricsRawSqlService>();
 
 // 3. Azure Cloud & LLM Services

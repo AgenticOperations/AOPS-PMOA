@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using AgentOps.Application.Common;
 using AgentOps.Application.Common.Interfaces;
 using AgentOps.Application.Common.Models;
 using AgentOps.Application.DTOs;
@@ -54,14 +55,19 @@ public class ExecutionLifecycleService : IExecutionLifecycleService
             {
                 action.SetStatus(ExecutionStatus.BlockedByPolicy, null, evalResult.Reasoning);
                 session.Fail(evalResult.Reasoning);
+                var organizationId = await _context.AgentIdentities
+                    .Where(a => a.Id == dto.AgentId).Select(a => a.OrganizationId)
+                    .FirstOrDefaultAsync(cancellationToken) ?? "unknown";
+                _context.AuditEvents.Add(AuditEventFactory.Create("ExecutionDenied", dto.AgentId, organizationId,
+                    session.Id, dto.ToolName, evalResult.PolicyName, 0m, DateTime.UtcNow));
             }
         }
         else
         {
             session.MarkExecuting();
             action.SetStatus(ExecutionStatus.Executing);
-            // Dispatch asynchronously to Azure Service Queue for background processing
-            await _queueService.EnqueueMessageAsync("agent-executions", new { SessionId = session.Id, ActionId = action.Id }, cancellationToken);
+            // Settlement happens in the worker, which consumes this from Azure Queue Storage.
+            await _queueService.EnqueueMessageAsync(ExecutionDispatchMessage.QueueName, new ExecutionDispatchMessage(session.Id, action.Id), cancellationToken);
         }
 
         await _context.SaveChangesAsync(cancellationToken);

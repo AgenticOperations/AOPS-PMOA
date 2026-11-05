@@ -51,19 +51,32 @@ public class ApprovalWorkflowService : IApprovalWorkflowService
         var session = await _context.ExecutionSessions.FindAsync(new object[] { workflow.SessionId }, cancellationToken);
         var action = await _context.ExecutionActions.FindAsync(new object[] { workflow.ActionId }, cancellationToken);
 
-        if (dto.Approved)
+        try
         {
-            workflow.Approve(dto.DecidedByUserId, dto.Reason);
-            if (session != null) session.MarkExecuting();
-            if (action != null) action.SetStatus(ExecutionStatus.Executing);
-
-            await _queueService.EnqueueMessageAsync("agent-executions", new { SessionId = workflow.SessionId, ActionId = workflow.ActionId }, cancellationToken);
+            if (dto.Approved)
+            {
+                workflow.Approve(dto.DecidedByUserId, dto.Reason);
+                session?.MarkExecuting();
+                action?.SetStatus(ExecutionStatus.Executing);
+                await _queueService.EnqueueMessageAsync(ExecutionDispatchMessage.QueueName, new ExecutionDispatchMessage(workflow.SessionId, workflow.ActionId), cancellationToken);
+            }
+            else
+            {
+                workflow.Reject(dto.DecidedByUserId, dto.Reason);
+                session?.Fail("Rejected by human supervisor: " + dto.Reason);
+                action?.SetStatus(ExecutionStatus.BlockedByPolicy, null, "Human rejection: " + dto.Reason);
+            }
         }
-        else
+        catch (InvalidOperationException ex)
         {
-            workflow.Reject(dto.DecidedByUserId, dto.Reason);
-            if (session != null) session.Fail("Rejected by human supervisor: " + dto.Reason);
-            if (action != null) action.SetStatus(ExecutionStatus.BlockedByPolicy, null, "Human rejection: " + dto.Reason);
+            // An expired window flips the workflow to Expired before throwing; persist that, and fail the session.
+            if (workflow.State == ApprovalState.Expired)
+            {
+                session?.Fail("Approval window expired.");
+                action?.SetStatus(ExecutionStatus.BlockedByPolicy, null, "Approval window expired.");
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+            return ServiceResult<bool>.Failure(ex.Message);
         }
 
         await _context.SaveChangesAsync(cancellationToken);

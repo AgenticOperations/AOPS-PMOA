@@ -23,5 +23,6 @@
     <ProjectReference Include="..\AgentOps.Application\AgentOps.Application.csproj" />
     <ProjectReference Include="..\AgentOps.Infrastructure\AgentOps.Infrastructure.csproj" />
     <ProjectReference Include="..\AgentOps.API\AgentOps.API.csproj" />
+    <ProjectReference Include="..\AgentOps.Worker\AgentOps.Worker.csproj" />
   </ItemGroup>
 </Project>

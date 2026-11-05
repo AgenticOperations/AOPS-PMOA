@@ -95,6 +95,11 @@ public class PolicyEvaluationService : IPolicyEvaluationService
             return new PolicyEvaluationResult(false, PolicyActionType.Deny, "ToolNotPermitted", request.ActionRisk, $"Tool '{request.ToolName}' has not been authorized for this agent.", new());
         }
 
+        if (request.ActionRisk > permission.RiskLevel)
+        {
+            return new PolicyEvaluationResult(false, PolicyActionType.Deny, "ToolRiskCeilingExceeded", request.ActionRisk, $"Action risk {request.ActionRisk} is above the {permission.RiskLevel} ceiling granted for '{permission.ToolName}'.", new());
+        }
+
         if (request.RequestedSpendUsd > permission.MaxSpendPerCallUsd)
         {
             return new PolicyEvaluationResult(false, PolicyActionType.Deny, "SpendPerCallExceeded", request.ActionRisk, $"Requested spend ${request.RequestedSpendUsd} exceeds per-call limit ${permission.MaxSpendPerCallUsd}.", new());
@@ -106,11 +111,14 @@ public class PolicyEvaluationService : IPolicyEvaluationService
         }
 
         var policy = await _context.GovernancePolicies
-            .FirstOrDefaultAsync(p => p.OrganizationId == agent.OrganizationId && p.IsActive, cancellationToken);
+            .Where(p => p.OrganizationId == agent.OrganizationId && p.IsActive && !p.IsDeleted)
+            .OrderByDescending(p => p.CreatedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (policy == null)
         {
-            return new PolicyEvaluationResult(true, PolicyActionType.Allow, "DefaultAllow", request.ActionRisk, "No explicit policy overrides. Proceeding under default bounds.", new());
+            // Fail closed: an organization without an active governance policy cannot move money.
+            return new PolicyEvaluationResult(false, PolicyActionType.Deny, "NoActivePolicy", request.ActionRisk, $"Organization '{agent.OrganizationId}' has no active governance policy; execution is denied by default.", new());
         }
 
         var actionRequired = policy.EvaluateSpend(request.RequestedSpendUsd, request.ActionRisk);
