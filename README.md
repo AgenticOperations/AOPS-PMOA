@@ -441,5 +441,4 @@ The current implementation is a testnet product and should not be interpreted as
 ---
 
 ## License
-
-AgentOps is not be copied, redesigned or republished outside the official work in any way or form.
+MIT
